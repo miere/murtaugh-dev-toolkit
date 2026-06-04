@@ -18,6 +18,41 @@ func TestParseValidConfig(t *testing.T) {
 	}
 }
 
+func TestParseACPConfig(t *testing.T) {
+	cfg, err := Parse([]byte(`
+slack:
+  app_token: xapp-test
+  bot_token: xoxb-test
+acp:
+  enabled: true
+  command: /path/to/acp-agent
+  args: [--stdio]
+  request_timeout: 2m
+  stream_append_interval: 100ms
+  stream_min_chunk_chars: 12
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if !cfg.ACP.Enabled || cfg.ACP.Command != "/path/to/acp-agent" || cfg.ACP.EffectiveStreamMinChunkChars() != 12 {
+		t.Fatalf("unexpected ACP config: %#v", cfg.ACP)
+	}
+}
+
+func TestParseACPRequiresCommandWhenEnabled(t *testing.T) {
+	_, err := Parse([]byte("slack:\n  app_token: xapp-test\n  bot_token: xoxb-test\nacp:\n  enabled: true\n"))
+	if err == nil || !strings.Contains(err.Error(), "acp.command") {
+		t.Fatalf("expected ACP command validation error, got: %v", err)
+	}
+}
+
+func TestParseACPValidatesDurations(t *testing.T) {
+	_, err := Parse([]byte("slack:\n  app_token: xapp-test\n  bot_token: xoxb-test\nacp:\n  request_timeout: nope\n"))
+	if err == nil || !strings.Contains(err.Error(), "acp.request_timeout") {
+		t.Fatalf("expected ACP duration validation error, got: %v", err)
+	}
+}
+
 func TestParseRequiresSlackTokens(t *testing.T) {
 	_, err := Parse([]byte("slack: {}\n"))
 	if err == nil {

@@ -54,7 +54,7 @@ func (h *DefaultSlashCommandHandler) help(commandName string) AckResponse {
 		Text:         fmt.Sprintf("%s is connected. ACP agent routing and richer BlockKit workflows are ready to be implemented next.", commandName),
 		Blocks: []slack.Block{
 			slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*%s is connected.*", commandName), false, false), nil, nil),
-			slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "Next steps: wire slash command verbs to ACP agents and replace simple replies with focused BlockKit views.", false, false), nil, nil),
+			slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("Use `%s chat <prompt>` to ask the configured ACP agent. You can also DM the bot or mention it in a channel when ACP chat is enabled.", commandName), false, false), nil, nil),
 		},
 	}
 }

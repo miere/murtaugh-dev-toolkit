@@ -4,6 +4,19 @@ slack:
   admin_user: murtaugh-admin
   debug: false
 
+acp:
+  enabled: false
+  command: /path/to/acp-agent
+  args: [--stdio]
+  workdir: /path/to/workspace
+  startup_timeout: 10s
+  request_timeout: 10m
+  session_idle_timeout: 30m
+  max_sessions: 100
+  stream_append_interval: 750ms
+  stream_min_chunk_chars: 96
+  stream_final_feedback: false
+
 commands:
   - name: /murtaugh
     description: Entrypoint for Murtaugh commands

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 )
 
@@ -45,4 +46,27 @@ func TestNewWithoutAdminUserDoesNotInstallTypedNilStartupNotifier(t *testing.T) 
 		t.Fatalf("expected no startup notifier without slack.admin_user, got %#v", app.startupNotifier)
 	}
 	app.notifyStartup(context.Background())
+}
+
+func TestAppMentionEventRoutesToACPChat(t *testing.T) {
+	api := &fakeStreamAPI{}
+	sessions := &fakeChatSessions{}
+	app := &App{chat: NewChatHandler(api, sessions, time.Hour, 1, nil), chatTimeout: time.Second, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	app.handleEventsAPI(socketmode.Event{Type: socketmode.EventTypeEventsAPI, Data: slackevents.EventsAPIEvent{
+		TeamID:     "T1",
+		InnerEvent: slackevents.EventsAPIInnerEvent{Type: string(slackevents.AppMention), Data: &slackevents.AppMentionEvent{User: "U1", Channel: "C1", Text: "<@UBOT> hello", TimeStamp: "123.4"}},
+	}})
+
+	deadline := time.After(time.Second)
+	for sessions.prompt == "" {
+		select {
+		case <-deadline:
+			t.Fatal("expected app mention to route to chat")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if sessions.prompt != "hello" {
+		t.Fatalf("unexpected prompt: %q", sessions.prompt)
+	}
 }

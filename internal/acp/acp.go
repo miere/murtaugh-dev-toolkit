@@ -2,21 +2,48 @@ package acp
 
 import "context"
 
-// Agent is the boundary between Slack command handling and an ACP-compatible
-// local or remote agent implementation.
-type Agent interface {
-	Invoke(context.Context, Request) (Response, error)
+type Client interface {
+	Initialize(context.Context) error
+	NewSession(context.Context, SessionMetadata) (Session, error)
+	Prompt(context.Context, string, PromptRequest) (<-chan Event, error)
+	Cancel(context.Context, string) error
+	Close() error
 }
 
-// Request is the normalized input Murtaugh will pass to ACP agents.
-type Request struct {
-	Command string
-	Text    string
-	UserID  string
-	TeamID  string
+type Session struct {
+	ID string
 }
 
-// Response is the normalized output ACP agents can return to Slack handlers.
-type Response struct {
-	Text string
+type SessionMetadata struct {
+	TeamID    string `json:"teamId,omitempty"`
+	ChannelID string `json:"channelId,omitempty"`
+	ThreadTS  string `json:"threadTs,omitempty"`
+	UserID    string `json:"userId,omitempty"`
+	Source    string `json:"source,omitempty"`
+}
+
+type PromptRequest struct {
+	Text string `json:"text"`
+}
+
+type Event struct {
+	Type  EventType
+	Text  string
+	Error error
+}
+
+type EventType string
+
+const (
+	EventText     EventType = "text"
+	EventStatus   EventType = "status"
+	EventComplete EventType = "complete"
+	EventError    EventType = "error"
+)
+
+type ConversationKey struct {
+	TeamID    string
+	ChannelID string
+	ThreadTS  string
+	DM        bool
 }

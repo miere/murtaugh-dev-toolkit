@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,6 +16,7 @@ const defaultRelativePath = ".config/murtaugh/slack.yaml"
 type Config struct {
 	BaseDir       string                        `yaml:"-"`
 	Slack         SlackConfig                   `yaml:"slack"`
+	ACP           ACPConfig                     `yaml:"acp"`
 	Commands      []CommandConfig               `yaml:"commands"`
 	WorkflowRules map[string]WorkflowRuleConfig `yaml:"workflow-rules"`
 }
@@ -29,6 +31,20 @@ type SlackConfig struct {
 type CommandConfig struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
+}
+
+type ACPConfig struct {
+	Enabled              bool     `yaml:"enabled"`
+	Command              string   `yaml:"command"`
+	Args                 []string `yaml:"args"`
+	WorkDir              string   `yaml:"workdir"`
+	StartupTimeout       string   `yaml:"startup_timeout"`
+	RequestTimeout       string   `yaml:"request_timeout"`
+	SessionIdleTimeout   string   `yaml:"session_idle_timeout"`
+	MaxSessions          int      `yaml:"max_sessions"`
+	StreamAppendInterval string   `yaml:"stream_append_interval"`
+	StreamMinChunkChars  int      `yaml:"stream_min_chunk_chars"`
+	StreamFinalFeedback  bool     `yaml:"stream_final_feedback"`
 }
 
 type WorkflowRuleConfig struct {
@@ -127,6 +143,9 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("commands[%d].name must start with /", i))
 		}
 	}
+	if err := c.ACP.Validate(); err != nil {
+		errs = append(errs, err)
+	}
 	for name, rule := range c.WorkflowRules {
 		if strings.TrimSpace(rule.RequestEvent) != "interactive" {
 			errs = append(errs, fmt.Errorf("workflow-rules[%s].request_event must be interactive", name))
@@ -144,6 +163,74 @@ func (c Config) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (c ACPConfig) Validate() error {
+	var errs []error
+	if c.Enabled && strings.TrimSpace(c.Command) == "" {
+		errs = append(errs, errors.New("acp.command is required when acp.enabled is true"))
+	}
+	for field, value := range map[string]string{
+		"startup_timeout":        c.StartupTimeout,
+		"request_timeout":        c.RequestTimeout,
+		"session_idle_timeout":   c.SessionIdleTimeout,
+		"stream_append_interval": c.StreamAppendInterval,
+	} {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if _, err := time.ParseDuration(value); err != nil {
+			errs = append(errs, fmt.Errorf("acp.%s must be a valid duration: %w", field, err))
+		}
+	}
+	if c.MaxSessions < 0 {
+		errs = append(errs, errors.New("acp.max_sessions must be greater than or equal to zero"))
+	}
+	if c.StreamMinChunkChars < 0 {
+		errs = append(errs, errors.New("acp.stream_min_chunk_chars must be greater than or equal to zero"))
+	}
+	return errors.Join(errs...)
+}
+
+func (c ACPConfig) EffectiveStartupTimeout() time.Duration {
+	return durationOrDefault(c.StartupTimeout, 10*time.Second)
+}
+
+func (c ACPConfig) EffectiveRequestTimeout() time.Duration {
+	return durationOrDefault(c.RequestTimeout, 10*time.Minute)
+}
+
+func (c ACPConfig) EffectiveSessionIdleTimeout() time.Duration {
+	return durationOrDefault(c.SessionIdleTimeout, 30*time.Minute)
+}
+
+func (c ACPConfig) EffectiveStreamAppendInterval() time.Duration {
+	return durationOrDefault(c.StreamAppendInterval, 250*time.Millisecond)
+}
+
+func (c ACPConfig) EffectiveMaxSessions() int {
+	if c.MaxSessions > 0 {
+		return c.MaxSessions
+	}
+	return 100
+}
+
+func (c ACPConfig) EffectiveStreamMinChunkChars() int {
+	if c.StreamMinChunkChars > 0 {
+		return c.StreamMinChunkChars
+	}
+	return 24
+}
+
+func durationOrDefault(value string, fallback time.Duration) time.Duration {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return duration
 }
 
 func validateTrigger(trigger TriggerConfig) error {

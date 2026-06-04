@@ -33,3 +33,15 @@ func TestDefaultSlashCommandHandlerRejectsUnconfiguredCommand(t *testing.T) {
 		t.Fatalf("expected not configured response, got: %#v", response)
 	}
 }
+
+func TestIsChatSlashCommand(t *testing.T) {
+	if !isChatSlashCommand("chat hello") || !isChatSlashCommand("CHAT hello") {
+		t.Fatal("expected chat slash command to be recognized")
+	}
+	if slashChatPrompt("CHAT hello") != "hello" {
+		t.Fatalf("unexpected chat prompt: %q", slashChatPrompt("CHAT hello"))
+	}
+	if isChatSlashCommand("help") {
+		t.Fatal("did not expect help to be recognized as chat")
+	}
+}
