@@ -17,8 +17,9 @@ import (
 )
 
 // recordingMessaging is the slackMessagingAPI fake used across the resume
-// tests. Each Slack call is recorded so assertions can inspect what the
-// helper actually sent rather than re-deriving it from package internals.
+// and restart-suggestion tests. Each Slack call is recorded so assertions
+// can inspect what the helper actually sent rather than re-deriving it
+// from package internals.
 type recordingMessaging struct {
 	postCalls       int
 	postChannel     string
@@ -29,10 +30,16 @@ type recordingMessaging struct {
 	updateCalls      int
 	updateChannel    string
 	updateTS         string
+	updateText       string
 	updateReturnsErr error
+
+	openCalls       int
+	openUsers       []string
+	openChannelID   string
+	openReturnedErr error
 }
 
-func (m *recordingMessaging) PostMessageContext(_ context.Context, channelID string, _ ...slack.MsgOption) (string, string, error) {
+func (m *recordingMessaging) PostMessageContext(_ context.Context, channelID string, options ...slack.MsgOption) (string, string, error) {
 	m.postCalls++
 	m.postChannel = channelID
 	if m.postReturnedErr != nil {
@@ -42,17 +49,35 @@ func (m *recordingMessaging) PostMessageContext(_ context.Context, channelID str
 		m.postReturnedTS = "1700000000.000100"
 	}
 	m.postTS = m.postReturnedTS
+	_ = options
 	return channelID, m.postReturnedTS, nil
 }
 
-func (m *recordingMessaging) UpdateMessageContext(_ context.Context, channelID, timestamp string, _ ...slack.MsgOption) (string, string, string, error) {
+func (m *recordingMessaging) UpdateMessageContext(_ context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error) {
 	m.updateCalls++
 	m.updateChannel = channelID
 	m.updateTS = timestamp
+	if _, values, err := slack.UnsafeApplyMsgOptions("", channelID, "", options...); err == nil {
+		m.updateText = values.Get("text")
+	}
 	if m.updateReturnsErr != nil {
 		return "", "", "", m.updateReturnsErr
 	}
 	return channelID, timestamp, restartResumedText, nil
+}
+
+func (m *recordingMessaging) OpenConversationContext(_ context.Context, params *slack.OpenConversationParameters) (*slack.Channel, bool, bool, error) {
+	m.openCalls++
+	if params != nil {
+		m.openUsers = append([]string(nil), params.Users...)
+	}
+	if m.openReturnedErr != nil {
+		return nil, false, false, m.openReturnedErr
+	}
+	if m.openChannelID == "" {
+		m.openChannelID = "DADMIN00"
+	}
+	return &slack.Channel{GroupConversation: slack.GroupConversation{Conversation: slack.Conversation{ID: m.openChannelID}}}, false, false, nil
 }
 
 func newSilentLogger() *slog.Logger {

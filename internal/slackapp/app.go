@@ -302,6 +302,14 @@ func (a *App) handleInteractive(event socketmode.Event) {
 		a.logger.Info("denied interactive callback from unauthorized user", "user", interaction.User.ID, "channel", interaction.Channel.ID, "callback_id", interaction.CallbackID)
 		return
 	}
+	if isRestartSuggestionInteraction(interaction) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			a.handleRestartSuggestionInteraction(ctx, interaction)
+		}()
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
