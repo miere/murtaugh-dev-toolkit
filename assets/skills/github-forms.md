@@ -23,6 +23,17 @@ build approve/reject cards, GitHub PR actions, and similar lightweight forms.
 5. The matched rule's triggers fire in order: `reply-to-slack` posts a templated
    response, and/or `run` invokes a command with the interaction JSON on stdin.
 
+## Security — confirm with the user before you design
+
+Slack delivers Block Kit messages to **every member of the channel** they're posted to. Murtaugh's `admin_user` / `allowed_users` allowlist gates *who can act* on the form (clicks from outsiders are silently dropped), but it does **not** control *who can see* it. Before drafting the form, walk the user through:
+
+- **Visibility — who should see the buttons?** A public channel post is visible to every channel member. For one-recipient delivery, use `chat.postEphemeral` (in-channel, only that user, dismissible) or a DM. Modal dialogs (which would be inherently single-user) are not yet supported.
+- **Actors — who is in `allowed_users`?** Anyone outside the allowlist will be silently ignored on click; confirm the intended actors are allowlisted, or the form is inert for them.
+- **Payload — what's in `action_id`, `block_id`, and button `value`?** These travel inside the message JSON and are readable by anyone who can see the message. Never embed secrets, tokens, or PII; keep keys opaque and resolve them server-side.
+- **Side effects — what does `run` do?** The command receives the full interaction payload on stdin and can have real-world effects (API calls, file writes). Make sure the user understands the blast radius of a click before wiring it up — and consider a confirmation step for destructive actions.
+
+If any answer is fuzzy, refine the form first (narrow the channel, switch to ephemeral, scope `allowed_users`, gate destructive actions behind confirmation) rather than ship-and-see.
+
 ## Designing the blocks
 
 Compose your form with the standard Block Kit primitives and give every actionable
