@@ -329,6 +329,20 @@ func (c ConfigurationConfig) IsAllowedUser(userID string) bool {
 	return false
 }
 
+// IsAdminUser reports whether the given Slack user ID matches the
+// resolved configuration.admin_user. Like IsAllowedUser this is ID-only,
+// so admin_user must already have been resolved from a handle to a Slack
+// user ID (slackapp.resolveAllowSet does this at daemon start). A blank
+// or handle-shaped admin_user will never match.
+func (c ConfigurationConfig) IsAdminUser(userID string) bool {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+	admin := strings.TrimPrefix(strings.TrimSpace(c.AdminUser), "@")
+	return looksLikeSlackUserID(admin) && admin == userID
+}
+
 func looksLikeSlackUserID(value string) bool {
 	if len(value) < 4 {
 		return false

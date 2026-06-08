@@ -456,6 +456,38 @@ func TestIsAllowedUserRejectsBlankInput(t *testing.T) {
 	}
 }
 
+func TestIsAdminUserMatchesAdminID(t *testing.T) {
+	cfg, err := Parse(testConfig(`configuration:
+  admin_user: U0ADMIN00
+  allowed_users:
+    - U0ALICE00
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if !cfg.Configuration.IsAdminUser("U0ADMIN00") {
+		t.Fatal("expected admin user ID to be recognized as admin")
+	}
+	if cfg.Configuration.IsAdminUser("U0ALICE00") {
+		t.Fatal("expected allowed-but-non-admin user to be rejected by IsAdminUser")
+	}
+	if cfg.Configuration.IsAdminUser("") || cfg.Configuration.IsAdminUser("   ") {
+		t.Fatal("expected blank input to be rejected")
+	}
+}
+
+func TestIsAdminUserSkipsHandleConfiguredAdmin(t *testing.T) {
+	cfg, err := Parse(testConfig(`configuration:
+  admin_user: murtaugh-admin
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if cfg.Configuration.IsAdminUser("U0ADMIN00") {
+		t.Fatal("expected helper to refuse handle-shaped admin_user matching")
+	}
+}
+
 func TestParseUnfurlRejectsBadRegex(t *testing.T) {
 	cfg, err := Parse(testConfig(`unfurl-rules:
   bad:

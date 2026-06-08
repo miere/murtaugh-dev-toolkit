@@ -22,6 +22,14 @@ type workflowDispatcher interface {
 	Execute(ctx context.Context, interaction slack.InteractionCallback) error
 }
 
+// RestartTrigger is the function the App calls to request a graceful
+// restart. The arguments mirror internal/app.RestartRequest field-by-field
+// but stay stringly-typed so slackapp does not need to import the
+// composition root (which would create a cycle). Returns true when the
+// shutdown sequence has begun, false when the request was declined
+// (already firing, within cool-down, or no coordinator is wired).
+type RestartTrigger func(source, userID, channel, reason string) bool
+
 type App struct {
 	api             userDirectoryAPI
 	socket          *socketmode.Client
@@ -40,6 +48,10 @@ type App struct {
 	// are mutated in place by resolveAllowSet at the start of Run so the rest
 	// of the App can rely on ID-only comparisons via cfg.IsAllowedUser.
 	cfg config.ConfigurationConfig
+	// restart is the optional graceful-restart trigger. nil in CLI/MCP and
+	// in tests that do not need to exercise the restart path; the slash
+	// handler reports "not available" when nil.
+	restart RestartTrigger
 }
 
 func New(cfg config.Config, logger *slog.Logger) *App {
@@ -118,6 +130,14 @@ func New(cfg config.Config, logger *slog.Logger) *App {
 		logger:          logger,
 		cfg:             cfg.Configuration,
 	}
+}
+
+// WithRestartTrigger attaches the graceful-restart trigger and returns the
+// receiver for fluent wiring at the composition root. When nil (the
+// default) the restart slash verb reports the feature as unavailable.
+func (a *App) WithRestartTrigger(trigger RestartTrigger) *App {
+	a.restart = trigger
+	return a
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -265,6 +285,10 @@ func (a *App) handleSlashCommand(ctx context.Context, event socketmode.Event) {
 	}
 
 	response, err := a.handler.HandleSlashCommand(ctx, command)
+	if isRestartSlashCommand(command.Text) {
+		a.handleRestartSlashCommand(event, command)
+		return
+	}
 	if isChatSlashCommand(command.Text) {
 		a.handleChatSlashCommand(ctx, event, command)
 		return
@@ -274,6 +298,31 @@ func (a *App) handleSlashCommand(ctx context.Context, event socketmode.Event) {
 		response = ephemeralText("Murtaugh hit an error while handling that command.")
 	}
 	a.ack(event, response)
+}
+
+// handleRestartSlashCommand is invoked when an allowed user issues the
+// `restart` verb. Authorization is two-layered: the outer
+// handleSlashCommand has already checked IsAllowedUser, and this method
+// additionally requires IsAdminUser. Non-admin allowed users receive an
+// ephemeral deny so the failure mode is discoverable (unlike DMs or
+// mentions, where silent ignore is the policy).
+func (a *App) handleRestartSlashCommand(event socketmode.Event, command slack.SlashCommand) {
+	if !a.cfg.IsAdminUser(command.UserID) {
+		a.logger.Info("denied restart slash command from non-admin user", "command", command.Command, "user", command.UserID, "channel", command.ChannelID)
+		a.ack(event, ephemeralText("Sorry, only the configured admin can restart Murtaugh."))
+		return
+	}
+	if a.restart == nil {
+		a.logger.Warn("restart slash command received but no coordinator is wired", "user", command.UserID, "channel", command.ChannelID)
+		a.ack(event, ephemeralText("Restart is not available in this deployment."))
+		return
+	}
+	reason := fmt.Sprintf("user requested via %s restart", command.Command)
+	if !a.restart(string(restartSourceSlash), command.UserID, command.ChannelID, reason) {
+		a.ack(event, ephemeralText("A restart is already in progress (or the cool-down has not elapsed). Try again shortly."))
+		return
+	}
+	a.ack(event, ephemeralText("Restarting Murtaugh now. I'll be back in a moment."))
 }
 
 func (a *App) handleChatSlashCommand(ctx context.Context, event socketmode.Event, command slack.SlashCommand) {
@@ -368,6 +417,17 @@ func (a *App) startChat(parent context.Context, req ChatRequest) {
 func isChatSlashCommand(text string) bool {
 	fields := strings.Fields(text)
 	return len(fields) > 0 && strings.EqualFold(fields[0], "chat")
+}
+
+// restartSourceSlash mirrors internal/app.RestartSourceSlash. It is
+// duplicated here to keep slackapp independent of the composition root
+// (importing internal/app would cycle back). Compatibility is enforced by
+// keeping both string values identical.
+const restartSourceSlash = "slash"
+
+func isRestartSlashCommand(text string) bool {
+	fields := strings.Fields(text)
+	return len(fields) > 0 && strings.EqualFold(fields[0], "restart")
 }
 
 func slashChatPrompt(text string) string {

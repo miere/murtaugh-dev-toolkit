@@ -49,12 +49,13 @@ func (h *DefaultSlashCommandHandler) HandleSlashCommand(_ context.Context, comma
 }
 
 func (h *DefaultSlashCommandHandler) help(commandName string) AckResponse {
+	verbs := fmt.Sprintf("• `%s chat <prompt>` — ask the configured ACP agent\n• `%s restart` — admin-only graceful restart\n• `%s help` — show this message", commandName, commandName, commandName)
 	return AckResponse{
 		ResponseType: "ephemeral",
-		Text:         fmt.Sprintf("%s is connected. ACP agent routing and richer BlockKit workflows are ready to be implemented next.", commandName),
+		Text:         fmt.Sprintf("%s is connected.", commandName),
 		Blocks: []slack.Block{
 			slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*%s is connected.*", commandName), false, false), nil, nil),
-			slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("Use `%s chat <prompt>` to ask the configured ACP agent. You can also DM the bot or mention it in a channel when ACP chat is enabled.", commandName), false, false), nil, nil),
+			slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, verbs, false, false), nil, nil),
 		},
 	}
 }

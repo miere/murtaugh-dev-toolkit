@@ -197,6 +197,101 @@ func TestHandleInteractiveAllowsAllowlistedUser(t *testing.T) {
 	}
 }
 
+type recordingRestart struct {
+	calls       int
+	lastSource  string
+	lastUser    string
+	lastChannel string
+	lastReason  string
+	accept      bool
+}
+
+func (r *recordingRestart) trigger(source, userID, channel, reason string) bool {
+	r.calls++
+	r.lastSource = source
+	r.lastUser = userID
+	r.lastChannel = channel
+	r.lastReason = reason
+	return r.accept
+}
+
+func TestHandleSlashCommandRestartDeniesNonAdmin(t *testing.T) {
+	restart := &recordingRestart{accept: true}
+	app := &App{
+		handler: &recordingSlashHandler{},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		cfg:     config.ConfigurationConfig{AdminUser: "UADMIN00", AllowedUsers: []string{"UALICE00"}},
+		restart: restart.trigger,
+	}
+	app.handleSlashCommand(context.Background(), socketmode.Event{
+		Type: socketmode.EventTypeSlashCommand,
+		Data: slack.SlashCommand{Command: "/murtaugh", UserID: "UALICE00", ChannelID: "C1", Text: "restart"},
+	})
+	if restart.calls != 0 {
+		t.Fatalf("expected non-admin restart request to bypass coordinator, got %d calls", restart.calls)
+	}
+}
+
+func TestHandleSlashCommandRestartFiresCoordinatorForAdmin(t *testing.T) {
+	restart := &recordingRestart{accept: true}
+	app := &App{
+		handler: &recordingSlashHandler{},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		cfg:     config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		restart: restart.trigger,
+	}
+	app.handleSlashCommand(context.Background(), socketmode.Event{
+		Type: socketmode.EventTypeSlashCommand,
+		Data: slack.SlashCommand{Command: "/murtaugh", UserID: "UADMIN00", ChannelID: "C1", Text: "restart"},
+	})
+	if restart.calls != 1 {
+		t.Fatalf("expected admin restart to fire coordinator once, got %d calls", restart.calls)
+	}
+	if restart.lastSource != "slash" || restart.lastUser != "UADMIN00" || restart.lastChannel != "C1" {
+		t.Fatalf("unexpected restart payload: source=%q user=%q channel=%q reason=%q",
+			restart.lastSource, restart.lastUser, restart.lastChannel, restart.lastReason)
+	}
+	if restart.lastReason == "" {
+		t.Fatal("expected restart reason to be populated for audit log")
+	}
+}
+
+func TestHandleSlashCommandRestartUnavailableWhenTriggerMissing(t *testing.T) {
+	handler := &recordingSlashHandler{}
+	app := &App{
+		handler: handler,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		cfg:     config.ConfigurationConfig{AdminUser: "UADMIN00"},
+	}
+	app.handleSlashCommand(context.Background(), socketmode.Event{
+		Type: socketmode.EventTypeSlashCommand,
+		Data: slack.SlashCommand{Command: "/murtaugh", UserID: "UADMIN00", ChannelID: "C1", Text: "restart"},
+	})
+	// The default handler still runs (it produces the "I do not know restart"
+	// fallback), but the restart branch intercepts before the ack and must
+	// not panic when the trigger is nil.
+	if handler.calls != 1 {
+		t.Fatalf("expected default handler to be invoked once, got %d", handler.calls)
+	}
+}
+
+func TestHandleSlashCommandRestartSurfacesCooldown(t *testing.T) {
+	restart := &recordingRestart{accept: false}
+	app := &App{
+		handler: &recordingSlashHandler{},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		cfg:     config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		restart: restart.trigger,
+	}
+	app.handleSlashCommand(context.Background(), socketmode.Event{
+		Type: socketmode.EventTypeSlashCommand,
+		Data: slack.SlashCommand{Command: "/murtaugh", UserID: "UADMIN00", ChannelID: "C1", Text: "restart"},
+	})
+	if restart.calls != 1 {
+		t.Fatalf("expected coordinator to be consulted exactly once, got %d", restart.calls)
+	}
+}
+
 func TestDMEventIgnoresUnauthorizedUser(t *testing.T) {
 	sessions := &fakeChatSessions{}
 	app := &App{

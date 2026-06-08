@@ -74,9 +74,22 @@ func (a *Application) Run(ctx context.Context) error {
 	case ModeMCP:
 		return mcp.New(a.registry).Serve(ctx)
 	case ModeSlack:
-		app := slackapp.New(a.cfg, a.logger)
+		sl := slackapp.New(a.cfg, a.logger)
+		if rc := a.restart; rc != nil {
+			// Adapt the coordinator's Request method into slackapp's
+			// stringly-typed trigger so the slackapp package stays free
+			// of any internal/app import (which would cycle).
+			sl = sl.WithRestartTrigger(func(source, userID, channel, reason string) bool {
+				return rc.Request(RestartRequest{
+					Source:  RestartSource(source),
+					UserID:  userID,
+					Channel: channel,
+					Reason:  reason,
+				})
+			})
+		}
 		a.logger.Info("starting Slack Socket Mode service", "config", a.configPath)
-		err := app.Run(ctx)
+		err := sl.Run(ctx)
 		if err != nil && ctx.Err() != nil {
 			err = nil
 		}
