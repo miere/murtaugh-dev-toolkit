@@ -57,7 +57,12 @@ func TestAppMentionEventRoutesToACPChat(t *testing.T) {
 	fakeSessions := &fakeChatSessions{}
 	sessions := map[string]ChatSessionManager{"default": fakeSessions}
 	resolver := func(req ChatRequest) string { return "default" }
-	app := &App{chat: NewChatHandler(api, sessions, resolver, time.Hour, 1, nil), chatTimeout: time.Second, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	app := &App{
+		chat:        NewChatHandler(api, sessions, resolver, time.Hour, 1, nil),
+		chatTimeout: time.Second,
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		cfg:         config.ConfigurationConfig{AllowedUsers: []string{"U1"}},
+	}
 	app.handleEventsAPI(socketmode.Event{Type: socketmode.EventTypeEventsAPI, Data: slackevents.EventsAPIEvent{
 		TeamID:     "T1",
 		InnerEvent: slackevents.EventsAPIInnerEvent{Type: string(slackevents.AppMention), Data: &slackevents.AppMentionEvent{User: "U1", Channel: "C1", Text: "<@UBOT> hello", TimeStamp: "123.4"}},

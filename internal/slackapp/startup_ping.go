@@ -67,23 +67,14 @@ func (n *SlackStartupNotifier) NotifyStartup(ctx context.Context) error {
 }
 
 func (n *SlackStartupNotifier) resolveAdminUserID(ctx context.Context) (string, error) {
-	handle := strings.TrimPrefix(strings.TrimSpace(n.adminUser), "@")
-	if looksLikeUserID(handle) {
-		return handle, nil
-	}
-	users, err := n.api.GetUsersContext(ctx)
+	ids, err := resolveUserIDs(ctx, n.api, []string{n.adminUser})
 	if err != nil {
-		return "", fmt.Errorf("list Slack users: %w", err)
+		return "", fmt.Errorf("resolve configuration.admin_user: %w", err)
 	}
-	for _, user := range users {
-		if user.Deleted || user.IsBot {
-			continue
-		}
-		if slackUserMatchesHandle(user, handle) {
-			return user.ID, nil
-		}
+	if len(ids) != 1 {
+		return "", fmt.Errorf("resolve configuration.admin_user %q: unexpected resolution result", n.adminUser)
 	}
-	return "", fmt.Errorf("configuration.admin_user %q was not found", n.adminUser)
+	return ids[0], nil
 }
 
 func loadStartupPingBlocks() ([]slack.Block, error) {

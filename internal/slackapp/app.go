@@ -17,7 +17,7 @@ import (
 )
 
 type App struct {
-	api             *slack.Client
+	api             userDirectoryAPI
 	socket          *socketmode.Client
 	handler         SlashCommandHandler
 	workflow        *workflow.Engine
@@ -29,6 +29,11 @@ type App struct {
 	startupNotifier StartupNotifier
 	startupPingSent bool
 	logger          *slog.Logger
+	// cfg holds the configuration values consulted at runtime. Authz entries
+	// (admin_user, allowed_users) start out as configured (IDs or handles) and
+	// are mutated in place by resolveAllowSet at the start of Run so the rest
+	// of the App can rely on ID-only comparisons via cfg.IsAllowedUser.
+	cfg config.ConfigurationConfig
 }
 
 func New(cfg config.Config, logger *slog.Logger) *App {
@@ -105,10 +110,18 @@ func New(cfg config.Config, logger *slog.Logger) *App {
 		unfurlTimeout:   2 * time.Minute,
 		startupNotifier: startupNotifier,
 		logger:          logger,
+		cfg:             cfg.Configuration,
 	}
 }
 
 func (a *App) Run(ctx context.Context) error {
+	resolveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	err := a.resolveAllowSet(resolveCtx)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("resolve allowed users: %w", err)
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- a.socket.RunContext(ctx)
@@ -163,6 +176,38 @@ func (a *App) handleEvent(ctx context.Context, event socketmode.Event) {
 	}
 }
 
+// resolveAllowSet resolves configuration.admin_user and configuration.allowed_users
+// (each may be a Slack user ID or a handle) into IDs and rewrites a.cfg with
+// the resolved values, so subsequent IsAllowedUser checks are ID-only. A
+// single users.list call is made when any entry is a handle. Unresolvable
+// entries are fatal (fail-closed). When both admin_user and allowed_users are
+// empty the App is effectively locked down and direct interactions will be
+// denied; a warning is logged in that case.
+func (a *App) resolveAllowSet(ctx context.Context) error {
+	refs := make([]string, 0, 1+len(a.cfg.AllowedUsers))
+	hasAdmin := strings.TrimSpace(a.cfg.AdminUser) != ""
+	if hasAdmin {
+		refs = append(refs, a.cfg.AdminUser)
+	}
+	refs = append(refs, a.cfg.AllowedUsers...)
+	if len(refs) == 0 {
+		a.logger.Warn("authorization locked down: configuration.admin_user and configuration.allowed_users are both empty; direct interactions will be ignored")
+		return nil
+	}
+	ids, err := resolveUserIDs(ctx, a.api, refs)
+	if err != nil {
+		return err
+	}
+	if hasAdmin {
+		a.cfg.AdminUser = ids[0]
+		a.cfg.AllowedUsers = ids[1:]
+	} else {
+		a.cfg.AllowedUsers = ids
+	}
+	a.logger.Info("resolved authorized Slack users", "admin_user", a.cfg.AdminUser, "allowed_users", len(a.cfg.AllowedUsers))
+	return nil
+}
+
 func (a *App) notifyStartup(ctx context.Context) {
 	if a.startupNotifier == nil || a.startupPingSent {
 		return
@@ -200,6 +245,12 @@ func (a *App) handleSlashCommand(ctx context.Context, event socketmode.Event) {
 	if !ok {
 		a.ack(event, ephemeralText("Unsupported slash command payload."))
 		a.logger.Warn("unexpected slash command payload", "type", fmt.Sprintf("%T", event.Data))
+		return
+	}
+
+	if !a.cfg.IsAllowedUser(command.UserID) {
+		a.logger.Info("denied slash command from unauthorized user", "command", command.Command, "user", command.UserID, "channel", command.ChannelID)
+		a.ack(event, ephemeralText("Sorry, you are not authorized to use this command."))
 		return
 	}
 
@@ -248,6 +299,10 @@ func (a *App) handleEventsAPI(event socketmode.Event) {
 		if inner.BotID != "" {
 			return
 		}
+		if !a.cfg.IsAllowedUser(inner.User) {
+			a.logger.Debug("ignored app_mention from unauthorized user", "user", inner.User, "channel", inner.Channel)
+			return
+		}
 		text := stripSlackMentions(inner.Text)
 		a.startChat(context.Background(), ChatRequest{TeamID: eventsAPI.TeamID, ChannelID: inner.Channel, UserID: inner.User, ThreadTS: inner.ThreadTimeStamp, MessageTS: inner.TimeStamp, Text: text, Source: "app_mention"})
 	case *slackevents.MessageEvent:
@@ -256,6 +311,10 @@ func (a *App) handleEventsAPI(event socketmode.Event) {
 			return
 		}
 		if inner.BotID != "" || inner.SubType != "" || inner.ChannelType != "im" {
+			return
+		}
+		if !a.cfg.IsAllowedUser(inner.User) {
+			a.logger.Debug("ignored DM from unauthorized user", "user", inner.User, "channel", inner.Channel)
 			return
 		}
 		a.startChat(context.Background(), ChatRequest{TeamID: eventsAPI.TeamID, ChannelID: inner.Channel, UserID: inner.User, ThreadTS: inner.ThreadTimeStamp, MessageTS: inner.TimeStamp, Text: inner.Text, DM: true, Source: "dm"})
