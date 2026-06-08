@@ -21,6 +21,7 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/jobs/define"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/jobs/run"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/ping"
+	setupagents "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/agents"
 	setupbootstrap "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/bootstrap"
 	setupslack "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/slack"
 )
@@ -225,5 +226,28 @@ func buildRegistry(cfg config.Config, configPath string) *tools.Registry {
 	reg.Register(setupbootstrap.New(bootstrapPath))
 	reg.Register(setupslack.New(bootstrapPath))
 
+	agentsPath := func() string {
+		if base := baseDirFor(cfg, configPath); base != "" {
+			return filepath.Join(base, "agents.yaml")
+		}
+		return ""
+	}
+	reg.Register(setupagents.New(agentsPath))
+
 	return reg
+}
+
+// baseDirFor resolves the config directory the same way jobsPath/bootstrapPath
+// do: cfg.BaseDir wins, then filepath.Dir(configPath), then $HOME/.config/murtaugh.
+func baseDirFor(cfg config.Config, configPath string) string {
+	if cfg.BaseDir != "" {
+		return cfg.BaseDir
+	}
+	if configPath != "" {
+		return filepath.Dir(configPath)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "murtaugh")
+	}
+	return ""
 }
