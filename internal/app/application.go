@@ -22,6 +22,7 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/jobs/run"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/ping"
 	setupbootstrap "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/bootstrap"
+	setupslack "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/slack"
 )
 
 // Mode selects which frontend Run starts.
@@ -222,6 +223,7 @@ func buildRegistry(cfg config.Config, configPath string) *tools.Registry {
 		return ""
 	}
 	reg.Register(setupbootstrap.New(bootstrapPath))
+	reg.Register(setupslack.New(bootstrapPath))
 
 	return reg
 }
