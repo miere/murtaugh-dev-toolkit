@@ -1,4 +1,4 @@
-# Skill: GitHub Forms Workflow
+# Skill: Slack Forms Workflow
 
 Murtaugh can turn a Block Kit message into an interactive form: your agent posts a
 message with buttons, and when a user clicks one, Murtaugh routes the interaction
