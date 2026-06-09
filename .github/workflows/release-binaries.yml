@@ -67,3 +67,31 @@ jobs:
           tag_name: ${{ env.TAG_NAME }}
           files: ${{ env.ASSET_PATH }}
           overwrite_files: true
+
+  installer:
+    name: Upload macOS installer
+    runs-on: ubuntu-latest
+    env:
+      TAG_NAME: ${{ github.ref_name }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # The installer is platform-wide, not per-arch, so it ships once from a
+      # standalone job rather than racing four matrix legs. Renamed to make the
+      # macOS scope obvious in the release asset list.
+      - name: Stage installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp install/macos/install.sh dist/install_macos.sh
+          chmod +x dist/install_macos.sh
+
+      - name: Upload installer asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          files: dist/install_macos.sh
+          overwrite_files: true

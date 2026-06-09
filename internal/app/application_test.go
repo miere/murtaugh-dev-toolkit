@@ -18,7 +18,7 @@ func discardLogger() *slog.Logger {
 // names and required-field schemas. Drift here means the binary ships with
 // missing or mis-named tools.
 func TestRegistry_ContainsAllExpectedTools(t *testing.T) {
-	app := New(ModeCLI, nil, config.Config{}, "/tmp/slack.yaml", discardLogger())
+	app := New(ModeCLI, nil, config.Config{}, "/tmp/slack.yaml", "v0.0.0-test", discardLogger())
 
 	cases := []struct {
 		name     string
@@ -27,6 +27,12 @@ func TestRegistry_ContainsAllExpectedTools(t *testing.T) {
 		{"ping", nil},
 		{"jobs.run", []string{"name"}},
 		{"jobs.define", []string{"name", "command"}},
+		{"setup.bootstrap", nil},
+		{"setup.slack", []string{"app_token", "bot_token", "admin_user"}},
+		{"setup.agents", []string{}},
+		{"setup.mcp-register", []string{"client", "binary_path"}},
+		{"setup.launchd", []string{"binary_path"}},
+		{"setup.update", []string{}},
 	}
 
 	for _, c := range cases {
@@ -61,11 +67,12 @@ func TestRegistry_ContainsAllExpectedTools(t *testing.T) {
 // TestUsageLine_ListsFlatToolsNamespacesAndModes guards the bare-invocation
 // help line. Regressions there mask missing tools or missing entry points.
 func TestUsageLine_ListsFlatToolsNamespacesAndModes(t *testing.T) {
-	line := New(ModeCLI, nil, config.Config{}, "/tmp/slack.yaml", discardLogger()).UsageLine()
+	line := New(ModeCLI, nil, config.Config{}, "/tmp/slack.yaml", "v0.0.0-test", discardLogger()).UsageLine()
 
 	for _, want := range []string{
 		"ping",
 		"jobs <define|run>",
+		"setup <agents|bootstrap|launchd|mcp-register|slack|update>",
 		"slack",
 		"mcp",
 	} {

@@ -67,9 +67,18 @@ func run(rawArgs []string) error {
 	if err := config.Bootstrap(configPath); err != nil {
 		return err
 	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return err
+	// Setup tools are the bootstrap path: they may run before a valid config
+	// has been written, and Validate() would reject the placeholder slack.yaml
+	// the installer plans to overwrite. Skip Load() and hand the tool an
+	// empty Config — every setup.* tool resolves its target path from the
+	// config dir alone.
+	var cfg config.Config
+	if !isSetupInvocation(mode, rest) {
+		loaded, err := config.Load(configPath)
+		if err != nil {
+			return err
+		}
+		cfg = loaded
 	}
 
 	logger := newLogger(cfg.Configuration.Debug, mode)
@@ -77,7 +86,7 @@ func run(rawArgs []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	application := app.New(mode, rest, cfg, configPath, logger)
+	application := app.New(mode, rest, cfg, configPath, version, logger)
 	// The Slack daemon is the only long-running mode that needs a
 	// user-triggered restart path. stop is reused as the cancel hook so
 	// the coordinator's shutdown looks identical to a SIGTERM from the
@@ -145,6 +154,16 @@ func parseConfigToken(a string) (string, string, bool) {
 		hasValue = true
 	}
 	return name, value, hasValue
+}
+
+// isSetupInvocation reports whether the CLI was asked to run a setup.* tool.
+// Setup tools intentionally run before config.Load — they exist precisely to
+// produce the file that Load would otherwise validate.
+func isSetupInvocation(mode app.Mode, rest []string) bool {
+	if mode != app.ModeCLI || len(rest) == 0 {
+		return false
+	}
+	return rest[0] == "setup"
 }
 
 // selectMode resolves the top-level subcommand. `slack` is the default when

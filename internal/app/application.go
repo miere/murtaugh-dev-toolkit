@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -21,6 +23,12 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/jobs/define"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/jobs/run"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/ping"
+	setupagents "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/agents"
+	setupbootstrap "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/bootstrap"
+	setuplaunchd "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/launchd"
+	setupmcpregister "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/mcpregister"
+	setupslack "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/slack"
+	setupupdate "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/update"
 )
 
 // Mode selects which frontend Run starts.
@@ -43,6 +51,7 @@ type Application struct {
 	args       []string
 	cfg        config.Config
 	configPath string
+	version    string
 	logger     *slog.Logger
 	registry   *tools.Registry
 	// restart is the optional graceful-restart coordinator. Only the Slack
@@ -61,14 +70,16 @@ type Application struct {
 // New constructs an Application for the given mode. cfg/configPath/logger
 // come from the entry point so the same loaded state is shared across
 // frontends. args is the list of positional arguments handed to the CLI
-// frontend (Slack/MCP ignore it).
-func New(mode Mode, args []string, cfg config.Config, configPath string, logger *slog.Logger) *Application {
-	reg := buildRegistry(cfg, configPath)
+// frontend (Slack/MCP ignore it). version is the binary's compile-time
+// version string (e.g. "v0.4.1" or "dev") and is consumed by setup.update.
+func New(mode Mode, args []string, cfg config.Config, configPath, version string, logger *slog.Logger) *Application {
+	reg := buildRegistry(cfg, configPath, version)
 	return &Application{
 		mode:       mode,
 		args:       args,
 		cfg:        cfg,
 		configPath: configPath,
+		version:    version,
 		logger:     logger,
 		registry:   reg,
 	}
@@ -187,7 +198,7 @@ func (a *Application) WithConfigWatchPaths(paths []string) *Application {
 
 // buildRegistry wires every tool Murtaugh ships with. New tools must be
 // registered here so they appear in both the CLI and MCP frontends.
-func buildRegistry(cfg config.Config, configPath string) *tools.Registry {
+func buildRegistry(cfg config.Config, configPath, version string) *tools.Registry {
 	reg := tools.NewRegistry()
 	reg.Register(ping.New())
 
@@ -211,5 +222,81 @@ func buildRegistry(cfg config.Config, configPath string) *tools.Registry {
 	}
 	reg.Register(define.New(jobsPath))
 
+	bootstrapPath := func() string {
+		if strings.TrimSpace(configPath) != "" {
+			return configPath
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, ".config", "murtaugh", "slack.yaml")
+		}
+		return ""
+	}
+	reg.Register(setupbootstrap.New(bootstrapPath))
+	reg.Register(setupslack.New(bootstrapPath))
+
+	agentsPath := func() string {
+		if base := baseDirFor(cfg, configPath); base != "" {
+			return filepath.Join(base, "agents.yaml")
+		}
+		return ""
+	}
+	reg.Register(setupagents.New(agentsPath))
+	reg.Register(setupmcpregister.New(os.UserHomeDir))
+	reg.Register(setuplaunchd.New(setuplaunchd.Deps{
+		Home:      os.UserHomeDir,
+		GOOS:      runtime.GOOS,
+		Plutil:    execRunner,
+		Launchctl: execRunner,
+	}))
+	reg.Register(setupupdate.New(setupupdate.Deps{
+		CurrentVersion: func() string { return version },
+		CurrentBinary:  os.Executable,
+		GOOS:           runtime.GOOS,
+		GOARCH:         runtime.GOARCH,
+		HTTPGet:        setupupdate.HTTPGetter(),
+		VerifyBinary:   verifyBinary,
+		Owner:          "miere",
+		Repo:           "murtaugh-dev-toolkit",
+	}))
+
 	return reg
+}
+
+// verifyBinary runs `<path> version` to confirm the staged binary is
+// executable on this host. A non-zero exit or unparseable output means we
+// refuse to swap it into place.
+func verifyBinary(path string) error {
+	out, err := exec.Command(path, "version").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s version: %w: %s", path, err, strings.TrimSpace(string(out)))
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return fmt.Errorf("%s version produced no output", path)
+	}
+	return nil
+}
+
+// execRunner runs name with args, surfacing combined stdout/stderr only when
+// the command fails so successful invocations stay quiet on the CLI.
+func execRunner(ctx context.Context, name string, args ...string) error {
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// baseDirFor resolves the config directory the same way jobsPath/bootstrapPath
+// do: cfg.BaseDir wins, then filepath.Dir(configPath), then $HOME/.config/murtaugh.
+func baseDirFor(cfg config.Config, configPath string) string {
+	if cfg.BaseDir != "" {
+		return cfg.BaseDir
+	}
+	if configPath != "" {
+		return filepath.Dir(configPath)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "murtaugh")
+	}
+	return ""
 }

@@ -22,89 +22,144 @@ const (
 // asset is not bundled, satisfying the "skip if they don't exist" convention.
 var optionalBootstrapDocs = []string{"AGENTS.md", "BOOTSTRAP.md"}
 
+// BootstrapReport summarises the result of a Bootstrap pass: which on-disk
+// files were written for the first time, and which were preserved because
+// they already existed. Paths are absolute. Optional assets that are absent
+// from the embedded FS are reported in neither bucket.
+type BootstrapReport struct {
+	Created   []string
+	Preserved []string
+}
+
 // Bootstrap ensures the config directory containing configPath exists and is
 // populated with the built-in defaults the first time the app runs. It is
-// idempotent: existing files are never overwritten.
+// idempotent: existing files are never overwritten. The returned report is
+// discarded; callers that need it should use BootstrapWithReport instead.
+func Bootstrap(configPath string) error {
+	_, err := BootstrapWithReport(configPath)
+	return err
+}
+
+// BootstrapWithReport is the report-returning variant of Bootstrap. It
+// performs the same idempotent seeding and, on success, returns a report
+// describing what was created and what was preserved.
 //
 // On a fresh install it creates:
 //   - the config directory (e.g. ~/.config/murtaugh)
 //   - slack.yaml seeded with the default ping/pong configuration
 //   - a skills/ directory holding every skill bundled in assets/skills
 //   - AGENTS.md and BOOTSTRAP.md, when those docs are embedded in assets/
-func Bootstrap(configPath string) error {
+func BootstrapWithReport(configPath string) (BootstrapReport, error) {
+	report := BootstrapReport{}
 	baseDir := filepath.Dir(configPath)
 	if err := os.MkdirAll(baseDir, bootstrapDirPerm); err != nil {
-		return fmt.Errorf("create config dir %q: %w", baseDir, err)
+		return report, fmt.Errorf("create config dir %q: %w", baseDir, err)
 	}
 
-	if err := copyAssetFile("slack.yaml", configPath); err != nil {
-		return err
+	plan := []struct{ src, dst string }{
+		{"slack.yaml", configPath},
+		{"agents.yaml", filepath.Join(baseDir, "agents.yaml")},
+		{"jobs.yaml", filepath.Join(baseDir, "jobs.yaml")},
 	}
-	if err := copyAssetFile("agents.yaml", filepath.Join(baseDir, "agents.yaml")); err != nil {
-		return err
-	}
-	if err := copyAssetFile("jobs.yaml", filepath.Join(baseDir, "jobs.yaml")); err != nil {
-		return err
-	}
-
-	if err := copySkills(filepath.Join(baseDir, "skills")); err != nil {
-		return err
-	}
-
 	for _, name := range optionalBootstrapDocs {
-		if err := copyAssetFile(name, filepath.Join(baseDir, name)); err != nil {
-			return err
-		}
+		plan = append(plan, struct{ src, dst string }{name, filepath.Join(baseDir, name)})
 	}
-	return nil
+	for _, entry := range plan {
+		outcome, err := copyAssetFile(entry.src, entry.dst)
+		if err != nil {
+			return report, err
+		}
+		report.absorb(outcome, entry.dst)
+	}
+
+	skillOutcomes, err := copySkills(filepath.Join(baseDir, "skills"))
+	if err != nil {
+		return report, err
+	}
+	for _, item := range skillOutcomes {
+		report.absorb(item.outcome, item.path)
+	}
+	return report, nil
+}
+
+// copyOutcome describes what happened to a single destination path during a
+// bootstrap pass.
+type copyOutcome int
+
+const (
+	copyOutcomeSkippedMissingAsset copyOutcome = iota
+	copyOutcomeCreated
+	copyOutcomePreserved
+)
+
+// skillCopyResult pairs a destination path with its outcome so the caller
+// can report skills/* paths individually.
+type skillCopyResult struct {
+	path    string
+	outcome copyOutcome
+}
+
+func (r *BootstrapReport) absorb(outcome copyOutcome, dst string) {
+	switch outcome {
+	case copyOutcomeCreated:
+		r.Created = append(r.Created, dst)
+	case copyOutcomePreserved:
+		r.Preserved = append(r.Preserved, dst)
+	}
 }
 
 // copySkills mirrors every *.md skill from the embedded assets/skills directory
 // into skillsDir, creating it on demand. Existing skills are left untouched.
-func copySkills(skillsDir string) error {
+// The returned slice records the per-file outcome so the caller can report
+// skills/* paths individually.
+func copySkills(skillsDir string) ([]skillCopyResult, error) {
 	entries, err := assets.FS.ReadDir("skills")
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("read embedded skills: %w", err)
+		return nil, fmt.Errorf("read embedded skills: %w", err)
 	}
 	if err := os.MkdirAll(skillsDir, bootstrapDirPerm); err != nil {
-		return fmt.Errorf("create skills dir %q: %w", skillsDir, err)
+		return nil, fmt.Errorf("create skills dir %q: %w", skillsDir, err)
 	}
+	var results []skillCopyResult
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
 		src := path.Join("skills", entry.Name())
 		dst := filepath.Join(skillsDir, entry.Name())
-		if err := copyAssetFile(src, dst); err != nil {
-			return err
+		outcome, err := copyAssetFile(src, dst)
+		if err != nil {
+			return nil, err
 		}
+		results = append(results, skillCopyResult{path: dst, outcome: outcome})
 	}
-	return nil
+	return results, nil
 }
 
 // copyAssetFile writes the embedded asset src to dst. It never overwrites an
 // existing dst, and silently skips when src is not present in the embedded FS
-// so that optional assets remain optional.
-func copyAssetFile(src, dst string) error {
+// so that optional assets remain optional. The returned outcome distinguishes
+// between a fresh write, a preserved file, and a missing optional asset.
+func copyAssetFile(src, dst string) (copyOutcome, error) {
 	if _, err := os.Stat(dst); err == nil {
-		return nil
+		return copyOutcomePreserved, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("stat %q: %w", dst, err)
+		return copyOutcomeSkippedMissingAsset, fmt.Errorf("stat %q: %w", dst, err)
 	}
 
 	data, err := assets.FS.ReadFile(src)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return copyOutcomeSkippedMissingAsset, nil
 	}
 	if err != nil {
-		return fmt.Errorf("read embedded asset %q: %w", src, err)
+		return copyOutcomeSkippedMissingAsset, fmt.Errorf("read embedded asset %q: %w", src, err)
 	}
 
 	if err := os.WriteFile(dst, data, bootstrapFilePerm); err != nil {
-		return fmt.Errorf("write %q: %w", dst, err)
+		return copyOutcomeSkippedMissingAsset, fmt.Errorf("write %q: %w", dst, err)
 	}
-	return nil
+	return copyOutcomeCreated, nil
 }
