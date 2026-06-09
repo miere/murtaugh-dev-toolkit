@@ -445,6 +445,71 @@ func TestInstallerHasNoPythonDependency(t *testing.T) {
 	}
 }
 
+// TestPromptChoiceLoopsOnInvalidInteractiveInput guards the UX regression
+// where a typo at a multi-option prompt (e.g. answering "yes" to
+// "Configure Murtaugh as an MCP server in a client?") aborted the entire
+// install mid-flight. The interactive path must instead render the
+// available options, warn on bad input, and re-prompt until valid.
+// Scripted callers (env var / --yes) still fail fast.
+func TestPromptChoiceLoopsOnInvalidInteractiveInput(t *testing.T) {
+	scriptPath, err := filepath.Abs("install.sh")
+	if err != nil {
+		t.Fatalf("abs path: %v", err)
+	}
+	harness := `set -uo pipefail
+ASSUME_YES=0; SKIP_CONFIG=0; RECONFIGURE=0; FORCE_INSTALL=0
+DRY_RUN=0; LOCAL_BUILD=0; TARGET_VERSION=""
+source "` + scriptPath + `"
+prompt_choice MURTAUGH_MCP_CLIENT "Configure Murtaugh as an MCP server in a client?" skip skip opencode auggie goose
+`
+	cmd := exec.Command("bash", "-c", harness)
+	cmd.Stdin = strings.NewReader("yes\nskip\n")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("prompt_choice harness failed: %v\nstdout=%q\nstderr=%s", err, stdout, stderr.String())
+	}
+	if got := strings.TrimSpace(string(stdout)); got != "skip" {
+		t.Fatalf("expected final choice 'skip', got %q (stderr=%s)", got, stderr.String())
+	}
+	errOut := stderr.String()
+	if !strings.Contains(errOut, "Invalid choice: yes") {
+		t.Fatalf("expected re-prompt warning naming the bad input; stderr=%s", errOut)
+	}
+	for _, opt := range []string{"skip", "opencode", "auggie", "goose"} {
+		if !strings.Contains(errOut, opt) {
+			t.Fatalf("expected available option %q listed for the user; stderr=%s", opt, errOut)
+		}
+	}
+}
+
+// TestPromptChoiceRejectsInvalidEnvVar pins the scripted-caller contract:
+// when MURTAUGH_MCP_CLIENT (or any env-driven choice) holds an invalid
+// value, the installer must abort with a clear error rather than block
+// waiting for stdin. Loop-on-invalid is interactive-only.
+func TestPromptChoiceRejectsInvalidEnvVar(t *testing.T) {
+	scriptPath, err := filepath.Abs("install.sh")
+	if err != nil {
+		t.Fatalf("abs path: %v", err)
+	}
+	harness := `set -uo pipefail
+ASSUME_YES=0; SKIP_CONFIG=0; RECONFIGURE=0; FORCE_INSTALL=0
+DRY_RUN=0; LOCAL_BUILD=0; TARGET_VERSION=""
+export MURTAUGH_MCP_CLIENT=yes
+source "` + scriptPath + `"
+prompt_choice MURTAUGH_MCP_CLIENT "Configure Murtaugh as an MCP server in a client?" skip skip opencode auggie goose
+`
+	cmd := exec.Command("bash", "-c", harness)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected scripted invalid value to abort; got success with output:\n%s", out)
+	}
+	if !strings.Contains(string(out), "invalid value 'yes' for MURTAUGH_MCP_CLIENT") {
+		t.Fatalf("expected explicit invalid-value diagnostic; got:\n%s", out)
+	}
+}
+
 // TestInstallerRejectsLegacyBinaryWithoutSetup guards the regression where
 // install.sh installs a binary that does not yet support `murtaugh setup`
 // and then crashes mid-install with `unknown command: setup`. The new

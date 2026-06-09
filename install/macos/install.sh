@@ -184,22 +184,35 @@ prompt_required() {
   printf '%s' "$value"
 }
 
+# prompt_choice asks the user to pick one of a fixed set of options.
+# Scripted callers (env var set, or --yes) get strict validation: an
+# invalid value aborts immediately, which is what CI/automation needs.
+# Interactive callers get a re-prompt loop with the available options
+# rendered inline, so a typo or a "yes" answer to a multi-option
+# question never aborts the install half-way through.
 prompt_choice() {
   local env_name=$1 prompt=$2 default_value=$3
   shift 3
-  local choices=("$@") value=${!env_name:-} choice
-  if [[ -z "$value" ]]; then
-    if [[ $ASSUME_YES -eq 1 ]]; then
-      value=$default_value
-    else
-      read -r -p "$prompt [$default_value]: " value
-      value=${value:-$default_value}
-    fi
+  local choices=("$@") value=${!env_name:-} choice choices_pretty
+  choices_pretty=$(IFS='/'; printf '%s' "${choices[*]}")
+
+  if [[ -n "$value" || $ASSUME_YES -eq 1 ]]; then
+    [[ -z "$value" ]] && value=$default_value
+    for choice in "${choices[@]}"; do
+      [[ "$value" == "$choice" ]] && { printf '%s' "$value"; return 0; }
+    done
+    die "invalid value '${value}' for ${env_name}; expected one of: ${choices[*]}"
   fi
-  for choice in "${choices[@]}"; do
-    [[ "$value" == "$choice" ]] && { printf '%s' "$value"; return 0; }
+
+  while :; do
+    read -r -p "${prompt} [${choices_pretty}] (default: ${default_value}): " value
+    value=${value:-$default_value}
+    for choice in "${choices[@]}"; do
+      [[ "$value" == "$choice" ]] && { printf '%s' "$value"; return 0; }
+    done
+    printf '[murtaugh-installer] Invalid choice: %s. Please pick one of: %s\n' \
+      "$value" "${choices[*]}" >&2
   done
-  die "invalid value '${value}' for ${env_name}; expected one of: ${choices[*]}"
 }
 
 choose_install_dir() {
@@ -598,5 +611,9 @@ main() {
   log "Done. Re-run this installer any time to update or regenerate config."
 }
 
-main "$@"
+# Only run main when executed directly, so unit tests can source the
+# script to exercise individual helpers like prompt_choice in isolation.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
 
