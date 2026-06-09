@@ -25,6 +25,19 @@ func (f *fakeChatSessions) Prompt(_ context.Context, key acp.ConversationKey, _ 
 	return ch, nil
 }
 
+func (f *fakeChatSessions) Lookup(acp.ConversationKey) (string, bool)  { return "", false }
+func (f *fakeChatSessions) Cancel(context.Context, string) error       { return nil }
+func (f *fakeChatSessionsWithTasks) Lookup(acp.ConversationKey) (string, bool) {
+	return "", false
+}
+func (f *fakeChatSessionsWithTasks) Cancel(context.Context, string) error { return nil }
+func (f *fakeChatSessionsWithCompletedTaskThenText) Lookup(acp.ConversationKey) (string, bool) {
+	return "", false
+}
+func (f *fakeChatSessionsWithCompletedTaskThenText) Cancel(context.Context, string) error {
+	return nil
+}
+
 type fakeChatSessionsWithTasks struct {
 	key    acp.ConversationKey
 	prompt string
@@ -215,6 +228,9 @@ func (f *blockingChatSessions) Prompt(_ context.Context, _ acp.ConversationKey, 
 	return ch, nil
 }
 
+func (f *blockingChatSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *blockingChatSessions) Cancel(context.Context, string) error      { return nil }
+
 func TestChatHandlerRefreshesAssistantStatusWhileEventsPending(t *testing.T) {
 	api := &fakeStreamAPI{}
 	release := make(chan struct{})
@@ -259,6 +275,71 @@ func TestChatHandlerRefreshesAssistantStatusWhileEventsPending(t *testing.T) {
 		}
 	}
 }
+
+// cancellableChatSessions emits one text chunk then blocks waiting for
+// ctx cancellation, closing the events channel on cancel. It simulates
+// a live ACP agent that is mid-response when the user interrupts.
+type cancellableChatSessions struct {
+	firstChunkSent chan struct{}
+}
+
+func (f *cancellableChatSessions) Prompt(ctx context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
+	ch := make(chan acp.Event)
+	go func() {
+		defer close(ch)
+		select {
+		case ch <- acp.Event{Type: acp.EventText, Text: "partial reply"}:
+		case <-ctx.Done():
+			return
+		}
+		if f.firstChunkSent != nil {
+			close(f.firstChunkSent)
+		}
+		<-ctx.Done()
+	}()
+	return ch, nil
+}
+
+func (f *cancellableChatSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *cancellableChatSessions) Cancel(context.Context, string) error      { return nil }
+
+func TestChatHandlerInterruptedByCancelReturnsNil(t *testing.T) {
+	api := &fakeStreamAPI{}
+	firstChunkSent := make(chan struct{})
+	fakeSessions := &cancellableChatSessions{firstChunkSent: firstChunkSent}
+	sessions := map[string]ChatSessionManager{"default": fakeSessions}
+	resolver := func(req ChatRequest) string { return "default" }
+	handler := NewChatHandler(api, sessions, resolver, time.Millisecond, 1, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- handler.Handle(ctx, ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", MessageTS: "123.4", Text: "hi", Source: "test"})
+	}()
+	select {
+	case <-firstChunkSent:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("first chunk never landed; handler likely stalled")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected Handle to swallow caller-initiated cancel and return nil, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Handle did not return within 2s of cancel")
+	}
+	if api.stops == 0 {
+		t.Fatalf("expected writer.Stop to be invoked on interrupt, got stops=%d", api.stops)
+	}
+}
+
+// (Distinguishing context.Canceled vs context.DeadlineExceeded is
+// enforced at the defer level in ChatHandler.Handle via
+// errors.Is(context.Cause(ctx), context.Canceled); a behavioural test
+// would require the shared fakeStreamAPI to propagate ctx errors,
+// which is out of scope here.)
 
 func TestChatHandlerRequiresSourceMessageTimestampForStreaming(t *testing.T) {
 	sessions := map[string]ChatSessionManager{"default": &fakeChatSessions{}}

@@ -246,6 +246,15 @@ agent is configured for that context:
 Responses stream in real time using `chat.startStream` / `chat.appendStream` /
 `chat.stopStream` — no polling or `chat.update` loops.
 
+A new message in the same DM or thread automatically interrupts the previous
+response: Murtaugh asks the ACP agent to cancel the in-flight prompt, waits
+`acp.cancel_grace_period` (default `2s`) for trailing chunks to flush, then
+hard-cancels the chat goroutine. The interrupted reply is sealed with an
+`_interrupted_` marker so the partial output stays visible. To stop a response
+without sending a follow-up, invoke `/stop` (or `/<command> stop`) from inside
+the thread or DM — registration of the `/stop` slash command in the Slack app
+config is the operator's job.
+
 ### Workflow rules
 
 Add rules to `slack.yaml` under `workflow-rules` to respond to Block Kit

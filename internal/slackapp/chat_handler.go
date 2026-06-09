@@ -19,8 +19,16 @@ import (
 // assembled. Two seconds is a compromise between responsiveness and API churn.
 const defaultStatusRefreshInterval = 2 * time.Second
 
+// ChatSessionManager is the narrow surface the slackapp uses to talk to
+// the ACP layer. Prompt drives the streaming response, while Lookup and
+// Cancel back the interrupt-handling path (App.startChat's previous
+// in-flight chat cancellation and the /stop slash command). Lookup is
+// side-effect-free: callers must treat (_, false) as "no live session,
+// skip the ACP cancel call" rather than implicitly opening one.
 type ChatSessionManager interface {
 	Prompt(context.Context, acp.ConversationKey, acp.SessionMetadata, acp.PromptRequest) (<-chan acp.Event, error)
+	Lookup(acp.ConversationKey) (string, bool)
+	Cancel(context.Context, string) error
 }
 
 type ChatSessionWarmer interface {
@@ -68,7 +76,7 @@ func (h *ChatHandler) Warm(ctx context.Context) error {
 	return nil
 }
 
-func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) error {
+func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error) {
 	startedAt := time.Now()
 	if h == nil || len(h.sessions) == 0 {
 		return fmt.Errorf("ACP chat is not enabled")
@@ -95,6 +103,18 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) error {
 		teamID, userID = "", ""
 	}
 	writer := NewStreamWriter(h.api, req.ChannelID, StreamWriterOptions{ThreadTS: streamThreadTS, TeamID: teamID, UserID: userID, Interval: h.interval, MinChars: h.minChars, Logger: h.logger})
+	// Interrupt path: when the caller cancels ctx (slackapp's interrupt
+	// closure or the /stop slash command), render a "_interrupted_"
+	// marker on the partial stream instead of bubbling the cancellation
+	// up as an error. Timeout-driven cancellations (DeadlineExceeded)
+	// still surface as errors so operators notice stalled agents.
+	defer func() {
+		if !errors.Is(context.Cause(ctx), context.Canceled) {
+			return
+		}
+		h.renderInterrupted(writer)
+		retErr = nil
+	}()
 	taskWriter := NewTaskCardWriter(h.api, writer, 0, h.logger)
 	if err := h.api.SetAssistantThreadsStatusContext(ctx, slack.AssistantThreadsSetStatusParameters{
 		ChannelID: req.ChannelID,
@@ -226,6 +246,31 @@ func (h *ChatHandler) refreshAssistantStatus(ctx context.Context, channelID, thr
 				h.logger.Debug("failed to refresh assistant status", "error", err)
 			}
 		}
+	}
+}
+
+// renderInterrupted writes the trailing "_interrupted_" marker onto a
+// partial stream and stops it. The chat goroutine's context is by
+// definition cancelled at this point, so we operate on a fresh bounded
+// background context — Slack still needs to be told the stream is
+// finalised, otherwise the assistant status lingers and the message
+// stays in the in-progress state for up to two minutes. Errors are
+// logged but never propagated; the interrupt path is best-effort.
+func (h *ChatHandler) renderInterrupted(writer *StreamWriter) {
+	if writer == nil {
+		return
+	}
+	if !writer.Started() || writer.Stopped() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := writer.Append(ctx, "\n\n_interrupted_"); err != nil {
+		h.logger.Warn("failed to append interrupted marker", "error", err)
+		return
+	}
+	if err := writer.Stop(ctx); err != nil {
+		h.logger.Warn("failed to stop stream after interrupt", "error", err)
 	}
 }
 

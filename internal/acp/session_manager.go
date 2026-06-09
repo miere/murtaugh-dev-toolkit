@@ -65,6 +65,29 @@ func (m *SessionManager) Prompt(ctx context.Context, key ConversationKey, metada
 	return m.client.Prompt(ctx, session.ID, request)
 }
 
+// Lookup returns the cached session ID for the conversation without
+// creating a new session. The second return value is false when the
+// conversation has no live session — callers must treat that case as
+// "nothing to cancel" and skip the ACP-level cancel call.
+func (m *SessionManager) Lookup(key ConversationKey) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.sessions[key]
+	if !ok {
+		return "", false
+	}
+	return session.session.ID, true
+}
+
+// Cancel asks the underlying ACP client to abort the given session's
+// in-flight prompt. It is a thin pass-through so callers (e.g. the Slack
+// frontend's interrupt registry) do not need to hold a reference to the
+// raw Client. The cancel call is best-effort: the agent is free to
+// finish flushing trailing chunks before honouring the request.
+func (m *SessionManager) Cancel(ctx context.Context, sessionID string) error {
+	return m.client.Cancel(ctx, sessionID)
+}
+
 func (m *SessionManager) session(ctx context.Context, key ConversationKey, metadata SessionMetadata) (Session, error) {
 	m.mu.Lock()
 	if session, ok := m.sessions[key]; ok {

@@ -49,7 +49,7 @@ func (h *DefaultSlashCommandHandler) HandleSlashCommand(_ context.Context, comma
 }
 
 func (h *DefaultSlashCommandHandler) help(commandName string) AckResponse {
-	verbs := fmt.Sprintf("• `%s chat <prompt>` — ask the configured ACP agent\n• `%s restart` — admin-only graceful restart\n• `%s help` — show this message", commandName, commandName, commandName)
+	verbs := fmt.Sprintf("• `%s chat <prompt>` — ask the configured ACP agent\n• `%s stop` — cancel the in-flight response in this thread or DM\n• `%s restart` — admin-only graceful restart\n• `%s help` — show this message", commandName, commandName, commandName, commandName)
 	return AckResponse{
 		ResponseType: "ephemeral",
 		Text:         fmt.Sprintf("%s is connected.", commandName),

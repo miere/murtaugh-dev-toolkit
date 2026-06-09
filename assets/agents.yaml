@@ -7,6 +7,7 @@ acp:
   stream_append_interval: 750ms
   stream_min_chunk_chars: 96
   stream_final_feedback: false
+  cancel_grace_period: 2s
 
 agents:
   default:

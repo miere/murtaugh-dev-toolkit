@@ -2,6 +2,7 @@ package slackapp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -37,10 +38,19 @@ type App struct {
 	handler         SlashCommandHandler
 	workflow        workflowDispatcher
 	chat            *ChatHandler
+	chatSessions    map[string]ChatSessionManager
 	chatTimeout     time.Duration
 	chatWarmTimeout time.Duration
-	unfurl          *LinkUnfurlHandler
-	unfurlTimeout   time.Duration
+	// cancelGrace is how long the interrupt path waits after asking the
+	// ACP agent to cancel its in-flight prompt before hard-cancelling the
+	// chat goroutine's context. Short enough that the user does not stare
+	// at a stalled "_interrupted_" marker, long enough that trailing
+	// chunks already on the wire can flush. Defaults to 2s via
+	// ACPConfig.EffectiveCancelGracePeriod.
+	cancelGrace   time.Duration
+	inFlight      *InFlightRegistry
+	unfurl        *LinkUnfurlHandler
+	unfurlTimeout time.Duration
 	startupNotifier StartupNotifier
 	startupPingSent bool
 	logger          *slog.Logger
@@ -86,11 +96,12 @@ func New(cfg config.Config, logger *slog.Logger) *App {
 		logger.Error("startup Slack ping disabled", "error", err)
 	}
 	var chat *ChatHandler
+	var sessions map[string]ChatSessionManager
 	if !cfg.ACP.Enabled {
 		logger.Warn("ACP chat disabled: set acp.enabled: true in agents.yaml to enable DM and app_mention replies")
 	}
 	if cfg.ACP.Enabled {
-		sessions := make(map[string]ChatSessionManager)
+		sessions = make(map[string]ChatSessionManager)
 		for name, profile := range cfg.Agents {
 			client := acp.NewProcessClient(acp.ProcessOptions{
 				Command: profile.Command,
@@ -143,8 +154,11 @@ func New(cfg config.Config, logger *slog.Logger) *App {
 		handler:         NewDefaultSlashCommandHandler(cfg.Commands),
 		workflow:        workflow.NewEngine(cfg, workflow.Options{Logger: logger}),
 		chat:            chat,
+		chatSessions:    sessions,
 		chatTimeout:     cfg.ACP.EffectiveRequestTimeout(),
 		chatWarmTimeout: cfg.ACP.EffectiveStartupTimeout(),
+		cancelGrace:     cfg.ACP.EffectiveCancelGracePeriod(),
+		inFlight:        NewInFlightRegistry(),
 		unfurl:          unfurlHandler,
 		unfurlTimeout:   2 * time.Minute,
 		startupNotifier: startupNotifier,
@@ -397,6 +411,10 @@ func (a *App) handleSlashCommand(ctx context.Context, event socketmode.Event) {
 		a.handleChatSlashCommand(ctx, event, command)
 		return
 	}
+	if isStopSlashCommand(command) {
+		a.handleStopSlashCommand(event, command, slashCommandThreadTS(event))
+		return
+	}
 	if err != nil {
 		a.logger.Error("slash command failed", "command", command.Command, "error", err)
 		response = ephemeralText("Murtaugh hit an error while handling that command.")
@@ -453,6 +471,30 @@ func (a *App) handleChatSlashCommand(ctx context.Context, event socketmode.Event
 	}
 	a.ack(event, ephemeralText("Murtaugh is answering in the channel."))
 	a.startChat(ctx, ChatRequest{TeamID: command.TeamID, ChannelID: command.ChannelID, UserID: command.UserID, Text: text, Source: "slash_command"})
+}
+
+// handleStopSlashCommand cancels the in-flight chat for the
+// conversation the command was invoked in. Slack's slash command
+// payload carries `thread_ts` when the command was issued from inside
+// a thread (the slack-go SlashCommand struct does not surface it, so
+// the caller re-parses the raw socketmode payload via
+// slashCommandThreadTS and passes it in). For channel-root
+// invocations there is no thread context, so we fall back to a
+// channel-scoped key — that matches DMs (which have no thread either).
+//
+// Authorisation: the outer handleSlashCommand has already enforced
+// IsAllowedUser, so no extra admin gate is required here.
+func (a *App) handleStopSlashCommand(event socketmode.Event, command slack.SlashCommand, threadTS string) {
+	key := acp.ConversationKey{TeamID: command.TeamID, ChannelID: command.ChannelID, ThreadTS: threadTS}
+	if threadTS == "" && strings.HasPrefix(command.ChannelID, "D") {
+		key.DM = true
+	}
+	if a.inFlight.Cancel(key) {
+		a.logger.Info("stop slash command cancelled in-flight chat", "user", command.UserID, "channel", command.ChannelID, "thread_ts", threadTS)
+		a.ack(event, ephemeralText("Stopped."))
+		return
+	}
+	a.ack(event, ephemeralText("Nothing to stop."))
 }
 
 func (a *App) handleEventsAPI(event socketmode.Event) {
@@ -520,19 +562,111 @@ func (a *App) handleLinkShared(teamID string, inner *slackevents.LinkSharedEvent
 	}()
 }
 
+// startChat launches a chat goroutine for the request and wires it into
+// the in-flight registry so subsequent messages on the same
+// conversation interrupt the previous response, and so the /stop slash
+// command can cancel it. The cancellation closure stored in the
+// registry runs a two-step graceful-then-hard sequence: ask the ACP
+// agent to cancel its prompt (best-effort, non-blocking) and, after
+// cancelGrace, hard-cancel the chat goroutine's context. The grace
+// window lets trailing chunks already on the wire flush as
+// "_interrupted_" rather than vanish, which is what ChatHandler.Handle
+// renders when it sees context.Canceled (vs DeadlineExceeded).
 func (a *App) startChat(parent context.Context, req ChatRequest) {
+	ctx, cancelCtx := context.WithTimeout(parent, a.chatTimeout)
+	key := conversationKey(req)
+	agent := ""
+	if a.chat != nil && a.chat.resolver != nil {
+		agent = a.chat.resolver(req)
+	}
+	cancelFunc := a.buildInterruptCancel(key, agent, cancelCtx)
+	_, previous := a.inFlight.Register(key, cancelFunc, agent)
+	if previous != nil {
+		a.logger.Info("interrupting previous in-flight chat", "channel", req.ChannelID, "thread_ts", key.ThreadTS, "agent", agent)
+		previous()
+	}
 	go func() {
-		ctx, cancel := context.WithTimeout(parent, a.chatTimeout)
-		defer cancel()
-		if err := a.chat.Handle(ctx, req); err != nil {
+		defer cancelCtx()
+		err := a.chat.Handle(ctx, req)
+		a.inFlight.Cancel(key) // best-effort self-unregister; no-op if already replaced
+		if err != nil {
 			a.logger.Error("ACP chat failed", "source", req.Source, "channel", req.ChannelID, "error", err)
 		}
 	}()
 }
 
+// buildInterruptCancel returns the cancellation closure stored in the
+// in-flight registry for one chat goroutine. It is invoked either by
+// the next message on the same conversation (interrupt path) or by the
+// /stop slash command. The sequence:
+//
+//  1. Look up the live ACP session ID for the conversation. If there is
+//     one, fire a non-blocking session/cancel — it tells the agent to
+//     stop generating but keeps the session alive for the follow-up.
+//  2. Wait cancelGrace, then hard-cancel the chat goroutine's context.
+//     The grace timer runs in its own goroutine so the registry call
+//     returns immediately; the chat goroutine itself will see the
+//     context cancellation and unwind through ChatHandler.Handle's
+//     interrupted path.
+//
+// Resolution of agent name → session manager uses chatSessions, which
+// the App captured at construction time. When ACP is disabled the
+// closure degenerates to a plain cancelCtx call.
+func (a *App) buildInterruptCancel(key acp.ConversationKey, agent string, cancelCtx context.CancelFunc) context.CancelFunc {
+	return func() {
+		go func() {
+			if a.chatSessions != nil {
+				if sessions, ok := a.chatSessions[agent]; ok {
+					if sessionID, live := sessions.Lookup(key); live {
+						cancelReqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						if err := sessions.Cancel(cancelReqCtx, sessionID); err != nil {
+							a.logger.Warn("ACP session cancel failed", "agent", agent, "session_id", sessionID, "error", err)
+						}
+						cancel()
+					}
+				}
+			}
+			time.Sleep(a.cancelGrace)
+			cancelCtx()
+		}()
+	}
+}
+
 func isChatSlashCommand(text string) bool {
 	fields := strings.Fields(text)
 	return len(fields) > 0 && strings.EqualFold(fields[0], "chat")
+}
+
+// isStopSlashCommand recognises both the standalone `/stop` slash
+// command (carried in command.Command) and the `<command> stop` verb
+// form (carried in command.Text), so operators can wire either shape
+// in the Slack app config. Matching is case-insensitive and tolerant
+// of leading/trailing whitespace.
+func isStopSlashCommand(command slack.SlashCommand) bool {
+	if strings.EqualFold(strings.TrimSpace(command.Command), "/stop") {
+		return true
+	}
+	fields := strings.Fields(command.Text)
+	return len(fields) > 0 && strings.EqualFold(fields[0], "stop")
+}
+
+// slashCommandThreadTS extracts thread_ts from the raw socketmode
+// payload. Slack includes the field on slash command invocations made
+// from inside a thread, but slack-go's SlashCommand struct does not
+// surface it, so we re-parse the JSON. Returns "" when the field is
+// absent (channel-root invocations and DMs), which the caller treats
+// as a channel-scoped lookup.
+func slashCommandThreadTS(event socketmode.Event) string {
+	if event.Request == nil {
+		return ""
+	}
+	var payload struct {
+		ThreadTS string `json:"thread_ts"`
+	}
+	if err := json.Unmarshal(event.Request.Payload, &payload); err != nil {
+		return ""
+	}
+	return payload.ThreadTS
 }
 
 // restartSourceSlash mirrors internal/app.RestartSourceSlash. It is

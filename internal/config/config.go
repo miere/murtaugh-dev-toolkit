@@ -60,6 +60,7 @@ type ACPConfig struct {
 	StreamAppendInterval string `yaml:"stream_append_interval"`
 	StreamMinChunkChars  int    `yaml:"stream_min_chunk_chars"`
 	StreamFinalFeedback  bool   `yaml:"stream_final_feedback"`
+	CancelGracePeriod    string `yaml:"cancel_grace_period"`
 }
 
 type AgentProfile struct {
@@ -365,6 +366,7 @@ func (c ACPConfig) Validate() error {
 		"request_timeout":        c.RequestTimeout,
 		"session_idle_timeout":   c.SessionIdleTimeout,
 		"stream_append_interval": c.StreamAppendInterval,
+		"cancel_grace_period":    c.CancelGracePeriod,
 	} {
 		if strings.TrimSpace(value) == "" {
 			continue
@@ -417,6 +419,10 @@ func (c ACPConfig) EffectiveStreamMinChunkChars() int {
 		return c.StreamMinChunkChars
 	}
 	return 24
+}
+
+func (c ACPConfig) EffectiveCancelGracePeriod() time.Duration {
+	return durationOrDefault(c.CancelGracePeriod, 2*time.Second)
 }
 
 func durationOrDefault(value string, fallback time.Duration) time.Duration {

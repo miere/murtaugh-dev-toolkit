@@ -18,6 +18,12 @@ chat:
 commands:
   - name: /murtaugh
     description: Entrypoint for Murtaugh commands
+  # Optional: register `/stop` in the Slack app config to allow interrupting
+  # an in-flight chat response from inside the thread or DM. Murtaugh also
+  # recognises `/<command> stop` (e.g. `/murtaugh stop`) so this entry is
+  # only required if operators prefer the standalone form.
+  - name: /stop
+    description: Cancel the in-flight Murtaugh response in this thread or DM
 
 workflow-rules:
   startup-ping-pong:
