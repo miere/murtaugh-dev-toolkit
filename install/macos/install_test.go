@@ -445,6 +445,62 @@ func TestInstallerHasNoPythonDependency(t *testing.T) {
 	}
 }
 
+// TestInstallerRejectsLegacyBinaryWithoutSetup guards the regression where
+// install.sh installs a binary that does not yet support `murtaugh setup`
+// and then crashes mid-install with `unknown command: setup`. The new
+// capability check should bail out before any setup call is attempted and
+// suggest --local-build (because we're running from a checkout).
+func TestInstallerRejectsLegacyBinaryWithoutSetup(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("installer is macOS-only")
+	}
+	home := t.TempDir()
+	fixtureDir := t.TempDir()
+	// Stub binary mimics v0.0.1: `version` works, `setup` is unknown.
+	stub := filepath.Join(fixtureDir, "murtaugh-v0.0.1-darwin-arm64")
+	stubScript := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"  version) echo v0.0.1 ;;\n" +
+		"  setup) echo 'murtaugh: unknown command: setup' >&2; exit 2 ;;\n" +
+		"  *) echo unknown >&2; exit 1 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(stub, []byte(stubScript), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	release := map[string]any{
+		"tag_name": "v0.0.1",
+		"assets": []map[string]any{{
+			"name":                 "murtaugh-v0.0.1-darwin-arm64",
+			"browser_download_url": "file://" + stub,
+		}},
+	}
+	data, _ := json.Marshal(release)
+	releasePath := filepath.Join(fixtureDir, "release.json")
+	if err := os.WriteFile(releasePath, data, 0o644); err != nil {
+		t.Fatalf("write release fixture: %v", err)
+	}
+
+	out, err := runInstaller(t, []string{
+		"HOME=" + home,
+		"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+		"MURTAUGH_RELEASE_JSON_PATH=" + releasePath,
+		"MURTAUGH_INSTALL_DIR=" + filepath.Join(home, "bin"),
+		"MURTAUGH_INSTALL_ARCH=arm64",
+	})
+	if err == nil {
+		t.Fatalf("installer should refuse a binary without setup support; output:\n%s", out)
+	}
+	if strings.Contains(out, "unknown command: setup") {
+		t.Fatalf("installer should fail before invoking setup, but reached it; output:\n%s", out)
+	}
+	if !strings.Contains(out, "does not support 'setup'") {
+		t.Fatalf("installer should explain the missing-setup failure; got:\n%s", out)
+	}
+	if !strings.Contains(out, "--local-build") {
+		t.Fatalf("installer should suggest --local-build when run from a checkout; got:\n%s", out)
+	}
+}
+
 // TestInstallerFailsCleanlyWhenReleaseMissing covers the failure mode the
 // user hit when running the installer against a repo without a published
 // release: release_json returned a 404, the prior implementation crashed

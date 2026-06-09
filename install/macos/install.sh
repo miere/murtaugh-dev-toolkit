@@ -23,12 +23,13 @@ SKIP_CONFIG=0
 RECONFIGURE=0
 FORCE_INSTALL=0
 DRY_RUN=0
+LOCAL_BUILD=0
 TARGET_VERSION=""
 CUSTOM_AGENT_ARGS=()
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--yes] [--version VERSION] [--force] [--skip-config] [--reconfigure] [--dry-run]
+Usage: install.sh [--yes] [--version VERSION] [--force] [--skip-config] [--reconfigure] [--dry-run] [--local-build]
 
 Installs or updates the Murtaugh macOS release. Re-running this installer
 updates the binary and preserves existing config by default. Use --reconfigure
@@ -41,6 +42,9 @@ Options:
   --skip-config         Update binary only; do not write or modify any config.
   --reconfigure         Always rewrite config files, backing up existing ones.
   --dry-run             Show what would happen without making changes.
+  --local-build         Compile from the local checkout instead of fetching a
+                        release. Useful for testing changes before cutting a
+                        new tag. Requires a Go toolchain on PATH.
   --help, -h            Show this message.
 
 Environment overrides:
@@ -152,6 +156,7 @@ parse_args() {
       --skip-config) SKIP_CONFIG=1 ;;
       --reconfigure) RECONFIGURE=1 ;;
       --dry-run) DRY_RUN=1 ;;
+      --local-build) LOCAL_BUILD=1 ;;
       --help|-h) usage; exit 0 ;;
       *) die "unknown argument: $1" ;;
     esac
@@ -161,6 +166,7 @@ parse_args() {
   is_env_yes "${MURTAUGH_FORCE_INSTALL:-}" && FORCE_INSTALL=1
   is_env_yes "${MURTAUGH_RECONFIGURE:-}" && RECONFIGURE=1
   is_env_yes "${MURTAUGH_SKIP_CONFIG:-}" && SKIP_CONFIG=1
+  is_env_yes "${MURTAUGH_LOCAL_BUILD:-}" && LOCAL_BUILD=1
   [[ -n "${MURTAUGH_TARGET_VERSION:-}" ]] && TARGET_VERSION="$MURTAUGH_TARGET_VERSION"
   return 0
 }
@@ -336,6 +342,52 @@ install_or_update_binary() {
   printf '%s' "$(resolve_path "$dest")"
 }
 
+# find_repo_root locates the repository root when install.sh is invoked
+# from a checkout (i.e. via `bash ./install/macos/install.sh`, not via
+# `curl | bash`). The check is intentionally strict: we require both
+# go.mod and cmd/murtaugh to exist so we never compile from an
+# unrelated tree that happens to live two directories up.
+find_repo_root() {
+  local script_dir root
+  script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+  root="${script_dir%/install/macos}"
+  [[ "$root" != "$script_dir" ]] || { printf ''; return 0; }
+  [[ -f "$root/go.mod" && -d "$root/cmd/murtaugh" ]] || { printf ''; return 0; }
+  printf '%s' "$root"
+}
+
+# build_local_binary compiles ./cmd/murtaugh from the checkout and drops
+# the artifact at $install_dir/murtaugh. The embedded version is stamped
+# as "dev-<timestamp>" so `setup.update` (which refuses dev builds by
+# default) treats it as a developer artifact rather than a real release.
+build_local_binary() {
+  local install_dir=$1 repo_root=$2
+  command -v go >/dev/null 2>&1 || die "--local-build requires a 'go' toolchain on PATH"
+  local dest="$install_dir/murtaugh" version
+  version="dev-$(timestamp)"
+  log "Building Murtaugh from ${repo_root} (version=${version})"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    log "[DRY-RUN] Would: go build -o ${dest} ./cmd/murtaugh"
+    printf '%s' "$dest"; return 0
+  fi
+  backup_file_if_exists "$dest"
+  ( cd "$repo_root" && go build -ldflags="-X main.version=${version}" -o "$dest" ./cmd/murtaugh ) \
+    || die "go build failed; see output above"
+  chmod 755 "$dest"
+  log "Installed local-build Murtaugh ${version} to ${dest}"
+  printf '%s' "$(resolve_path "$dest")"
+}
+
+# binary_supports_setup checks whether the freshly-installed murtaugh
+# binary exposes the `setup` command group. Releases predating the
+# installer rewrite do not, and calling `setup launchd` against them
+# emits `unknown command: setup` mid-install. We use this to fail
+# loudly with an actionable message before any state changes.
+binary_supports_setup() {
+  local bin=$1
+  "$bin" setup --help >/dev/null 2>&1
+}
+
 resolve_agent_command() {
   local choice=$1
   case "$choice" in
@@ -450,16 +502,33 @@ main() {
   parse_args "$@"
   require_darwin
 
-  local install_dir arch_suffix installed_bin
+  local install_dir arch_suffix installed_bin repo_root
   install_dir=$(choose_install_dir)
   arch_suffix=$(detect_arch_suffix)
-  installed_bin=$(install_or_update_binary "$install_dir" "$arch_suffix" "$TARGET_VERSION")
+  if [[ "$LOCAL_BUILD" -eq 1 ]]; then
+    repo_root=$(find_repo_root)
+    [[ -n "$repo_root" ]] || die "--local-build requires running install.sh from a checkout containing go.mod and cmd/murtaugh"
+    installed_bin=$(build_local_binary "$install_dir" "$repo_root")
+  else
+    installed_bin=$(install_or_update_binary "$install_dir" "$arch_suffix" "$TARGET_VERSION")
+  fi
 
   if [[ "$SKIP_CONFIG" -eq 1 ]]; then
     log "Done. Binary updated; config untouched."
     [[ "$DRY_RUN" -eq 1 ]] && log "[DRY-RUN] No changes were made."
     log "Murtaugh MCP command: ${installed_bin} mcp"
     return 0
+  fi
+
+  # Bail out early with an actionable message when the binary we just put
+  # in place does not expose the `setup` command group. Otherwise the
+  # next thing the user sees is `unknown command: setup` mid-install.
+  if [[ "$DRY_RUN" -eq 0 ]] && ! binary_supports_setup "$installed_bin"; then
+    repo_root=$(find_repo_root)
+    if [[ -n "$repo_root" ]]; then
+      die "the installed Murtaugh (${installed_bin}) does not support 'setup' yet. Re-run with --local-build to compile from ${repo_root}, or use --skip-config to update the binary only."
+    fi
+    die "the installed Murtaugh (${installed_bin}) does not support 'setup' yet. Upgrade to a release that includes the setup tools, or pass --skip-config to update the binary only."
   fi
 
   local config_dir slack_yaml agents_yaml has_config
