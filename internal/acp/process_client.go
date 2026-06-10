@@ -139,9 +139,7 @@ func (c *ProcessClient) Prompt(ctx context.Context, sessionID string, request Pr
 
 	go func() {
 		defer func() {
-			c.mu.Lock()
-			delete(c.subscribers, sessionID)
-			c.mu.Unlock()
+			c.unsubscribe(sessionID, events)
 			close(events)
 		}()
 		result, err := c.call(ctx, "session/prompt", map[string]any{
@@ -158,6 +156,19 @@ func (c *ProcessClient) Prompt(ctx context.Context, sessionID string, request Pr
 		events <- Event{Type: EventComplete}
 	}()
 	return events, nil
+}
+
+// unsubscribe retracts a prompt's event subscription, but only if it is still
+// the live one. When two prompts race on the same session (e.g. an interrupt
+// immediately followed by a follow-up that reuses the session), the second
+// prompt overwrites subscribers[sessionID]; an unconditional delete here would
+// tear down the live prompt's subscription and silently drop its events.
+func (c *ProcessClient) unsubscribe(sessionID string, events chan Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.subscribers[sessionID] == events {
+		delete(c.subscribers, sessionID)
+	}
 }
 
 func (c *ProcessClient) Cancel(ctx context.Context, sessionID string) error {

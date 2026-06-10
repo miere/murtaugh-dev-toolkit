@@ -47,10 +47,14 @@ type App struct {
 	// at a stalled "_interrupted_" marker, long enough that trailing
 	// chunks already on the wire can flush. Defaults to 2s via
 	// ACPConfig.EffectiveCancelGracePeriod.
-	cancelGrace   time.Duration
-	inFlight      *InFlightRegistry
-	unfurl        *LinkUnfurlHandler
-	unfurlTimeout time.Duration
+	cancelGrace time.Duration
+	inFlight    *InFlightRegistry
+	// recentEvents suppresses duplicate Slack event deliveries so a
+	// redelivered message does not spawn a second chat that interrupts the
+	// first. nil disables de-duplication (CLI/MCP and most tests).
+	recentEvents    *eventDedup
+	unfurl          *LinkUnfurlHandler
+	unfurlTimeout   time.Duration
 	startupNotifier StartupNotifier
 	startupPingSent bool
 	logger          *slog.Logger
@@ -159,6 +163,7 @@ func New(cfg config.Config, logger *slog.Logger) *App {
 		chatWarmTimeout: cfg.ACP.EffectiveStartupTimeout(),
 		cancelGrace:     cfg.ACP.EffectiveCancelGracePeriod(),
 		inFlight:        NewInFlightRegistry(),
+		recentEvents:    newEventDedup(0),
 		unfurl:          unfurlHandler,
 		unfurlTimeout:   2 * time.Minute,
 		startupNotifier: startupNotifier,
@@ -520,6 +525,10 @@ func (a *App) handleEventsAPI(event socketmode.Event) {
 			a.logger.Debug("ignored app_mention from unauthorized user", "user", inner.User, "channel", inner.Channel)
 			return
 		}
+		if a.isDuplicateEvent(eventsAPI.TeamID, inner.Channel, inner.TimeStamp) {
+			a.logger.Info("ignored duplicate app_mention", "channel", inner.Channel, "ts", inner.TimeStamp)
+			return
+		}
 		text := stripSlackMentions(inner.Text)
 		a.startChat(context.Background(), ChatRequest{TeamID: eventsAPI.TeamID, ChannelID: inner.Channel, UserID: inner.User, ThreadTS: inner.ThreadTimeStamp, MessageTS: inner.TimeStamp, Text: text, Source: "app_mention"})
 	case *slackevents.MessageEvent:
@@ -532,6 +541,10 @@ func (a *App) handleEventsAPI(event socketmode.Event) {
 		}
 		if !a.cfg.IsAllowedUser(inner.User) {
 			a.logger.Debug("ignored DM from unauthorized user", "user", inner.User, "channel", inner.Channel)
+			return
+		}
+		if a.isDuplicateEvent(eventsAPI.TeamID, inner.Channel, inner.TimeStamp) {
+			a.logger.Info("ignored duplicate DM", "channel", inner.Channel, "ts", inner.TimeStamp)
 			return
 		}
 		a.startChat(context.Background(), ChatRequest{TeamID: eventsAPI.TeamID, ChannelID: inner.Channel, UserID: inner.User, ThreadTS: inner.ThreadTimeStamp, MessageTS: inner.TimeStamp, Text: inner.Text, DM: true, Source: "dm"})
@@ -560,6 +573,18 @@ func (a *App) handleLinkShared(teamID string, inner *slackevents.LinkSharedEvent
 			a.logger.Error("link unfurl failed", "channel", inner.Channel, "error", err)
 		}
 	}()
+}
+
+// isDuplicateEvent reports whether a message event (identified by its
+// immutable Slack timestamp) has already been handled. Slack may deliver the
+// same event more than once; without this guard a redelivery spawns a second
+// chat that interrupts the first. An empty timestamp or unconfigured dedup
+// cache is never treated as a duplicate.
+func (a *App) isDuplicateEvent(teamID, channelID, ts string) bool {
+	if ts == "" {
+		return false
+	}
+	return a.recentEvents.seenBefore(teamID + "|" + channelID + "|" + ts)
 }
 
 // startChat launches a chat goroutine for the request and wires it into

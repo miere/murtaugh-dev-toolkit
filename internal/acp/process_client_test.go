@@ -68,6 +68,29 @@ func TestProcessClientProcessOutlivesInitializeContext(t *testing.T) {
 	}
 }
 
+func TestProcessClientUnsubscribeOnlyRetractsOwnSubscription(t *testing.T) {
+	c := NewProcessClient(ProcessOptions{Command: "true"})
+	first := make(chan Event, 1)
+	second := make(chan Event, 1)
+
+	c.subscribers["s"] = first
+	// A second prompt reuses the session and overwrites the subscriber.
+	c.subscribers["s"] = second
+
+	// The first prompt tearing down must NOT remove the live (second)
+	// subscription.
+	c.unsubscribe("s", first)
+	if c.subscribers["s"] != second {
+		t.Fatalf("stale teardown removed the live subscription: got %v", c.subscribers["s"])
+	}
+
+	// The live prompt tearing down removes itself.
+	c.unsubscribe("s", second)
+	if _, ok := c.subscribers["s"]; ok {
+		t.Fatal("live teardown should have removed the subscription")
+	}
+}
+
 func TestExtractTextFromACPAgentMessageChunkUpdate(t *testing.T) {
 	raw := json.RawMessage(`{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"pong"}}}`)
 	if got := extractNotificationText(raw); got != "pong" {

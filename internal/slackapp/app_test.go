@@ -6,9 +6,11 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/unfurl"
 	"github.com/slack-go/slack"
@@ -79,6 +81,71 @@ func TestAppMentionEventRoutesToACPChat(t *testing.T) {
 	}
 	if fakeSessions.prompt != "hello" {
 		t.Fatalf("unexpected prompt: %q", fakeSessions.prompt)
+	}
+}
+
+// countingChatSessions counts how many times Prompt is invoked so a test can
+// assert that a duplicate Slack event does not start a second chat.
+type countingChatSessions struct {
+	mu      sync.Mutex
+	prompts int
+}
+
+func (f *countingChatSessions) Prompt(_ context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
+	f.mu.Lock()
+	f.prompts++
+	f.mu.Unlock()
+	ch := make(chan acp.Event, 2)
+	ch <- acp.Event{Type: acp.EventText, Text: "ok"}
+	ch <- acp.Event{Type: acp.EventComplete}
+	close(ch)
+	return ch, nil
+}
+
+func (f *countingChatSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *countingChatSessions) Cancel(context.Context, string) error      { return nil }
+
+func (f *countingChatSessions) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.prompts
+}
+
+func TestDuplicateAppMentionStartsChatOnce(t *testing.T) {
+	api := &fakeStreamAPI{}
+	fakeSessions := &countingChatSessions{}
+	sessions := map[string]ChatSessionManager{"default": fakeSessions}
+	resolver := func(req ChatRequest) string { return "default" }
+	app := &App{
+		chat:         NewChatHandler(api, sessions, resolver, time.Hour, 1, nil),
+		chatTimeout:  time.Second,
+		inFlight:     NewInFlightRegistry(),
+		recentEvents: newEventDedup(time.Minute),
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		cfg:          config.ConfigurationConfig{AllowedUsers: []string{"U1"}},
+	}
+	event := socketmode.Event{Type: socketmode.EventTypeEventsAPI, Data: slackevents.EventsAPIEvent{
+		TeamID:     "T1",
+		InnerEvent: slackevents.EventsAPIInnerEvent{Type: string(slackevents.AppMention), Data: &slackevents.AppMentionEvent{User: "U1", Channel: "C1", Text: "<@UBOT> hello", TimeStamp: "123.4"}},
+	}}
+	// Same message delivered twice (Slack at-least-once redelivery).
+	app.handleEventsAPI(event)
+	app.handleEventsAPI(event)
+
+	// Wait for the first chat to run, then confirm the duplicate never started
+	// a second one.
+	deadline := time.After(time.Second)
+	for fakeSessions.count() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("expected the first app_mention to start a chat")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := fakeSessions.count(); got != 1 {
+		t.Fatalf("expected duplicate app_mention to be suppressed (1 prompt), got %d", got)
 	}
 }
 

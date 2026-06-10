@@ -200,6 +200,15 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 				delete(runningTasks, event.Task.ID)
 			}
 		case acp.EventError:
+			// A caller interrupt (new message / /stop) surfaces here as a
+			// context cancellation, not an agent failure. Never paint a
+			// still-running task red for being cut short — leave the cards in
+			// their last real state and let the deferred interrupt handler
+			// render the "_interrupted_" marker. Real agent errors (and
+			// deadline-exceeded) still fail the in-flight tasks below.
+			if errors.Is(event.Error, context.Canceled) || errors.Is(context.Cause(ctx), context.Canceled) {
+				return event.Error
+			}
 			// Only the still-running tasks were genuinely cut short by the
 			// error; tasks that already reported a terminal status have been
 			// removed from runningTasks and keep their real outcome.

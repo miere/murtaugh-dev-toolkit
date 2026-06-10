@@ -253,6 +253,78 @@ func TestChatHandlerCompletesStillRunningTasksOnSuccess(t *testing.T) {
 	}
 }
 
+// cancellableTaskSessions emits an in-progress task, then — once its context
+// is cancelled — surfaces the cancellation as an EventError carrying ctx.Err(),
+// exactly as the ACP process client does when a prompt is interrupted.
+type cancellableTaskSessions struct {
+	taskSent chan struct{}
+}
+
+func (f *cancellableTaskSessions) Prompt(ctx context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
+	ch := make(chan acp.Event)
+	go func() {
+		defer close(ch)
+		select {
+		case ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "t1", Title: "Working", Status: acp.TaskStatusInProgress}}:
+		case <-ctx.Done():
+			return
+		}
+		if f.taskSent != nil {
+			close(f.taskSent)
+		}
+		<-ctx.Done()
+		select {
+		case ch <- acp.Event{Type: acp.EventError, Error: ctx.Err()}:
+		case <-time.After(time.Second):
+		}
+	}()
+	return ch, nil
+}
+
+func (f *cancellableTaskSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *cancellableTaskSessions) Cancel(context.Context, string) error      { return nil }
+
+func TestChatHandlerDoesNotFailTasksOnInterrupt(t *testing.T) {
+	api := &fakeStreamAPI{}
+	taskSent := make(chan struct{})
+	sessions := map[string]ChatSessionManager{"default": &cancellableTaskSessions{taskSent: taskSent}}
+	resolver := func(req ChatRequest) string { return "default" }
+	handler := NewChatHandler(api, sessions, resolver, time.Millisecond, 1, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- handler.Handle(ctx, ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", MessageTS: "123.4", Text: "hi", Source: "test"})
+	}()
+	select {
+	case <-taskSent:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("task never landed; handler likely stalled")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected nil on interrupt, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Handle did not return within 2s of cancel")
+	}
+	// The in-progress task was cut short by an interrupt, not a failure: no
+	// task card may be pushed to the error status.
+	for _, opts := range append(api.startOptions, api.appendOptions...) {
+		chunks, err := extractChunksFromOptions(opts...)
+		if err != nil {
+			t.Fatalf("extract chunks: %v", err)
+		}
+		for _, task := range taskChunks(chunks) {
+			if task.Status == slack.TaskCardStatusError {
+				t.Fatalf("interrupted task was painted error: %+v", task)
+			}
+		}
+	}
+}
+
 func TestChatHandlerClearsStatusOnFreshContextAfterCancel(t *testing.T) {
 	api := &fakeStreamAPI{rejectCanceledStatus: true}
 	firstChunkSent := make(chan struct{})
