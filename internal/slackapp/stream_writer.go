@@ -61,7 +61,11 @@ func (w *StreamWriter) StartWithOptions(ctx context.Context, extraOptions ...sla
 	if w.started {
 		return nil
 	}
-	options := []slack.MsgOption{slack.MsgOptionTaskDisplayMode(slack.TaskDisplayModeTimeline)}
+	// Plan mode groups every task_update chunk under a single Plan block
+	// (with a shared title) instead of stacking them as a flat timeline of
+	// separate cards. TaskCardWriter opens the plan with a plan_update chunk
+	// on the first task. See https://docs.slack.dev/reference/block-kit/blocks/plan-block/
+	options := []slack.MsgOption{slack.MsgOptionTaskDisplayMode(slack.TaskDisplayModePlan)}
 	options = append(options, extraOptions...)
 	if w.threadTS != "" {
 		options = append(options, slack.MsgOptionTS(w.threadTS))

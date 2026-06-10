@@ -25,15 +25,47 @@ func TestTaskCardWriterSendsTaskUpdateChunk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extract chunks: %v", err)
 	}
-	if len(chunks) != 1 {
-		t.Fatalf("expected 1 chunk, got %d", len(chunks))
+	// The first task opens the Plan block: a plan_update chunk precedes the
+	// task_update chunk so the cards render grouped under a shared title.
+	if len(chunks) != 2 {
+		t.Fatalf("expected plan + task chunk, got %d", len(chunks))
 	}
-	chunk, ok := chunks[0].(slack.TaskUpdateChunk)
-	if !ok {
-		t.Fatalf("expected TaskUpdateChunk, got %T", chunks[0])
+	plans := planChunks(chunks)
+	if len(plans) != 1 || plans[0].Title != defaultPlanTitle {
+		t.Fatalf("expected one plan_update chunk titled %q, got %+v", defaultPlanTitle, plans)
 	}
-	if chunk.ID != "task-1" || chunk.Title != "Searching" || chunk.Status != slack.TaskCardStatusInProgress {
-		t.Fatalf("unexpected chunk: %+v", chunk)
+	tasks := taskChunks(chunks)
+	if len(tasks) != 1 {
+		t.Fatalf("expected one task_update chunk, got %d", len(tasks))
+	}
+	if tasks[0].ID != "task-1" || tasks[0].Title != "Searching" || tasks[0].Status != slack.TaskCardStatusInProgress {
+		t.Fatalf("unexpected chunk: %+v", tasks[0])
+	}
+}
+
+func TestTaskCardWriterOpensPlanOnlyOnce(t *testing.T) {
+	api := &fakeStreamAPI{}
+	streamer := NewStreamWriter(api, "C1", StreamWriterOptions{Interval: time.Hour, MinChars: 5})
+	writer := NewTaskCardWriter(api, streamer, time.Hour, nil)
+	writer.SetPlanTitle("Build the thing")
+	ctx := context.Background()
+
+	if err := writer.Update(ctx, "task-1", "Step 1", slack.TaskCardStatusInProgress); err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if err := writer.Update(ctx, "task-2", "Step 2", slack.TaskCardStatusInProgress); err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	// The plan_update chunk is emitted exactly once, on stream start, with the
+	// overridden title. The second task must not re-open the plan.
+	startChunks, _ := extractChunksFromOptions(api.startOptions[0]...)
+	plans := planChunks(startChunks)
+	if len(plans) != 1 || plans[0].Title != "Build the thing" {
+		t.Fatalf("expected one plan_update titled %q on start, got %+v", "Build the thing", plans)
+	}
+	appendChunks, _ := extractChunksFromOptions(api.appendOptions[0]...)
+	if got := planChunks(appendChunks); len(got) != 0 {
+		t.Fatalf("expected no plan_update chunk on subsequent task, got %+v", got)
 	}
 }
 
@@ -122,11 +154,13 @@ func TestTaskCardWriterFailAndComplete(t *testing.T) {
 	}
 	chunks0, _ := extractChunksFromOptions(api.startOptions[0]...)
 	chunks1, _ := extractChunksFromOptions(api.appendOptions[0]...)
-	if chunks0[0].(slack.TaskUpdateChunk).Status != slack.TaskCardStatusError {
-		t.Fatalf("expected error status for fail, got %q", chunks0[0].(slack.TaskUpdateChunk).Status)
+	tasks0 := taskChunks(chunks0)
+	tasks1 := taskChunks(chunks1)
+	if len(tasks0) != 1 || tasks0[0].Status != slack.TaskCardStatusError {
+		t.Fatalf("expected error status for fail, got %+v", tasks0)
 	}
-	if chunks1[0].(slack.TaskUpdateChunk).Status != slack.TaskCardStatusComplete {
-		t.Fatalf("expected complete status for complete, got %q", chunks1[0].(slack.TaskUpdateChunk).Status)
+	if len(tasks1) != 1 || tasks1[0].Status != slack.TaskCardStatusComplete {
+		t.Fatalf("expected complete status for complete, got %+v", tasks1)
 	}
 }
 

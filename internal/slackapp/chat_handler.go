@@ -103,6 +103,12 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 		teamID, userID = "", ""
 	}
 	writer := NewStreamWriter(h.api, req.ChannelID, StreamWriterOptions{ThreadTS: streamThreadTS, TeamID: teamID, UserID: userID, Interval: h.interval, MinChars: h.minChars, Logger: h.logger})
+	// Safety net: guarantee the Slack stream is finalised on every exit path.
+	// Declared first so it runs last (after the interrupt handler below). The
+	// happy path and interrupt path stop the stream themselves, making this a
+	// no-op; it only bites when the handler returns early on a writer error,
+	// which would otherwise leave the message stuck in the "generating" state.
+	defer h.ensureStreamStopped(writer)
 	// Interrupt path: when the caller cancels ctx (slackapp's interrupt
 	// closure or the /stop slash command), render a "_interrupted_"
 	// marker on the partial stream instead of bubbling the cancellation
@@ -116,6 +122,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 		retErr = nil
 	}()
 	taskWriter := NewTaskCardWriter(h.api, writer, 0, h.logger)
+	taskWriter.SetPlanTitle(planTitle(prompt))
 	if err := h.api.SetAssistantThreadsStatusContext(ctx, slack.AssistantThreadsSetStatusParameters{
 		ChannelID: req.ChannelID,
 		ThreadTS:  streamThreadTS,
@@ -134,12 +141,18 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 		<-statusDone
 		// Best-effort explicit clear so the indicator does not linger (e.g. when
 		// the handler errors out before any chunk is sent, Slack would otherwise
-		// keep "is thinking..." displayed for up to two minutes).
-		if err := h.api.SetAssistantThreadsStatusContext(ctx, slack.AssistantThreadsSetStatusParameters{
+		// keep "is thinking..." displayed for up to two minutes). Use a fresh
+		// background context: on the interrupt path the request ctx is already
+		// cancelled, and reusing it here would make Slack reject the clear and
+		// leave "is thinking..." stuck on screen — the exact symptom we are
+		// fixing.
+		clearCtx, cancelClear := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelClear()
+		if err := h.api.SetAssistantThreadsStatusContext(clearCtx, slack.AssistantThreadsSetStatusParameters{
 			ChannelID: req.ChannelID,
 			ThreadTS:  streamThreadTS,
 			Status:    "",
-		}); err != nil && !errors.Is(err, context.Canceled) {
+		}); err != nil {
 			h.logger.Debug("failed to clear assistant status", "error", err)
 		}
 	}()
@@ -187,13 +200,17 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 				delete(runningTasks, event.Task.ID)
 			}
 		case acp.EventError:
-			for id := range runningTasks {
-				if err := taskWriter.Fail(ctx, id, ""); err != nil {
-					h.logger.Warn("failed to mark task as failed", "error", err, "task_id", id)
-				}
-			}
+			// Only the still-running tasks were genuinely cut short by the
+			// error; tasks that already reported a terminal status have been
+			// removed from runningTasks and keep their real outcome.
+			h.finalizeTasks(ctx, taskWriter, runningTasks, slack.TaskCardStatusError)
 			return writer.Fail(ctx, event.Error)
 		case acp.EventComplete:
+			// The agent finished successfully: any task still marked running
+			// never received an explicit terminal update (common with parallel
+			// tool calls). Complete them rather than abandoning them mid-spinner
+			// or — worse — painting them red.
+			h.finalizeTasks(ctx, taskWriter, runningTasks, slack.TaskCardStatusComplete)
 			if !streamStarted {
 				if err := writer.Start(ctx); err != nil {
 					return err
@@ -207,11 +224,10 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 			return nil
 		}
 	}
-	for id := range runningTasks {
-		if err := taskWriter.Fail(ctx, id, ""); err != nil {
-			h.logger.Warn("failed to mark task as failed on loop exit", "error", err, "task_id", id)
-		}
-	}
+	// Channel closed without an explicit EventComplete/EventError. No error
+	// surfaced, so treat any leftover running tasks as completed rather than
+	// failed.
+	h.finalizeTasks(ctx, taskWriter, runningTasks, slack.TaskCardStatusComplete)
 	if !streamStarted {
 		if err := writer.Start(ctx); err != nil {
 			return err
@@ -223,6 +239,42 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 	}
 	h.logger.Info("completed ACP chat response", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "chunks", chunks, "bytes", bytes)
 	return nil
+}
+
+// finalizeTasks brings every still-running task to a terminal status and
+// removes it from running. It is the single place that resolves the outcome of
+// tasks the agent left open, so a card is never stranded in a spinner or
+// painted with a status that contradicts what actually happened. Errors are
+// logged, not propagated: finalisation is best-effort cleanup.
+func (h *ChatHandler) finalizeTasks(ctx context.Context, taskWriter *TaskCardWriter, running map[string]acp.TaskStatus, status slack.TaskCardStatus) {
+	for id := range running {
+		var err error
+		switch status {
+		case slack.TaskCardStatusComplete:
+			err = taskWriter.Complete(ctx, id, "")
+		default:
+			err = taskWriter.Fail(ctx, id, "")
+		}
+		if err != nil {
+			h.logger.Warn("failed to finalize task", "error", err, "task_id", id, "status", status)
+		}
+		delete(running, id)
+	}
+}
+
+// ensureStreamStopped finalises the Slack stream if it was started but never
+// stopped — the early-return-on-writer-error paths would otherwise leave the
+// message stuck showing the "generating" indicator. It runs on a fresh
+// background context because the request ctx may already be cancelled.
+func (h *ChatHandler) ensureStreamStopped(writer *StreamWriter) {
+	if writer == nil || !writer.Started() || writer.Stopped() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := writer.Stop(ctx); err != nil {
+		h.logger.Warn("failed to stop stream on cleanup", "error", err)
+	}
 }
 
 func (h *ChatHandler) refreshAssistantStatus(ctx context.Context, channelID, threadTS, status string, done chan<- struct{}) {
@@ -283,6 +335,22 @@ func conversationKey(req ChatRequest) acp.ConversationKey {
 		threadTS = req.MessageTS
 	}
 	return acp.ConversationKey{TeamID: req.TeamID, ChannelID: req.ChannelID, ThreadTS: threadTS}
+}
+
+// planTitle derives a short, single-line title for the Plan block that groups
+// the agent's task cards, from the user's prompt. Long or multi-line prompts
+// are collapsed and truncated so the plan header stays compact.
+func planTitle(prompt string) string {
+	title := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(prompt, "\r", " "), "\n", " "))
+	for strings.Contains(title, "  ") {
+		title = strings.ReplaceAll(title, "  ", " ")
+	}
+	// Truncate on rune boundaries so a multibyte character is never split.
+	const maxRunes = 80
+	if runes := []rune(title); len(runes) > maxRunes {
+		title = strings.TrimSpace(string(runes[:maxRunes])) + "…"
+	}
+	return title
 }
 
 func streamThreadTS(req ChatRequest) string {

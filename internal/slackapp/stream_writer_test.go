@@ -18,6 +18,12 @@ type fakeStreamAPI struct {
 	startOptions   [][]slack.MsgOption
 	appendOptions  [][]slack.MsgOption
 
+	// rejectCanceledStatus makes SetAssistantThreadsStatusContext fail when
+	// invoked with an already-cancelled context, mirroring Slack rejecting a
+	// request made on a dead context. Used to prove the final status clear runs
+	// on a fresh context.
+	rejectCanceledStatus bool
+
 	statusMu     sync.Mutex
 	statusCalls  int
 	statusParams []slack.AssistantThreadsSetStatusParameters
@@ -40,7 +46,10 @@ func (f *fakeStreamAPI) StopStreamContext(_ context.Context, _ string, _ string,
 	return "C1", "stream-ts", nil
 }
 
-func (f *fakeStreamAPI) SetAssistantThreadsStatusContext(_ context.Context, params slack.AssistantThreadsSetStatusParameters) error {
+func (f *fakeStreamAPI) SetAssistantThreadsStatusContext(ctx context.Context, params slack.AssistantThreadsSetStatusParameters) error {
+	if f.rejectCanceledStatus && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	f.statusMu.Lock()
 	defer f.statusMu.Unlock()
 	f.statusCalls++
@@ -91,6 +100,12 @@ func extractChunksFromOptions(options ...slack.MsgOption) ([]slack.StreamChunk, 
 				return nil, err
 			}
 			chunks = append(chunks, chunk)
+		case slack.StreamChunkPlanUpdate:
+			var chunk slack.PlanUpdateChunk
+			if err := json.Unmarshal(raw, &chunk); err != nil {
+				return nil, err
+			}
+			chunks = append(chunks, chunk)
 		default:
 			return nil, fmt.Errorf("unexpected chunk type %q", typeCheck.Type)
 		}
@@ -113,6 +128,29 @@ func extractMarkdownTextFromOptions(options ...slack.MsgOption) (string, error) 
 		return "", err
 	}
 	return values.Get("markdown_text"), nil
+}
+
+// taskChunks returns only the task_update chunks, dropping the leading
+// plan_update chunk that opens the Plan block on the first task.
+func taskChunks(chunks []slack.StreamChunk) []slack.TaskUpdateChunk {
+	var out []slack.TaskUpdateChunk
+	for _, chunk := range chunks {
+		if task, ok := chunk.(slack.TaskUpdateChunk); ok {
+			out = append(out, task)
+		}
+	}
+	return out
+}
+
+// planChunks returns only the plan_update chunks.
+func planChunks(chunks []slack.StreamChunk) []slack.PlanUpdateChunk {
+	var out []slack.PlanUpdateChunk
+	for _, chunk := range chunks {
+		if plan, ok := chunk.(slack.PlanUpdateChunk); ok {
+			out = append(out, plan)
+		}
+	}
+	return out
 }
 
 func TestStreamWriterUsesNativeStreamingMethods(t *testing.T) {

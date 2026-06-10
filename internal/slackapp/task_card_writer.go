@@ -14,9 +14,19 @@ import (
 
 const defaultTaskUpdateInterval = 1 * time.Second
 
+// defaultPlanTitle labels the Plan block that groups an agent's task cards
+// when no more specific title (e.g. the user's request) has been supplied.
+const defaultPlanTitle = "Tasks"
+
+// defaultTaskTitle is the fallback card title when neither the event nor a
+// previously-seen update carried one.
+const defaultTaskTitle = "Tool call"
+
 // TaskCardWriter sends task-card updates as Slack stream chunks alongside a
 // StreamWriter. Each task update is rate-limited so we do not hammer the Slack
-// API while the agent is rapidly iterating.
+// API while the agent is rapidly iterating. The first task opens a Plan block
+// (plan_update chunk) so all subsequent task cards render grouped under a
+// single title rather than as separate messages.
 type TaskCardWriter struct {
 	api       StreamAPI
 	streamer  *StreamWriter
@@ -25,6 +35,8 @@ type TaskCardWriter struct {
 	mu        sync.Mutex
 	lastFlush map[string]time.Time
 	titles    map[string]string
+	planTitle string
+	planOpen  bool
 }
 
 // NewTaskCardWriter creates a writer that posts task-card updates to the same
@@ -43,6 +55,21 @@ func NewTaskCardWriter(api StreamAPI, streamer *StreamWriter, interval time.Dura
 		interval:  interval,
 		lastFlush: make(map[string]time.Time),
 		titles:    make(map[string]string),
+		planTitle: defaultPlanTitle,
+	}
+}
+
+// SetPlanTitle overrides the title of the Plan block that groups the task
+// cards. It must be called before the first task update is sent; once the
+// plan is opened the title is fixed for the stream. An empty title is ignored.
+func (w *TaskCardWriter) SetPlanTitle(title string) {
+	if title == "" {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.planOpen {
+		w.planTitle = title
 	}
 }
 
@@ -56,16 +83,17 @@ func (w *TaskCardWriter) Update(ctx context.Context, taskID, title string, statu
 	}
 	chunk := slack.NewTaskUpdateChunk(taskID, title)
 	chunk.Status = status
+	chunks := append(w.planPrefix(), chunk)
 	startedAt := time.Now()
 	if !w.streamer.Started() {
-		if err := w.streamer.StartWithOptions(ctx, slack.MsgOptionChunks(chunk)); err != nil {
+		if err := w.streamer.StartWithOptions(ctx, slack.MsgOptionChunks(chunks...)); err != nil {
 			return fmt.Errorf("start stream with task update: %w", err)
 		}
 		w.recordFlush(taskID, startedAt)
 		w.logger.Info("started stream with task update", "task_id", taskID, "status", status, "duration", time.Since(startedAt))
 		return nil
 	}
-	_, _, err := w.api.AppendStreamContext(ctx, w.streamer.StreamChannel(), w.streamer.StreamTS(), slack.MsgOptionChunks(chunk))
+	_, _, err := w.api.AppendStreamContext(ctx, w.streamer.StreamChannel(), w.streamer.StreamTS(), slack.MsgOptionChunks(chunks...))
 	if err != nil {
 		return fmt.Errorf("append task update chunk: %w", err)
 	}
@@ -74,14 +102,38 @@ func (w *TaskCardWriter) Update(ctx context.Context, taskID, title string, statu
 	return nil
 }
 
-// Fail marks any running task as failed and sends the update.
-func (w *TaskCardWriter) Fail(ctx context.Context, taskID, title string) error {
-	return w.Update(ctx, taskID, title, slack.TaskCardStatusError)
+// planPrefix returns the plan_update chunk that opens the Plan block, but only
+// once per stream. Subsequent calls return nil so the plan is established
+// exactly once, ahead of the first task card.
+func (w *TaskCardWriter) planPrefix() []slack.StreamChunk {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.planOpen {
+		return nil
+	}
+	w.planOpen = true
+	return []slack.StreamChunk{slack.NewPlanUpdateChunk(w.planTitle)}
 }
 
-// Complete marks a task as completed and sends the update.
+// Fail marks a task as failed, reusing the task's previously-seen title when
+// title is empty so the terminal card keeps its label.
+func (w *TaskCardWriter) Fail(ctx context.Context, taskID, title string) error {
+	return w.Update(ctx, taskID, w.resolveTitle(taskID, title), slack.TaskCardStatusError)
+}
+
+// Complete marks a task as completed, reusing the task's previously-seen title
+// when title is empty.
 func (w *TaskCardWriter) Complete(ctx context.Context, taskID, title string) error {
-	return w.Update(ctx, taskID, title, slack.TaskCardStatusComplete)
+	return w.Update(ctx, taskID, w.resolveTitle(taskID, title), slack.TaskCardStatusComplete)
+}
+
+// resolveTitle records a non-empty title and returns the best label for the
+// task: the supplied title, else the last-seen title, else a generic fallback.
+func (w *TaskCardWriter) resolveTitle(taskID, title string) string {
+	if resolved := w.titleFor(taskID, title); resolved != "" {
+		return resolved
+	}
+	return defaultTaskTitle
 }
 
 // UpdateFromEvent maps an ACP task event to a Slack task update and sends it.
@@ -92,7 +144,7 @@ func (w *TaskCardWriter) UpdateFromEvent(ctx context.Context, event *acp.TaskEve
 	status := mapTaskStatus(event.Status)
 	title := w.titleFor(event.ID, event.Title)
 	if title == "" {
-		title = "Tool call"
+		title = defaultTaskTitle
 	}
 	if err := w.Update(ctx, event.ID, title, status); err != nil {
 		return err
