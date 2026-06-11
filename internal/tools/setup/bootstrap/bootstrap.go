@@ -50,16 +50,20 @@ func (t *Tool) InputSchema() *jsonschema.Schema { return nil }
 type Result struct {
 	ConfigDir string   `json:"config_dir"`
 	Created   []string `json:"created"`
+	Updated   []string `json:"updated"`
 	Preserved []string `json:"preserved"`
 }
 
 // String renders a multi-line CLI confirmation summarising the report.
 func (r Result) String() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "bootstrap: %d created, %d preserved in %s",
-		len(r.Created), len(r.Preserved), r.ConfigDir)
+	fmt.Fprintf(&b, "bootstrap: %d created, %d updated, %d preserved in %s",
+		len(r.Created), len(r.Updated), len(r.Preserved), r.ConfigDir)
 	for _, p := range r.Created {
 		fmt.Fprintf(&b, "\n  + %s", p)
+	}
+	for _, p := range r.Updated {
+		fmt.Fprintf(&b, "\n  ~ %s", p)
 	}
 	for _, p := range r.Preserved {
 		fmt.Fprintf(&b, "\n  = %s", p)
@@ -82,6 +86,7 @@ func (t *Tool) Invoke(_ context.Context, _ map[string]any) (any, error) {
 	return Result{
 		ConfigDir: filepath.Dir(path),
 		Created:   report.Created,
+		Updated:   report.Updated,
 		Preserved: report.Preserved,
 	}, nil
 }

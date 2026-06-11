@@ -97,7 +97,7 @@ func TestBootstrapFreshInstall(t *testing.T) {
 	}
 }
 
-func TestBootstrapDoesNotOverwriteExistingFiles(t *testing.T) {
+func TestBootstrapPreservesConfigButRefreshesShippedSkills(t *testing.T) {
 	baseDir := filepath.Join(t.TempDir(), "murtaugh")
 	configPath := filepath.Join(baseDir, "slack.yaml")
 	skillDir := filepath.Join(baseDir, ".agents", "skills", "murtaugh-slack")
@@ -105,15 +105,27 @@ func TestBootstrapDoesNotOverwriteExistingFiles(t *testing.T) {
 		t.Fatalf("seed dirs: %v", err)
 	}
 
+	// Config carries the user's secrets and must never be overwritten.
 	const customConfig = "oauth:\n  app_token: keep-me\n"
 	if err := os.WriteFile(configPath, []byte(customConfig), 0o644); err != nil {
 		t.Fatalf("seed slack.yaml: %v", err)
 	}
 
-	existingSkill := filepath.Join(skillDir, "SKILL.md")
-	const customSkill = "user authored skill"
-	if err := os.WriteFile(existingSkill, []byte(customSkill), 0o644); err != nil {
-		t.Fatalf("seed skill: %v", err)
+	// A shipped skill file edited locally must be refreshed back to the
+	// version Murtaugh ships, so workspaces track the binary.
+	shippedSkill := filepath.Join(skillDir, "SKILL.md")
+	if err := os.WriteFile(shippedSkill, []byte("stale local edit"), 0o644); err != nil {
+		t.Fatalf("seed shipped skill: %v", err)
+	}
+
+	// A skill the user authored (not shipped by Murtaugh) must be left alone.
+	customSkill := filepath.Join(baseDir, ".agents", "skills", "my-custom", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(customSkill), 0o755); err != nil {
+		t.Fatalf("seed custom skill dir: %v", err)
+	}
+	const customSkillBody = "user authored skill"
+	if err := os.WriteFile(customSkill, []byte(customSkillBody), 0o644); err != nil {
+		t.Fatalf("seed custom skill: %v", err)
 	}
 
 	if err := Bootstrap(configPath); err != nil {
@@ -123,9 +135,62 @@ func TestBootstrapDoesNotOverwriteExistingFiles(t *testing.T) {
 	if got, _ := os.ReadFile(configPath); string(got) != customConfig {
 		t.Fatalf("slack.yaml was overwritten: got %q", got)
 	}
-	if got, _ := os.ReadFile(existingSkill); string(got) != customSkill {
-		t.Fatalf("existing skill was overwritten: got %q", got)
+	// The shipped skill is now the embedded version, not the stale edit.
+	wantSkill, err := assets.FS.ReadFile("skills/murtaugh-slack/SKILL.md")
+	if err != nil {
+		t.Fatalf("read embedded skill: %v", err)
 	}
+	if got, _ := os.ReadFile(shippedSkill); string(got) != string(wantSkill) {
+		t.Fatalf("shipped skill was not refreshed to the embedded version")
+	}
+	// The user's own skill is untouched.
+	if got, _ := os.ReadFile(customSkill); string(got) != customSkillBody {
+		t.Fatalf("user-authored skill was overwritten: got %q", got)
+	}
+}
+
+// TestBootstrapReportClassifiesSkillRefresh verifies the report buckets: a
+// drifted shipped skill is reported as Updated, while an unchanged second run
+// reports it under neither Created nor Updated.
+func TestBootstrapReportClassifiesSkillRefresh(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "murtaugh")
+	configPath := filepath.Join(baseDir, "slack.yaml")
+	skillDir := filepath.Join(baseDir, ".agents", "skills", "murtaugh-slack")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("seed dirs: %v", err)
+	}
+	shippedSkill := filepath.Join(skillDir, "SKILL.md")
+	if err := os.WriteFile(shippedSkill, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("seed shipped skill: %v", err)
+	}
+
+	first, err := BootstrapWithReport(configPath)
+	if err != nil {
+		t.Fatalf("first BootstrapWithReport: %v", err)
+	}
+	if !contains(first.Updated, shippedSkill) {
+		t.Fatalf("expected %q in Updated, got Updated=%v", shippedSkill, first.Updated)
+	}
+	if contains(first.Created, shippedSkill) {
+		t.Fatalf("drifted skill should not be reported as Created")
+	}
+
+	second, err := BootstrapWithReport(configPath)
+	if err != nil {
+		t.Fatalf("second BootstrapWithReport: %v", err)
+	}
+	if contains(second.Updated, shippedSkill) || contains(second.Created, shippedSkill) {
+		t.Fatalf("unchanged skill should be neither Updated nor Created on re-run")
+	}
+}
+
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBootstrapCopiesJobsYAML(t *testing.T) {

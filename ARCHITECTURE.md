@@ -340,9 +340,18 @@ on disk, falling back to the same path inside `assets.FS`. **If you add a new as
 directory, the recursive `templates`/`skills` embeds cover nested files, but a new
 top-level asset must be added to the `go:embed` directive** or it will not ship in the binary.
 
-On a fresh install `config.Bootstrap` mirrors `templates/` into `<workspace>/templates/`
-and `skills/` into `<workspace>/.agents/skills/`, then symlinks `<workspace>/.claude/skills`
-to `.agents/skills` so both ACP and Claude-based agents discover the bundled skills.
+`config.Bootstrap` runs on every start. It mirrors `templates/` into
+`<workspace>/templates/` and `skills/` into `<workspace>/.agents/skills/`, then
+symlinks `<workspace>/.claude/skills` to `.agents/skills` so both ACP and
+Claude-based agents discover the bundled skills. The two trees use different
+copy policies (`copyPolicy` in `bootstrap.go`): **config files and `templates/`
+are `preserveExisting`** (seeded once, never overwritten, since they hold the
+user's tokens/edits), while **`skills/` is `refreshFromAssets`** — shipped skill
+files are rewritten in place when their content drifts from the embedded copy,
+so a binary upgrade keeps the workspace skills current. Bootstrap only ever
+writes files it embeds, so user-added skills are never deleted; an unchanged
+file is a no-op (no mtime churn). The `BootstrapReport` buckets each path as
+Created, Updated, or Preserved.
 
 ## Testing conventions
 
