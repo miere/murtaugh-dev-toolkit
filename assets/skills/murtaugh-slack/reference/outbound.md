@@ -5,22 +5,15 @@ messages into Slack through Murtaugh — posting, updating in place, threading,
 ephemeral/DM, and resolving a user mention. For the blocks you put in these
 messages see `blocks.md`; for what happens when someone clicks, see `inbound.md`.
 
-## ⚠️ Invocation is being firmed up
+## How to invoke these
 
-At time of writing, Murtaugh's CLI does not self-describe its outbound commands
-(`murtaugh <cmd> --help` prints only the top-level usage), and the MCP tool
-surface for posting is still being finalised. **Do not guess command names.**
-Instead, in this order:
-
-1. **Discover, don't assume.** Run `murtaugh tools` (the planned discovery
-   command) if present, or start the MCP server (`murtaugh mcp`) and read the tool
-   schemas — they are self-documenting.
-2. If neither is available yet, **state the gap to the user** and propose the
-   smallest addition, rather than reaching around Murtaugh to call the Slack Web
-   API directly with a raw token.
-
-The operations below are stable regardless of how they're invoked; each notes the
-underlying Slack method so you know what capability to look for.
+Murtaugh ships concrete tools for posting, updating, and reading messages —
+`slack.send-msg`, `slack.update-msg`, `slack.fetch-msgs`, `slack.fetch-reactions`
+— on the CLI (`murtaugh slack <tool> …`) and over MCP. They use the gateway's bot
+token, so you never reach around Murtaugh with a raw token. **The
+`murtaugh-slack-tools` skill documents each tool's arguments**; this file covers
+the underlying *patterns* (one-message-per-entity, threading, mentions). Each
+operation below notes the Slack method it maps to.
 
 ## The operations you need
 
