@@ -603,6 +603,30 @@ func (a *App) agentInterruptible(agent string) bool {
 	return checker.Interruptible()
 }
 
+// followUpDeferredText is the thread note posted when a follow-up is held back
+// because the agent cannot be interrupted.
+const followUpDeferredText = ":hourglass_flowing_sand: Still working on your previous message — this agent can't be interrupted, so I'll finish that first before picking this up."
+
+// notifyFollowUpDeferred posts a brief, best-effort thread note so a user whose
+// follow-up was dropped (non-interruptible agent, response in flight) is not
+// left wondering why nothing happened. Failures are logged, never propagated;
+// a missing messaging surface (CLI/MCP, some tests) makes this a no-op.
+func (a *App) notifyFollowUpDeferred(parent context.Context, req ChatRequest) {
+	if a.messaging == nil {
+		return
+	}
+	threadTS := streamThreadTS(req)
+	if threadTS == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
+	options := []slack.MsgOption{slack.MsgOptionText(followUpDeferredText, false), slack.MsgOptionTS(threadTS)}
+	if _, _, err := a.messaging.PostMessageContext(ctx, req.ChannelID, options...); err != nil {
+		a.logger.Warn("failed to post follow-up deferred note", "channel", req.ChannelID, "thread_ts", threadTS, "error", err)
+	}
+}
+
 // startChat launches a chat goroutine for the request and wires it into
 // the in-flight registry so subsequent messages on the same
 // conversation interrupt the previous response, and so the /stop slash
@@ -626,6 +650,7 @@ func (a *App) startChat(parent context.Context, req ChatRequest) {
 	// drop the follow-up.
 	if !a.agentInterruptible(agent) && a.inFlight.Active(key) {
 		a.logger.Info("ignoring follow-up while a response is in flight; agent is not interruptible", "channel", req.ChannelID, "thread_ts", key.ThreadTS, "agent", agent)
+		a.notifyFollowUpDeferred(parent, req)
 		return
 	}
 	ctx, cancelCtx := context.WithTimeout(parent, a.chatTimeout)
