@@ -100,6 +100,19 @@ func (r *InFlightRegistry) Cancel(key acp.ConversationKey) bool {
 	return true
 }
 
+// Active reports whether a chat is currently in flight for the conversation.
+// It races with concurrent Register/Cancel by nature, so callers must treat
+// the answer as a best-effort snapshot, not a lock.
+func (r *InFlightRegistry) Active(key acp.ConversationKey) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.entries[key]
+	return ok
+}
+
 // Len returns the current number of tracked in-flight chats. It is
 // primarily useful in tests; production code should not branch on
 // this value because it races with concurrent Register/Cancel calls.

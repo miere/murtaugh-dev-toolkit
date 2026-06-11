@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -65,6 +66,47 @@ func TestProcessClientProcessOutlivesInitializeContext(t *testing.T) {
 	}
 	if session.ID == "" {
 		t.Fatal("expected session ID")
+	}
+}
+
+func TestProcessClientSupportsCancelFalseWhenMethodNotFound(t *testing.T) {
+	client := NewProcessClient(ProcessOptions{Command: os.Args[0], Args: []string{"-test.run", "TestACPHelperProcess", "--", "acp-helper"}})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize returned error: %v", err)
+	}
+	if client.SupportsCancel(ctx) {
+		t.Fatal("expected SupportsCancel=false for an agent that returns -32601")
+	}
+}
+
+func TestProcessClientSupportsCancelTrueWhenMethodExists(t *testing.T) {
+	client := NewProcessClient(ProcessOptions{Command: os.Args[0], Args: []string{"-test.run", "TestACPHelperProcess", "--", "acp-helper-cancellable"}})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize returned error: %v", err)
+	}
+	if !client.SupportsCancel(ctx) {
+		t.Fatal("expected SupportsCancel=true when the agent implements session/cancel")
+	}
+}
+
+func TestIsMethodNotFound(t *testing.T) {
+	if !IsMethodNotFound(&RPCError{Method: "session/cancel", Code: -32601, Message: "nope"}) {
+		t.Fatal("expected -32601 RPCError to be method-not-found")
+	}
+	if IsMethodNotFound(&RPCError{Method: "session/cancel", Code: -32602, Message: "bad params"}) {
+		t.Fatal("expected -32602 RPCError not to be method-not-found")
+	}
+	if IsMethodNotFound(errors.New("plain error")) {
+		t.Fatal("expected a non-RPC error not to be method-not-found")
+	}
+	if IsMethodNotFound(nil) {
+		t.Fatal("expected nil not to be method-not-found")
 	}
 }
 
@@ -222,9 +264,14 @@ func TestProcessClientDoesNotDropEventsForSlowConsumer(t *testing.T) {
 }
 
 func TestACPHelperProcess(t *testing.T) {
-	if len(os.Args) == 0 || os.Args[len(os.Args)-1] != "acp-helper" {
+	mode := ""
+	if len(os.Args) > 0 {
+		mode = os.Args[len(os.Args)-1]
+	}
+	if mode != "acp-helper" && mode != "acp-helper-cancellable" {
 		return
 	}
+	supportsCancel := mode == "acp-helper-cancellable"
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
 	for scanner.Scan() {
@@ -271,6 +318,14 @@ func TestACPHelperProcess(t *testing.T) {
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "session-1", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "task-1", "status": "completed", "content": []map[string]any{{"type": "content", "content": map[string]string{"type": "text", "text": "tool output should not stream"}}}}}})
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "session-1", "update": map[string]any{"sessionUpdate": "agent_message", "content": []map[string]string{{"type": "text", "text": "Hello from ACP"}}}}})
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"stopReason": "end_turn"}})
+		case "session/cancel":
+			if supportsCancel {
+				// An interruptible agent accepts the call (here: reports the
+				// probe's synthetic session is unknown — not method-not-found).
+				_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32602, "message": "unknown session"}})
+			} else {
+				_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32601, "message": "session/cancel not supported"}})
+			}
 		default:
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32601, "message": fmt.Sprintf("unknown method %s", req.Method)}})
 		}

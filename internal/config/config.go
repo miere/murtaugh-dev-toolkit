@@ -67,6 +67,10 @@ type AgentProfile struct {
 	Command string   `yaml:"command"`
 	Args    []string `yaml:"args"`
 	WorkDir string   `yaml:"workdir"`
+	// Interruptible overrides auto-detection of session/cancel support. When
+	// nil (the default) Murtaugh probes the agent at warmup; set it explicitly
+	// to skip the probe or to correct a wrong verdict.
+	Interruptible *bool `yaml:"interruptible"`
 }
 
 type JobProfile struct {

@@ -24,6 +24,30 @@ func TestInFlightRegistryRegisterUnregister(t *testing.T) {
 	}
 }
 
+func TestInFlightRegistryActive(t *testing.T) {
+	r := NewInFlightRegistry()
+	key := acp.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
+	if r.Active(key) {
+		t.Fatal("expected no active chat before Register")
+	}
+	_, cancel := context.WithCancel(context.Background())
+	token, _ := r.Register(key, cancel, "default")
+	if !r.Active(key) {
+		t.Fatal("expected active chat after Register")
+	}
+	if r.Active(acp.ConversationKey{ChannelID: "C2"}) {
+		t.Fatal("a different conversation must not report active")
+	}
+	r.Unregister(key, token)
+	if r.Active(key) {
+		t.Fatal("expected no active chat after Unregister")
+	}
+	var nilReg *InFlightRegistry
+	if nilReg.Active(key) {
+		t.Fatal("nil registry must report not active")
+	}
+}
+
 func TestInFlightRegistryRegisterReturnsPreviousCancel(t *testing.T) {
 	r := NewInFlightRegistry()
 	key := acp.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}

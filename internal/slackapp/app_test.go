@@ -149,6 +149,93 @@ func TestDuplicateAppMentionStartsChatOnce(t *testing.T) {
 	}
 }
 
+// nonInterruptibleSessions is a blocking session manager that reports it does
+// not support cancellation, so a follow-up should be dropped while the first
+// prompt is still running.
+type nonInterruptibleSessions struct {
+	mu      sync.Mutex
+	prompts int
+	release chan struct{}
+}
+
+func (f *nonInterruptibleSessions) Prompt(_ context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
+	f.mu.Lock()
+	f.prompts++
+	f.mu.Unlock()
+	ch := make(chan acp.Event)
+	go func() {
+		<-f.release
+		ch <- acp.Event{Type: acp.EventText, Text: "done"}
+		ch <- acp.Event{Type: acp.EventComplete}
+		close(ch)
+	}()
+	return ch, nil
+}
+
+func (f *nonInterruptibleSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *nonInterruptibleSessions) Cancel(context.Context, string) error      { return nil }
+func (f *nonInterruptibleSessions) Interruptible() bool                       { return false }
+func (f *nonInterruptibleSessions) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.prompts
+}
+
+func TestNonInterruptibleAgentDropsFollowUpWhileInFlight(t *testing.T) {
+	api := &fakeStreamAPI{}
+	fake := &nonInterruptibleSessions{release: make(chan struct{})}
+	sessions := map[string]ChatSessionManager{"default": fake}
+	resolver := func(req ChatRequest) string { return "default" }
+	app := &App{
+		chat:         NewChatHandler(api, sessions, resolver, time.Hour, 1, discardLogger()),
+		chatSessions: sessions,
+		chatTimeout:  2 * time.Second,
+		inFlight:     NewInFlightRegistry(),
+		recentEvents: newEventDedup(time.Minute),
+		logger:       discardLogger(),
+		cfg:          config.ConfigurationConfig{AllowedUsers: []string{"U1"}},
+	}
+	defer close(fake.release)
+
+	first := ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", ThreadTS: "100.0", MessageTS: "1.1", Text: "first", Source: "test"}
+	app.startChat(context.Background(), first)
+
+	// Wait until the first prompt is in flight.
+	key := conversationKey(first)
+	deadline := time.After(time.Second)
+	for !(fake.count() == 1 && app.inFlight.Active(key)) {
+		select {
+		case <-deadline:
+			t.Fatalf("first chat never became active (prompts=%d)", fake.count())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// A follow-up in the same thread must be dropped, not started.
+	app.startChat(context.Background(), ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", ThreadTS: "100.0", MessageTS: "2.2", Text: "second", Source: "test"})
+	time.Sleep(20 * time.Millisecond)
+	if got := fake.count(); got != 1 {
+		t.Fatalf("expected follow-up to be dropped (1 prompt), got %d", got)
+	}
+}
+
+func TestAgentInterruptibleGate(t *testing.T) {
+	app := &App{chatSessions: map[string]ChatSessionManager{
+		"interruptible": &countingChatSessions{},     // no Interruptible() surface -> true
+		"not":           &nonInterruptibleSessions{}, // Interruptible() == false
+	}}
+	if !app.agentInterruptible("interruptible") {
+		t.Fatal("an agent without the capability surface must be treated as interruptible")
+	}
+	if app.agentInterruptible("not") {
+		t.Fatal("an agent reporting Interruptible()==false must be non-interruptible")
+	}
+	if !app.agentInterruptible("missing") {
+		t.Fatal("an unknown agent must default to interruptible")
+	}
+}
+
 type fakeUnfurler struct {
 	calls     int
 	channelID string

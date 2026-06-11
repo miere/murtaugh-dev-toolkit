@@ -117,7 +117,7 @@ func New(cfg config.Config, logger *slog.Logger) *App {
 				client,
 				cfg.ACP.EffectiveSessionIdleTimeout(),
 				cfg.ACP.EffectiveMaxSessions(),
-			).WithLogger(logger)
+			).WithLogger(logger.With("agent", name)).WithCancelOverride(profile.Interruptible)
 		}
 
 		resolver := func(req ChatRequest) string {
@@ -587,6 +587,22 @@ func (a *App) isDuplicateEvent(teamID, channelID, ts string) bool {
 	return a.recentEvents.seenBefore(teamID + "|" + channelID + "|" + ts)
 }
 
+// agentInterruptible reports whether the resolved agent supports interrupting
+// an in-flight prompt. Unknown agents, and session managers that do not expose
+// the capability, are treated as interruptible so behaviour is unchanged unless
+// detection explicitly says otherwise.
+func (a *App) agentInterruptible(agent string) bool {
+	sessions, ok := a.chatSessions[agent]
+	if !ok {
+		return true
+	}
+	checker, ok := sessions.(interface{ Interruptible() bool })
+	if !ok {
+		return true
+	}
+	return checker.Interruptible()
+}
+
 // startChat launches a chat goroutine for the request and wires it into
 // the in-flight registry so subsequent messages on the same
 // conversation interrupt the previous response, and so the /stop slash
@@ -598,12 +614,21 @@ func (a *App) isDuplicateEvent(teamID, channelID, ts string) bool {
 // "_interrupted_" rather than vanish, which is what ChatHandler.Handle
 // renders when it sees context.Canceled (vs DeadlineExceeded).
 func (a *App) startChat(parent context.Context, req ChatRequest) {
-	ctx, cancelCtx := context.WithTimeout(parent, a.chatTimeout)
 	key := conversationKey(req)
 	agent := ""
 	if a.chat != nil && a.chat.resolver != nil {
 		agent = a.chat.resolver(req)
 	}
+	// When the agent cannot be interrupted (session/cancel unsupported), a
+	// follow-up must neither cancel the in-flight response (the cancel is a
+	// no-op at the agent and only yields a misleading "_interrupted_") nor run
+	// concurrently against the same ACP session. Let the first finish; log and
+	// drop the follow-up.
+	if !a.agentInterruptible(agent) && a.inFlight.Active(key) {
+		a.logger.Info("ignoring follow-up while a response is in flight; agent is not interruptible", "channel", req.ChannelID, "thread_ts", key.ThreadTS, "agent", agent)
+		return
+	}
+	ctx, cancelCtx := context.WithTimeout(parent, a.chatTimeout)
 	cancelFunc := a.buildInterruptCancel(key, agent, cancelCtx)
 	_, previous := a.inFlight.Register(key, cancelFunc, agent)
 	if previous != nil {

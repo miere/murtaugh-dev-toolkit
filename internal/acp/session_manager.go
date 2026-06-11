@@ -15,9 +15,27 @@ type SessionManager struct {
 	now         func() time.Time
 	logger      *slog.Logger
 
+	// cancelOverride, when non-nil, forces the interruptible verdict and
+	// skips the startup probe. It is populated from the agent's
+	// `interruptible:` config flag.
+	cancelOverride *bool
+
 	mu          sync.Mutex
 	initialized bool
-	sessions    map[ConversationKey]managedSession
+	// interruptible caches whether the agent implements session/cancel.
+	// interruptibleKnown is false until Warm has resolved it (via the
+	// override or the probe); callers treat unknown as interruptible so a
+	// missing/failed probe never silently changes behaviour.
+	interruptible      bool
+	interruptibleKnown bool
+	sessions           map[ConversationKey]managedSession
+}
+
+// cancelCapabilityProber is the optional capability surface a Client can
+// implement so the manager can detect, at warmup, whether the agent supports
+// interruption. *ProcessClient satisfies it.
+type cancelCapabilityProber interface {
+	SupportsCancel(ctx context.Context) bool
 }
 
 type managedSession struct {
@@ -42,18 +60,67 @@ func (m *SessionManager) WithLogger(logger *slog.Logger) *SessionManager {
 	return m
 }
 
-func (m *SessionManager) Warm(ctx context.Context) error {
+// WithCancelOverride forces the interruptible verdict from configuration,
+// bypassing the startup probe. nil leaves auto-detection in place.
+func (m *SessionManager) WithCancelOverride(override *bool) *SessionManager {
+	m.cancelOverride = override
+	return m
+}
+
+// Interruptible reports whether the agent can have an in-flight prompt
+// cancelled via session/cancel. Until Warm has resolved the capability it
+// returns true so behaviour is unchanged when detection has not (yet) run.
+func (m *SessionManager) Interruptible() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.interruptibleKnown {
+		return true
+	}
+	return m.interruptible
+}
+
+// resolveInterruptible determines and caches whether the agent supports
+// cancellation: the config override wins; otherwise it probes the client when
+// the client exposes the capability surface. Defaults to interruptible when no
+// signal is available. Logs the verdict once so operators see it at deployment.
+func (m *SessionManager) resolveInterruptible(ctx context.Context) {
+	interruptible := true
+	source := "default"
+	if m.cancelOverride != nil {
+		interruptible = *m.cancelOverride
+		source = "config"
+	} else if prober, ok := m.client.(cancelCapabilityProber); ok {
+		interruptible = prober.SupportsCancel(ctx)
+		source = "probe"
+	}
+	m.mu.Lock()
+	m.interruptible = interruptible
+	m.interruptibleKnown = true
+	m.mu.Unlock()
+	if interruptible {
+		m.logger.Info("ACP agent is interruptible", "source", source)
+		return
+	}
+	m.logger.Warn("ACP agent does not support session/cancel; new messages will not interrupt an in-flight response", "source", source)
+}
+
+func (m *SessionManager) Warm(ctx context.Context) error {
+	m.mu.Lock()
 	if m.initialized {
+		m.mu.Unlock()
 		return nil
 	}
 	startedAt := m.now()
 	if err := m.client.Initialize(ctx); err != nil {
+		m.mu.Unlock()
 		return fmt.Errorf("initialize ACP client: %w", err)
 	}
 	m.initialized = true
+	m.mu.Unlock()
 	m.logger.Info("warmed ACP client", "duration", m.now().Sub(startedAt))
+	// Resolve interruptibility after releasing the lock: the probe performs a
+	// round-trip to the agent and resolveInterruptible takes the lock itself.
+	m.resolveInterruptible(ctx)
 	return nil
 }
 

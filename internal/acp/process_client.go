@@ -56,6 +56,37 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+// jsonRPCMethodNotFound is the standard JSON-RPC code an agent returns when it
+// has no handler registered for a method — e.g. an ACP agent that does not
+// implement session/cancel. It is a method-level rejection, raised before the
+// params are even validated, which makes it a reliable capability signal.
+const jsonRPCMethodNotFound = -32601
+
+// cancelProbeSessionID is the synthetic session id used to probe session/cancel
+// support. A non-interruptible agent rejects the method itself (-32601) before
+// looking at the session; an interruptible one accepts the call or reports an
+// unknown session, neither of which is method-not-found.
+const cancelProbeSessionID = "murtaugh-cancel-probe"
+
+// RPCError is a structured ACP/JSON-RPC error. It preserves the numeric code so
+// callers can branch on it (e.g. IsMethodNotFound) instead of matching strings.
+type RPCError struct {
+	Method  string
+	Code    int
+	Message string
+}
+
+func (e *RPCError) Error() string {
+	return fmt.Sprintf("ACP %s error %d: %s", e.Method, e.Code, e.Message)
+}
+
+// IsMethodNotFound reports whether err is an RPCError carrying the JSON-RPC
+// "method not found" code, i.e. the agent does not implement the method.
+func IsMethodNotFound(err error) bool {
+	var rpcErr *RPCError
+	return errors.As(err, &rpcErr) && rpcErr.Code == jsonRPCMethodNotFound
+}
+
 type rpcNotification struct {
 	JSONRPC string          `json:"jsonrpc"`
 	Method  string          `json:"method"`
@@ -176,6 +207,17 @@ func (c *ProcessClient) Cancel(ctx context.Context, sessionID string) error {
 	return err
 }
 
+// SupportsCancel probes whether the agent implements session/cancel by issuing
+// the call for a synthetic session and inspecting the outcome. A method-not-
+// found error means the agent cannot be interrupted; any other result (success
+// or an unknown-session error) means the method exists. On a transient/ambient
+// failure (process error, cancelled context) it conservatively reports true so
+// a flaky probe never silently disables interrupts.
+func (c *ProcessClient) SupportsCancel(ctx context.Context) bool {
+	err := c.Cancel(ctx, cancelProbeSessionID)
+	return !IsMethodNotFound(err)
+}
+
 func (c *ProcessClient) Close() error {
 	c.mu.Lock()
 	c.closed = true
@@ -277,7 +319,7 @@ func (c *ProcessClient) call(ctx context.Context, method string, params any) (js
 			return nil, errors.New("ACP request failed: process closed")
 		}
 		if response.Error != nil {
-			return nil, fmt.Errorf("ACP %s error %d: %s", method, response.Error.Code, response.Error.Message)
+			return nil, &RPCError{Method: method, Code: response.Error.Code, Message: response.Error.Message}
 		}
 		c.log.Info("completed ACP request", "method", method, "duration", time.Since(startedAt))
 		return response.Result, nil

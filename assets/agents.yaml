@@ -14,3 +14,9 @@ agents:
     command: /path/to/acp-agent
     args: [--stdio]
     workdir: /path/to/workspace
+    # interruptible: optional override for session/cancel support. Omit to let
+    # Murtaugh auto-detect at startup (it probes the agent and logs the result).
+    # Set false for agents that do not implement session/cancel so a follow-up
+    # message does not try to interrupt — and instead waits for the current
+    # response to finish. Set true to force-enable and skip the probe.
+    # interruptible: false
