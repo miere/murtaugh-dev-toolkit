@@ -1,0 +1,26 @@
+# Example unfurl-rules for slack.yaml.
+# Remember: every match.domain must also be in the Slack app's
+# "App Unfurl Domains" list (max 5) or no link_shared event is delivered.
+
+unfurl-rules:
+  # Template-based: a GitHub PR link → rich preview from URL parts only.
+  github-pr:
+    match:
+      domain: github.com
+      url_pattern: '^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>\d+)'
+    unfurl:
+      template: templates/unfurl/github-pr.json
+
+  # Run-based: a Jira ticket link → preview needs a lookup, so call a script.
+  # The script receives the link JSON on stdin and prints a Block Kit
+  # attachment on stdout (or nothing to skip).
+  jira-ticket:
+    match:
+      domain: example.atlassian.net
+      url_pattern: '/browse/(?P<key>[A-Z]+-\d+)'
+      channels: [C0ENG1]            # optional: only in this channel
+    unfurl:
+      run:
+        cmd: /usr/bin/python3
+        args: ["/Users/you/.config/murtaugh/automations/unfurl_jira.py"]
+        timeout: 8s

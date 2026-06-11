@@ -1,0 +1,28 @@
+# Example agents.yaml (ACP chat enabled with one agent).
+# Pair with a chat block in slack.yaml (see below).
+
+acp:
+  enabled: true
+  request_timeout: 10m
+  session_idle_timeout: 30m
+  max_sessions: 100
+  stream_append_interval: 750ms
+  stream_min_chunk_chars: 96
+  cancel_grace_period: 2s
+
+agents:
+  default:
+    command: /usr/local/bin/acp-agent
+    args: [--stdio]
+    # workdir defaults to ~/.config/murtaugh when omitted
+    # interruptible: false   # pin only if the startup probe is wrong
+
+# ---------------------------------------------------------------------------
+# In slack.yaml, point chat routing at an agent defined above:
+#
+# chat:
+#   default_agent: default
+#   # dm_agent: default
+#   # channel_agents:
+#   #   C0ENG1: default        # keys are channel IDs, not #names
+# ---------------------------------------------------------------------------

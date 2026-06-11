@@ -98,4 +98,4 @@ ephemeral, scope `allowed_users`, gate destructive actions) rather than ship-and
 - A worked, wired example lives in `slack.yaml` (`workflow-rules.code-review-approval`)
   with its template at `templates/code-review/02-approved.json` — see `examples/`.
 - Unfurling bare URLs into rich previews is a *different* mechanism (`unfurl-rules`
-  + `link_shared`), covered by the separate `unfurl-urls` skill.
+  + `link_shared`), covered by the separate `murtaugh-unfurl` skill.
