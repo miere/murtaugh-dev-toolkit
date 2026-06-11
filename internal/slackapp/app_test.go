@@ -183,6 +183,7 @@ func (f *nonInterruptibleSessions) count() int {
 
 func TestNonInterruptibleAgentDropsFollowUpWhileInFlight(t *testing.T) {
 	api := &fakeStreamAPI{}
+	msg := &recordingMessaging{}
 	fake := &nonInterruptibleSessions{release: make(chan struct{})}
 	sessions := map[string]ChatSessionManager{"default": fake}
 	resolver := func(req ChatRequest) string { return "default" }
@@ -192,6 +193,7 @@ func TestNonInterruptibleAgentDropsFollowUpWhileInFlight(t *testing.T) {
 		chatTimeout:  2 * time.Second,
 		inFlight:     NewInFlightRegistry(),
 		recentEvents: newEventDedup(time.Minute),
+		messaging:    msg,
 		logger:       discardLogger(),
 		cfg:          config.ConfigurationConfig{AllowedUsers: []string{"U1"}},
 	}
@@ -217,6 +219,13 @@ func TestNonInterruptibleAgentDropsFollowUpWhileInFlight(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if got := fake.count(); got != 1 {
 		t.Fatalf("expected follow-up to be dropped (1 prompt), got %d", got)
+	}
+	// The dropped follow-up gets a thread note so the user is not left guessing.
+	if msg.postCalls != 1 {
+		t.Fatalf("expected one thread note for the deferred follow-up, got %d", msg.postCalls)
+	}
+	if msg.postChannel != "C1" {
+		t.Fatalf("expected the note in channel C1, got %q", msg.postChannel)
 	}
 }
 
