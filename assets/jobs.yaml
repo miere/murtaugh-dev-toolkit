@@ -15,8 +15,28 @@
 #                (e.g. "1h", "30m").
 # `schedule` and `every` are mutually exclusive. Scheduled runs only fire
 # while the gateway daemon is running; edits here apply on the next restart.
+#
+# A job runs EITHER a `command` OR an agent (`agent` + `prompt`) — the two are
+# mutually exclusive. An agent job starts the named agent (from agents.yaml) in
+# an isolated one-shot session and sends the rendered prompt; it is
+# fire-and-forget (the agent acts through its own tools). The prompt supports
+# positional placeholders — {{ 1 }}, {{ 2 }}, ... — that expand to the args
+# passed at run time:
+#   murtaugh jobs run --name code-review-job --args 1234 --args /path/to/repo
+# When no run-time args are given, the job's own `args` fill the placeholders,
+# which is handy for scheduled agent jobs.
 
 jobs:
+  # AI assisted code review (agent-delegated).
+  # code-review-job:
+  #   # Run the "default" agent (defined in agents.yaml) instead of a command.
+  #   agent: default
+  #   # First arg is the PR number, second is the local repository path.
+  #   prompt: |
+  #     Review the code changes in this PR and provide feedback.
+  #     - pr: {{ 1 }}
+  #     - local repository: {{ 2 }}
+
   example-job:
     command: /bin/echo
     args: ["hello from murtaugh"]

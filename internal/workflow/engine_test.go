@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/slack-go/slack"
 )
@@ -89,6 +90,98 @@ func TestEnginePostsCommandRenderedResponse(t *testing.T) {
 	}
 	if len(poster.bodies) != 1 || string(poster.bodies[0]) != `{"text":"from command"}` {
 		t.Fatalf("unexpected posted command response: %#v", poster.bodies)
+	}
+}
+
+type fakeDelegator struct {
+	jsonOut   []byte
+	jsonErr   error
+	forgetErr error
+
+	agents  []string
+	prompts []string
+	forgets int
+}
+
+func (f *fakeDelegator) RunForJSON(_ context.Context, agent, prompt string) ([]byte, error) {
+	f.agents = append(f.agents, agent)
+	f.prompts = append(f.prompts, prompt)
+	return f.jsonOut, f.jsonErr
+}
+
+func (f *fakeDelegator) RunAndForget(_ context.Context, agent, prompt string) error {
+	f.agents = append(f.agents, agent)
+	f.prompts = append(f.prompts, prompt)
+	f.forgets++
+	return f.forgetErr
+}
+
+func delegateReplyConfig(prompt string) config.Config {
+	cfg := workflowConfig()
+	rule := cfg.WorkflowRules["code-review-approval"]
+	rule.Triggers = []config.TriggerConfig{{
+		Type:         "reply-to-slack",
+		ReplyToSlack: &config.ReplyToSlackTriggerConfig{DelegateToAgent: &config.DelegateToAgentConfig{Agent: "default", Prompt: prompt}},
+	}}
+	cfg.WorkflowRules["code-review-approval"] = rule
+	return cfg
+}
+
+func TestEngineDelegateReplyPostsJSON(t *testing.T) {
+	poster := &recordingPoster{}
+	del := &fakeDelegator{jsonOut: []byte(`{"text":"from agent"}`)}
+	cfg := delegateReplyConfig(`Summarise approval in {{ index .Payload.channel "name" }}`)
+
+	engine := NewEngine(cfg, Options{Poster: poster, Delegator: del})
+	if err := engine.Execute(context.Background(), approvalInteraction()); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if len(del.prompts) != 1 || del.agents[0] != "default" {
+		t.Fatalf("unexpected delegation: agents=%#v prompts=%#v", del.agents, del.prompts)
+	}
+	if !strings.Contains(del.prompts[0], "nc-code-reviews") {
+		t.Fatalf("prompt was not rendered with payload: %q", del.prompts[0])
+	}
+	if len(poster.bodies) != 1 || string(poster.bodies[0]) != `{"text":"from agent"}` {
+		t.Fatalf("unexpected posted body: %#v", poster.bodies)
+	}
+}
+
+func TestEngineDelegateReplyNonJSONSkipsPost(t *testing.T) {
+	poster := &recordingPoster{}
+	del := &fakeDelegator{jsonErr: agentdelegate.ErrNonJSONOutput}
+	cfg := delegateReplyConfig("Summarise it")
+
+	engine := NewEngine(cfg, Options{Poster: poster, Delegator: del})
+	if err := engine.Execute(context.Background(), approvalInteraction()); err != nil {
+		t.Fatalf("Execute should not error on non-JSON output, got: %v", err)
+	}
+	if len(poster.bodies) != 0 {
+		t.Fatalf("expected nothing posted on non-JSON output, got: %#v", poster.bodies)
+	}
+}
+
+func TestEngineTopLevelDelegateFireAndForget(t *testing.T) {
+	poster := &recordingPoster{}
+	del := &fakeDelegator{}
+	cfg := workflowConfig()
+	rule := cfg.WorkflowRules["code-review-approval"]
+	rule.Triggers = []config.TriggerConfig{{
+		Type:            "delegate-to-agent",
+		DelegateToAgent: &config.DelegateToAgentConfig{Agent: "default", Prompt: "Act on it"},
+	}}
+	cfg.WorkflowRules["code-review-approval"] = rule
+
+	engine := NewEngine(cfg, Options{Poster: poster, Delegator: del})
+	if err := engine.Execute(context.Background(), approvalInteraction()); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if del.forgets != 1 || del.agents[0] != "default" {
+		t.Fatalf("expected one fire-and-forget delegation, got forgets=%d agents=%#v", del.forgets, del.agents)
+	}
+	if len(poster.bodies) != 0 {
+		t.Fatalf("fire-and-forget must not post, got: %#v", poster.bodies)
 	}
 }
 

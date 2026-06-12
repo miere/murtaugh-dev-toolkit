@@ -1,8 +1,9 @@
-# Unfurl actions: template vs run
+# Unfurl actions: template, run, or delegate-to-agent
 
-Both actions produce the same thing — a **Slack Block Kit attachment** as JSON,
-which Murtaugh posts via `chat.unfurl`. They differ only in how that JSON is
-produced.
+All three actions produce the same thing — a **Slack Block Kit attachment** as
+JSON, which Murtaugh posts via `chat.unfurl`. They differ only in how that JSON
+is produced. Exactly one of `template`, `run`, or `delegate-to-agent` is set
+per rule.
 
 ## Shared data
 
@@ -80,5 +81,30 @@ Murtaugh runs `cmd` (with `args`, in `workdir`, bounded by `timeout`) and:
 - stdout is trimmed and must be valid JSON decoding to a `slack.Attachment`;
   malformed output is treated as a skip-with-log.
 
-Use `run` for previews that need a lookup (call the Jira/GitHub API, read a DB);
-use `template` when the URL itself carries everything you need.
+## `delegate-to-agent` — agent renders the attachment JSON
+
+Hands the preview to an agent (keyed in `agents.yaml`) running in an isolated
+one-shot session. The prompt is rendered with the same shared-data fields as a
+template (`{{ .URL }}`, `{{ .Domain }}`, `{{ .Captures.<name> }}`, …), using
+`missingkey=error`.
+
+```yaml
+    unfurl:
+      delegate-to-agent:
+        agent: default
+        prompt: |
+          Summarise GitHub issue {{ .URL }} and return me solely a valid Slack
+          attachment JSON object containing the summary in one paragraph.
+```
+
+- The agent's **final output must be a single valid JSON** Slack attachment.
+- **Non-JSON output → the link is skipped** and a warning (with the raw output)
+  is logged. Same skip-with-log behaviour as `run`.
+- The agent may use its own tools/MCP to gather context (call an API, read a
+  repo) before producing the JSON — richer than a `run` command, but slower and
+  non-deterministic.
+
+Use `run` for previews that need a fixed lookup (call the Jira/GitHub API, read
+a DB); use `template` when the URL itself carries everything you need; use
+`delegate-to-agent` when producing the preview needs an agent's judgement or
+tool use.

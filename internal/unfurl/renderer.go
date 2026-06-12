@@ -64,6 +64,22 @@ func (r *Renderer) Render(path string, data Data) (slack.Attachment, error) {
 	return ParseAttachment(rendered.Bytes())
 }
 
+// RenderPrompt renders a delegate-to-agent prompt template against the unfurl
+// Data (so prompts can reference {{ .URL }}, {{ .Captures.number }}, etc.),
+// using missingkey=error so a typo'd placeholder fails loudly rather than
+// sending the agent a half-rendered prompt.
+func RenderPrompt(promptTemplate string, data Data) (string, error) {
+	tpl, err := template.New("prompt").Option("missingkey=error").Parse(promptTemplate)
+	if err != nil {
+		return "", fmt.Errorf("parse prompt template: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := tpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("execute prompt template: %w", err)
+	}
+	return buf.String(), nil
+}
+
 // ParseAttachment decodes a single Slack attachment (which may carry Block Kit
 // blocks) from JSON, rejecting malformed output.
 func ParseAttachment(body []byte) (slack.Attachment, error) {

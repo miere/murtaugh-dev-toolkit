@@ -19,8 +19,10 @@ actions, approval forms, status mirrors, and similar.
    `block_actions` event, keyed by `block_id` / `action_id`.
 3. **Handle** — Murtaugh matches the first `workflow-rules` entry whose `match` is
    a subset of the payload. → `reference/inbound.md`
-4. **Render** — the rule's triggers fire: `reply-to-slack` posts a templated
-   response and/or `run` invokes a command for side effects. → `reference/inbound.md`
+4. **Render** — the rule's triggers fire: `reply-to-slack` posts a reply (from a
+   template, command, or agent), `run` invokes a command for side effects, and
+   `delegate-to-agent` hands the work to an agent fire-and-forget. →
+   `reference/inbound.md`
 
 ## Read the right file (don't load everything)
 

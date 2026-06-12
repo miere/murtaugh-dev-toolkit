@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/unfurl"
 	"github.com/slack-go/slack"
@@ -284,7 +285,7 @@ func newTemplateUnfurlHandler(t *testing.T, api Unfurler) *LinkUnfurlHandler {
 	if err != nil {
 		t.Fatalf("NewMatcher returned error: %v", err)
 	}
-	return NewLinkUnfurlHandler(matcher, unfurl.NewRenderer(t.TempDir(), nil), nil, api, discardLogger())
+	return NewLinkUnfurlHandler(matcher, unfurl.NewRenderer(t.TempDir(), nil), nil, nil, api, discardLogger())
 }
 
 func TestLinkUnfurlHandlerTemplate(t *testing.T) {
@@ -358,7 +359,7 @@ func TestLinkUnfurlHandlerRunPath(t *testing.T) {
 		t.Fatalf("NewMatcher returned error: %v", err)
 	}
 	runner := &stubRunner{output: []byte(`{"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"JIRA"}}]}`)}
-	handler := NewLinkUnfurlHandler(matcher, unfurl.NewRenderer(t.TempDir(), nil), runner, api, discardLogger())
+	handler := NewLinkUnfurlHandler(matcher, unfurl.NewRenderer(t.TempDir(), nil), runner, nil, api, discardLogger())
 	if err := handler.Handle(context.Background(), LinkSharedRequest{
 		ChannelID: "C1",
 		MessageTS: "1.1",
@@ -384,7 +385,7 @@ func TestLinkUnfurlHandlerSkipsInvalidRunOutput(t *testing.T) {
 		"jira": {Match: config.UnfurlMatchConfig{Domain: "example.com"}, Unfurl: config.UnfurlActionConfig{Run: &config.RunTriggerConfig{Cmd: "echo"}}},
 	})
 	runner := &stubRunner{output: []byte("not json")}
-	handler := NewLinkUnfurlHandler(matcher, unfurl.NewRenderer(t.TempDir(), nil), runner, api, discardLogger())
+	handler := NewLinkUnfurlHandler(matcher, unfurl.NewRenderer(t.TempDir(), nil), runner, nil, api, discardLogger())
 	if err := handler.Handle(context.Background(), LinkSharedRequest{
 		ChannelID: "C1",
 		MessageTS: "1.1",
@@ -394,5 +395,72 @@ func TestLinkUnfurlHandlerSkipsInvalidRunOutput(t *testing.T) {
 	}
 	if api.calls != 0 {
 		t.Fatalf("expected no unfurl when run output is invalid, got %d", api.calls)
+	}
+}
+
+type stubUnfurlDelegator struct {
+	out    []byte
+	err    error
+	agent  string
+	prompt string
+}
+
+func (s *stubUnfurlDelegator) RunForJSON(_ context.Context, agent, prompt string) ([]byte, error) {
+	s.agent = agent
+	s.prompt = prompt
+	return s.out, s.err
+}
+
+func TestLinkUnfurlHandlerDelegatePath(t *testing.T) {
+	api := &fakeUnfurler{}
+	matcher, err := unfurl.NewMatcher(map[string]config.UnfurlRuleConfig{
+		"issue": {
+			Match:  config.UnfurlMatchConfig{Domain: "github.com", URLPattern: `/issues/(?P<number>\d+)`},
+			Unfurl: config.UnfurlActionConfig{DelegateToAgent: &config.DelegateToAgentConfig{Agent: "default", Prompt: "Summarise {{ .URL }} number {{ .Captures.number }}"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewMatcher returned error: %v", err)
+	}
+	del := &stubUnfurlDelegator{out: []byte(`{"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"SUMMARY"}}]}`)}
+	handler := NewLinkUnfurlHandler(matcher, unfurl.NewRenderer(t.TempDir(), nil), nil, del, api, discardLogger())
+	if err := handler.Handle(context.Background(), LinkSharedRequest{
+		ChannelID: "C1",
+		MessageTS: "1.1",
+		Links:     []slackevents.SharedLinks{{Domain: "github.com", URL: "https://github.com/o/r/issues/12"}},
+	}); err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+	if api.calls != 1 {
+		t.Fatalf("expected 1 unfurl call, got %d", api.calls)
+	}
+	if del.agent != "default" {
+		t.Fatalf("agent = %q, want default", del.agent)
+	}
+	if !strings.Contains(del.prompt, "issues/12") || !strings.Contains(del.prompt, "number 12") {
+		t.Fatalf("prompt was not rendered with URL/captures: %q", del.prompt)
+	}
+	out, _ := json.Marshal(api.unfurls["https://github.com/o/r/issues/12"])
+	if !strings.Contains(string(out), "SUMMARY") {
+		t.Fatalf("unexpected delegate attachment: %s", out)
+	}
+}
+
+func TestLinkUnfurlHandlerSkipsNonJSONDelegate(t *testing.T) {
+	api := &fakeUnfurler{}
+	matcher, _ := unfurl.NewMatcher(map[string]config.UnfurlRuleConfig{
+		"issue": {Match: config.UnfurlMatchConfig{Domain: "github.com"}, Unfurl: config.UnfurlActionConfig{DelegateToAgent: &config.DelegateToAgentConfig{Agent: "default", Prompt: "x"}}},
+	})
+	del := &stubUnfurlDelegator{err: agentdelegate.ErrNonJSONOutput}
+	handler := NewLinkUnfurlHandler(matcher, unfurl.NewRenderer(t.TempDir(), nil), nil, del, api, discardLogger())
+	if err := handler.Handle(context.Background(), LinkSharedRequest{
+		ChannelID: "C1",
+		MessageTS: "1.1",
+		Links:     []slackevents.SharedLinks{{Domain: "github.com", URL: "https://github.com/x"}},
+	}); err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+	if api.calls != 0 {
+		t.Fatalf("expected no unfurl when delegate output is non-JSON, got %d", api.calls)
 	}
 }

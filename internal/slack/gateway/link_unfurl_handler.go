@@ -25,11 +25,18 @@ type Unfurler interface {
 	UnfurlMessageContext(ctx context.Context, channelID, timestamp string, unfurls map[string]slack.Attachment, options ...slack.MsgOption) (string, string, string, error)
 }
 
+// UnfurlDelegator runs a delegate-to-agent unfurl action, requiring the agent's
+// output to be a JSON Slack attachment. *agentdelegate.Runner satisfies it.
+type UnfurlDelegator interface {
+	RunForJSON(ctx context.Context, agent, prompt string) ([]byte, error)
+}
+
 // LinkUnfurlHandler renders custom previews for shared links.
 type LinkUnfurlHandler struct {
 	matcher   *unfurl.Matcher
 	renderer  *unfurl.Renderer
 	runner    workflow.CommandRunner
+	delegator UnfurlDelegator
 	api       Unfurler
 	botUserID string
 	logger    *slog.Logger
@@ -46,14 +53,16 @@ type LinkSharedRequest struct {
 }
 
 // NewLinkUnfurlHandler builds a handler. A nil runner defaults to the OS runner.
-func NewLinkUnfurlHandler(matcher *unfurl.Matcher, renderer *unfurl.Renderer, runner workflow.CommandRunner, api Unfurler, logger *slog.Logger) *LinkUnfurlHandler {
+// A nil delegator disables delegate-to-agent unfurl actions (they fail with a
+// clear error if configured).
+func NewLinkUnfurlHandler(matcher *unfurl.Matcher, renderer *unfurl.Renderer, runner workflow.CommandRunner, delegator UnfurlDelegator, api Unfurler, logger *slog.Logger) *LinkUnfurlHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if runner == nil {
 		runner = workflow.OSCommandRunner{}
 	}
-	return &LinkUnfurlHandler{matcher: matcher, renderer: renderer, runner: runner, api: api, logger: logger}
+	return &LinkUnfurlHandler{matcher: matcher, renderer: renderer, runner: runner, delegator: delegator, api: api, logger: logger}
 }
 
 // Handle matches each shared link, builds previews, and posts a single
@@ -120,7 +129,24 @@ func (h *LinkUnfurlHandler) build(ctx context.Context, match unfurl.Match, req L
 		Captures:  match.Captures,
 	}
 	action := match.Rule.Config.Unfurl
-	if action.Run != nil {
+	switch {
+	case action.DelegateToAgent != nil:
+		if h.delegator == nil {
+			return slack.Attachment{}, fmt.Errorf("delegate-to-agent requires ACP to be enabled")
+		}
+		prompt, err := unfurl.RenderPrompt(action.DelegateToAgent.Prompt, data)
+		if err != nil {
+			return slack.Attachment{}, err
+		}
+		// RunForJSON validates the output is JSON and, on failure, logs a warning
+		// with the raw output before returning an error; Handle then skips this
+		// link rather than posting a malformed unfurl.
+		body, err := h.delegator.RunForJSON(ctx, action.DelegateToAgent.Agent, prompt)
+		if err != nil {
+			return slack.Attachment{}, err
+		}
+		return unfurl.ParseAttachment(body)
+	case action.Run != nil:
 		input, err := json.Marshal(data)
 		if err != nil {
 			return slack.Attachment{}, fmt.Errorf("marshal unfurl context: %w", err)
@@ -130,6 +156,7 @@ func (h *LinkUnfurlHandler) build(ctx context.Context, match unfurl.Match, req L
 			return slack.Attachment{}, err
 		}
 		return unfurl.ParseAttachment(stdout)
+	default:
+		return h.renderer.Render(action.Template, data)
 	}
-	return h.renderer.Render(action.Template, data)
 }

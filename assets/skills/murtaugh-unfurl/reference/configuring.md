@@ -35,8 +35,8 @@ conditions must hold.
 
 ## `unfurl` — the action
 
-Exactly **one** of `template` or `unfurl.run` must be set (not both, not
-neither). See `reference/actions.md` for each contract.
+Exactly **one** of `template`, `unfurl.run`, or `delegate-to-agent` must be set
+(not several, not none). See `reference/actions.md` for each contract.
 
 ```yaml
     unfurl:
@@ -45,6 +45,13 @@ neither). See `reference/actions.md` for each contract.
         args: [unfurl-jira]
         timeout: 8s        # Go duration; default 30s
         workdir: /some/dir # optional
+```
+
+```yaml
+    unfurl:
+      delegate-to-agent:
+        agent: default     # an agent keyed in agents.yaml
+        prompt: "Summarise {{ .URL }} and return solely a Slack attachment JSON."
 ```
 
 ## Behavior & limits
@@ -64,4 +71,6 @@ neither). See `reference/actions.md` for each contract.
 - `match` requires at least one of `domain` / `url_prefix` / `url_pattern`.
 - `url_pattern`, if set, must compile as a Go regexp.
 - each `channels` entry must be non-blank.
-- `unfurl` requires exactly one of `template` or `run`; a `run` requires `cmd`.
+- `unfurl` requires exactly one of `template`, `run`, or `delegate-to-agent`; a
+  `run` requires `cmd`; a `delegate-to-agent` requires both `agent` (defined in
+  `agents.yaml`) and `prompt`.

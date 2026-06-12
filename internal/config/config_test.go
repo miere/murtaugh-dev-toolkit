@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/miere/murtaugh-dev-toolkit/assets"
 )
 
 const baseSlackYAML = `oauth:
@@ -176,7 +178,7 @@ func TestParseWorkflowRuleValidatesReplyToSlackRenderer(t *testing.T) {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	err = cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "exactly one of template or run") {
+	if err == nil || !strings.Contains(err.Error(), "exactly one of template, run, or delegate-to-agent") {
 		t.Fatalf("expected reply-to-slack validation error, got: %v", err)
 	}
 }
@@ -259,7 +261,7 @@ func TestParseUnfurlRejectsTemplateAndRun(t *testing.T) {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	err = cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "exactly one of template or run") {
+	if err == nil || !strings.Contains(err.Error(), "exactly one of template, run, or delegate-to-agent") {
 		t.Fatalf("expected exclusivity error, got: %v", err)
 	}
 }
@@ -299,7 +301,7 @@ func TestJobValidationRequiresCommand(t *testing.T) {
 		"bad-job": {Command: ""},
 	}
 	err = cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "jobs[bad-job].command is required") {
+	if err == nil || !strings.Contains(err.Error(), "jobs[bad-job] requires either command or agent + prompt") {
 		t.Fatalf("expected job command validation error, got: %v", err)
 	}
 }
@@ -397,6 +399,198 @@ func TestJobValidationRejectsBadEvery(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "jobs[zero].every must be greater than zero") {
 		t.Fatalf("expected non-positive-duration error, got: %v", err)
+	}
+}
+
+func TestJobValidationAcceptsAgentPrompt(t *testing.T) {
+	cfg, err := Parse(testConfig(""))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	cfg.Jobs = map[string]JobProfile{
+		"review": {Agent: "default", Prompt: "Review PR {{ 1 }}"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+}
+
+func TestJobValidationRejectsCommandAndAgentTogether(t *testing.T) {
+	cfg, err := Parse(testConfig(""))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	cfg.Jobs = map[string]JobProfile{
+		"both": {Command: "/bin/echo", Agent: "default", Prompt: "hi"},
+	}
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "jobs[both] sets both command and agent/prompt") {
+		t.Fatalf("expected command/agent exclusivity error, got: %v", err)
+	}
+}
+
+func TestJobValidationRejectsAgentWithoutPrompt(t *testing.T) {
+	cfg, err := Parse(testConfig(""))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	cfg.Jobs = map[string]JobProfile{
+		"no-prompt": {Agent: "default"},
+	}
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "jobs[no-prompt].prompt is required when agent is set") {
+		t.Fatalf("expected missing-prompt error, got: %v", err)
+	}
+}
+
+func TestJobValidationRejectsUnknownAgent(t *testing.T) {
+	cfg, err := Parse(testConfig(""))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	cfg.Jobs = map[string]JobProfile{
+		"ghost": {Agent: "missing", Prompt: "hi"},
+	}
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `jobs[ghost].agent references unknown agent "missing"`) {
+		t.Fatalf("expected unknown-agent error, got: %v", err)
+	}
+}
+
+func TestParseWorkflowDelegateToAgentTrigger(t *testing.T) {
+	cfg, err := Parse(testConfig(`workflow-rules:
+  review:
+    request_event: interactive
+    match:
+      type: block_actions
+    trigger:
+      - delegate-to-agent:
+          agent: default
+          prompt: "Do the thing"
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	trig := cfg.WorkflowRules["review"].Triggers[0]
+	if trig.Type != "delegate-to-agent" || trig.DelegateToAgent == nil || trig.DelegateToAgent.Agent != "default" {
+		t.Fatalf("unexpected delegate-to-agent trigger parsed: %#v", trig)
+	}
+}
+
+func TestParseReplyToSlackDelegateToAgent(t *testing.T) {
+	cfg, err := Parse(testConfig(`workflow-rules:
+  review:
+    request_event: interactive
+    match:
+      type: block_actions
+    trigger:
+      - reply-to-slack:
+          delegate-to-agent:
+            agent: default
+            prompt: "Return a JSON message"
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	rts := cfg.WorkflowRules["review"].Triggers[0].ReplyToSlack
+	if rts == nil || rts.DelegateToAgent == nil || rts.DelegateToAgent.Agent != "default" {
+		t.Fatalf("unexpected reply-to-slack delegate parsed: %#v", rts)
+	}
+}
+
+func TestParseReplyToSlackRejectsTemplateAndDelegate(t *testing.T) {
+	cfg, err := Parse(testConfig(`workflow-rules:
+  bad:
+    request_event: interactive
+    match:
+      type: block_actions
+    trigger:
+      - reply-to-slack:
+          template: t.json
+          delegate-to-agent:
+            agent: default
+            prompt: "x"
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "exactly one of template, run, or delegate-to-agent") {
+		t.Fatalf("expected reply-to-slack exclusivity error, got: %v", err)
+	}
+}
+
+func TestParseUnfurlDelegateToAgent(t *testing.T) {
+	cfg, err := Parse(testConfig(`unfurl-rules:
+  github-issues:
+    match:
+      domain: github.com
+    unfurl:
+      delegate-to-agent:
+        agent: default
+        prompt: "Summarise {{ .URL }}"
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	action := cfg.UnfurlRules["github-issues"].Unfurl
+	if action.DelegateToAgent == nil || action.DelegateToAgent.Agent != "default" {
+		t.Fatalf("unexpected unfurl delegate parsed: %#v", action)
+	}
+}
+
+func TestParseDelegateRejectsUnknownAgent(t *testing.T) {
+	cfg, err := Parse(testConfig(`unfurl-rules:
+  github-issues:
+    match:
+      domain: github.com
+    unfurl:
+      delegate-to-agent:
+        agent: ghost
+        prompt: "x"
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `delegate-to-agent references unknown agent "ghost"`) {
+		t.Fatalf("expected unknown-agent error, got: %v", err)
+	}
+}
+
+// TestEmbeddedExampleConfigValidates guards the shipped default config: the
+// bundled slack.yaml / agents.yaml / jobs.yaml must parse and validate together
+// as a unit. It catches indentation slips and dangling delegate-to-agent agent
+// references before they reach a fresh install.
+func TestEmbeddedExampleConfigValidates(t *testing.T) {
+	baseDir := t.TempDir()
+	for _, name := range []string{"slack.yaml", "agents.yaml", "jobs.yaml"} {
+		data, err := assets.FS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read embedded %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(baseDir, name), data, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if _, err := Load(filepath.Join(baseDir, "slack.yaml")); err != nil {
+		t.Fatalf("bundled example config failed to load/validate: %v", err)
 	}
 }
 

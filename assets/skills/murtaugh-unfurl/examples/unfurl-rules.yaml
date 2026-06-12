@@ -24,3 +24,18 @@ unfurl-rules:
         cmd: /usr/bin/python3
         args: ["/Users/you/.config/murtaugh/automations/unfurl_jira.py"]
         timeout: 8s
+
+  # Agent-based: a GitHub issue link → let an agent gather context and write the
+  # preview. The agent's final output MUST be a valid Slack attachment JSON;
+  # non-JSON is logged and the link is left un-unfurled. The prompt can use
+  # {{ .URL }}, {{ .Domain }}, and {{ .Captures.<name> }}.
+  github-issue:
+    match:
+      domain: github.com
+      url_pattern: '^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/issues/(?P<number>\d+)'
+    unfurl:
+      delegate-to-agent:
+        agent: default              # an agent keyed in agents.yaml
+        prompt: |
+          Summarise GitHub issue {{ .URL }} and return me solely a valid Slack
+          attachment JSON object containing the summary in one paragraph.

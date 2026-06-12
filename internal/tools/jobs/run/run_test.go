@@ -95,3 +95,89 @@ func TestResult_String(t *testing.T) {
 		t.Fatalf("String() = %q, want it to mention demo and exit 0", got)
 	}
 }
+
+func TestResult_String_Agent(t *testing.T) {
+	r := Result{Name: "review", Agent: "default"}
+	got := r.String()
+	if !strings.Contains(got, "review") || !strings.Contains(got, "default") {
+		t.Fatalf("String() = %q, want it to mention review and default", got)
+	}
+}
+
+type fakeDelegator struct {
+	agent  string
+	prompt string
+	err    error
+	calls  int
+}
+
+func (f *fakeDelegator) RunAndForget(_ context.Context, agent, prompt string) error {
+	f.calls++
+	f.agent = agent
+	f.prompt = prompt
+	return f.err
+}
+
+func TestInvoke_AgentJob_RendersPositionalArgs(t *testing.T) {
+	jobs := map[string]config.JobProfile{
+		"review": {Agent: "default", Prompt: "Review PR {{ 1 }} in {{2}}"},
+	}
+	del := &fakeDelegator{}
+	tl := New(lookupFrom(jobs)).WithDelegator(del)
+
+	res, err := tl.Invoke(context.Background(), map[string]any{
+		"name": "review",
+		"args": []any{"42", "/repo"},
+	})
+	if err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if del.calls != 1 {
+		t.Fatalf("delegator called %d times, want 1", del.calls)
+	}
+	if del.agent != "default" {
+		t.Fatalf("agent = %q, want default", del.agent)
+	}
+	if del.prompt != "Review PR 42 in /repo" {
+		t.Fatalf("prompt = %q, want positional substitution", del.prompt)
+	}
+	r := res.(Result)
+	if r.Agent != "default" {
+		t.Fatalf("Result.Agent = %q, want default", r.Agent)
+	}
+}
+
+func TestInvoke_AgentJob_FallsBackToConfiguredArgs(t *testing.T) {
+	jobs := map[string]config.JobProfile{
+		"review": {Agent: "default", Prompt: "PR {{ 1 }}", Args: []string{"99"}},
+	}
+	del := &fakeDelegator{}
+	tl := New(lookupFrom(jobs)).WithDelegator(del)
+
+	// No runtime args supplied: the job's configured args should fill in.
+	if _, err := tl.Invoke(context.Background(), map[string]any{"name": "review"}); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if del.prompt != "PR 99" {
+		t.Fatalf("prompt = %q, want configured-arg fallback 'PR 99'", del.prompt)
+	}
+}
+
+func TestInvoke_AgentJob_NoDelegator(t *testing.T) {
+	jobs := map[string]config.JobProfile{
+		"review": {Agent: "default", Prompt: "hi"},
+	}
+	tl := New(lookupFrom(jobs)) // no delegator wired
+
+	_, err := tl.Invoke(context.Background(), map[string]any{"name": "review"})
+	if err == nil || !strings.Contains(err.Error(), "agent delegation is unavailable") {
+		t.Fatalf("Invoke err = %v, want unavailable-delegation error", err)
+	}
+}
+
+func TestRenderPositional(t *testing.T) {
+	got := renderPositional("a {{1}} b {{ 2 }} c {{3}}", []string{"X", "Y"})
+	if got != "a X b Y c " {
+		t.Fatalf("renderPositional = %q, want out-of-range to render empty", got)
+	}
+}

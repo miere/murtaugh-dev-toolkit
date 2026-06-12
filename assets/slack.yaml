@@ -36,17 +36,76 @@ workflow-rules:
       - reply-to-slack:
           template: templates/ping/02-pong.json
 
+  # A trigger has three mutually exclusive action types:
+  #   * reply-to-slack — produce a Slack message JSON and post it back to the
+  #     interaction. The JSON can come from a `template`, the stdout of a `run`
+  #     command, or — as below — a `delegate-to-agent` block.
+  #   * run — execute a command with the interaction payload on stdin.
+  #   * delegate-to-agent — hand the work to an agent and forget it (no output
+  #     captured); the agent acts through its own tools (it may post to Slack
+  #     itself, open a PR, etc.).
+  #
+  # delegate-to-agent prompts are rendered with Go templates against the
+  # interaction payload, exposed under `.Payload` (e.g. {{ .Payload.user.id }},
+  # {{ index .Payload.channel "name" }}). An agent runs in an isolated one-shot
+  # session — no shared chat memory.
+  #
+  # review-button:
+  #   request_event: interactive
+  #   match:
+  #     type: block_actions
+  #     actions:
+  #       - action_id: review
+  #   trigger:
+  #     # Captured: the agent MUST return solely a valid Slack message JSON
+  #     # object, which is posted back to the interaction. Non-JSON output is
+  #     # logged and skipped.
+  #     - reply-to-slack:
+  #         delegate-to-agent:
+  #           agent: default
+  #           prompt: |
+  #             Acknowledge the review request from {{ .Payload.user.id }} and
+  #             return solely a valid Slack message JSON object confirming it.
+  #     # Fire-and-forget: the agent does the work on its own; nothing is posted
+  #     # for this trigger.
+  #     - delegate-to-agent:
+  #         agent: default
+  #         prompt: |
+  #           Review the open PR referenced in channel
+  #           {{ index .Payload.channel "name" }} and post your findings there.
+
 # If workflow-rules is omitted entirely, Murtaugh still installs a built-in
 # ping button workflow that renders templates/ping/02-pong.json in the original
 # message thread.
 
-# Custom link unfurling. Requires the link_shared bot event plus the links:read
-# and chat:write scopes, and each match.domain must be registered in the Slack
-# app's "App Unfurl Domains" list (max 5) or no link_shared event is delivered.
-unfurl-rules:
-  github-pr:
-    match:
-      domain: github.com
-      url_pattern: '^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>\d+)'
-    unfurl:
-      template: templates/unfurl/github-pr.json
+# Custom link unfurling (disabled by default — uncomment to enable). Requires
+# the link_shared bot event plus the links:read and chat:write scopes, and each
+# match.domain must be registered in the Slack app's "App Unfurl Domains" list
+# (max 5) or no link_shared event is delivered. An unfurl action is exactly one
+# of `template`, `run`, or `delegate-to-agent`.
+#
+# unfurl-rules:
+#   # Template-based: build the preview from the URL's parts alone.
+#   github-pr:
+#     match:
+#       domain: github.com
+#       url_pattern: '^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>\d+)'
+#     unfurl:
+#       template: templates/unfurl/github-pr.json
+#
+#   # Agent-based: unlike a workflow trigger, an unfurl ALWAYS renders JSON — the
+#   # agent's final output must be a valid Slack attachment, which becomes the
+#   # preview. Non-JSON output is logged and the link is left un-unfurled. The
+#   # prompt is rendered against the unfurl context, so it can reference
+#   # {{ .URL }}, {{ .Domain }}, and named captures via {{ .Captures.<name> }}.
+#   github-issues:
+#     match:
+#       domain: github.com
+#       url_pattern: '^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/issues/(?P<number>\d+)'
+#     unfurl:
+#       delegate-to-agent:
+#         agent: default
+#         prompt: |
+#           Summarise GitHub issue {{ .URL }} and return me solely a valid Slack
+#           attachment JSON object containing the summary in one paragraph. Lists
+#           and emojis are allowed.

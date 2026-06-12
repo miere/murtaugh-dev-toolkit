@@ -1,4 +1,4 @@
-# Example jobs.yaml showing all three trigger modes.
+# Example jobs.yaml showing all three trigger modes plus agent delegation.
 # Copy entries into your real ~/.config/murtaugh/jobs.yaml and edit.
 
 jobs:
@@ -22,3 +22,12 @@ jobs:
     command: /usr/bin/python3
     args: ["/Users/you/.config/murtaugh/automations/sync.py"]
     every: 1h
+
+  # 4. AGENT — delegates to an agent instead of a command (mutually exclusive
+  #    with `command`). Fire-and-forget: the agent acts through its own tools.
+  #    Positional {{ N }} placeholders are filled from run-time args:
+  #      murtaugh jobs run --name code-review-job --args 1234 --args /path/to/repo
+  code-review-job:
+    agent: default                  # an agent keyed in agents.yaml
+    prompt: |
+      Review the changes in PR {{ 1 }} at {{ 2 }} and post your feedback.

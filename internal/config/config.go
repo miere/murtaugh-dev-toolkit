@@ -82,6 +82,13 @@ type JobProfile struct {
 	Args    []string `yaml:"args"`
 	WorkDir string   `yaml:"workdir"`
 	Timeout string   `yaml:"timeout"`
+	// Agent and Prompt turn the job into an agent delegation: instead of
+	// running Command, Murtaugh starts the named agent in an isolated one-shot
+	// session and sends the rendered Prompt. Mutually exclusive with Command.
+	// The prompt supports positional placeholders ({{ 1 }}, {{ 2 }}, ...) that
+	// expand to the runtime args passed to `jobs run`.
+	Agent  string `yaml:"agent"`
+	Prompt string `yaml:"prompt"`
 	// Schedule, when set, runs the job automatically on a cron schedule
 	// using standard 5-field cron syntax (e.g. "0 2 * * *" for 02:00 daily).
 	// Mutually exclusive with Every.
@@ -127,14 +134,29 @@ type WorkflowRuleConfig struct {
 }
 
 type TriggerConfig struct {
-	Type         string
-	ReplyToSlack *ReplyToSlackTriggerConfig
-	Run          *RunTriggerConfig
+	Type            string
+	ReplyToSlack    *ReplyToSlackTriggerConfig
+	Run             *RunTriggerConfig
+	DelegateToAgent *DelegateToAgentConfig
 }
 
 type ReplyToSlackTriggerConfig struct {
-	Template string            `yaml:"template"`
-	Run      *RunTriggerConfig `yaml:"run"`
+	Template        string                 `yaml:"template"`
+	Run             *RunTriggerConfig      `yaml:"run"`
+	DelegateToAgent *DelegateToAgentConfig `yaml:"delegate-to-agent"`
+}
+
+// DelegateToAgentConfig hands work to an agent in an isolated one-shot session.
+// Where it sits decides how its output is treated: nested in a reply-to-slack
+// trigger or an unfurl action, the agent's final output must be a valid JSON
+// Slack message and is rendered; as a top-level workflow trigger it is
+// fire-and-forget (the agent acts through its own tools). The prompt is
+// rendered with the same template data the surrounding surface's templates
+// receive (the interaction Payload for workflow rules, the URL/Captures for
+// unfurls).
+type DelegateToAgentConfig struct {
+	Agent  string `yaml:"agent"`
+	Prompt string `yaml:"prompt"`
 }
 
 type RunTriggerConfig struct {
@@ -157,8 +179,9 @@ type UnfurlMatchConfig struct {
 }
 
 type UnfurlActionConfig struct {
-	Template string            `yaml:"template"`
-	Run      *RunTriggerConfig `yaml:"run"`
+	Template        string                 `yaml:"template"`
+	Run             *RunTriggerConfig      `yaml:"run"`
+	DelegateToAgent *DelegateToAgentConfig `yaml:"delegate-to-agent"`
 }
 
 func (t *TriggerConfig) UnmarshalYAML(value *yaml.Node) error {
@@ -182,6 +205,13 @@ func (t *TriggerConfig) UnmarshalYAML(value *yaml.Node) error {
 		}
 		t.Type = action
 		t.Run = &cfg
+	case "delegate-to-agent":
+		var cfg DelegateToAgentConfig
+		if err := value.Content[1].Decode(&cfg); err != nil {
+			return err
+		}
+		t.Type = action
+		t.DelegateToAgent = &cfg
 	default:
 		return fmt.Errorf("unsupported trigger action %q", action)
 	}
@@ -311,8 +341,28 @@ func (c Config) Validate() error {
 	}
 
 	for name, job := range c.Jobs {
-		if strings.TrimSpace(job.Command) == "" {
-			errs = append(errs, fmt.Errorf("jobs[%s].command is required", name))
+		hasCommand := strings.TrimSpace(job.Command) != ""
+		hasAgent := strings.TrimSpace(job.Agent) != ""
+		hasPrompt := strings.TrimSpace(job.Prompt) != ""
+		switch {
+		case hasCommand && (hasAgent || hasPrompt):
+			errs = append(errs, fmt.Errorf("jobs[%s] sets both command and agent/prompt; use exactly one", name))
+		case hasCommand:
+			// Plain command job: nothing more to check here.
+		case hasAgent || hasPrompt:
+			if !hasAgent {
+				errs = append(errs, fmt.Errorf("jobs[%s].agent is required when prompt is set", name))
+			}
+			if !hasPrompt {
+				errs = append(errs, fmt.Errorf("jobs[%s].prompt is required when agent is set", name))
+			}
+			if hasAgent {
+				if _, ok := c.Agents[job.Agent]; !ok {
+					errs = append(errs, fmt.Errorf("jobs[%s].agent references unknown agent %q", name, job.Agent))
+				}
+			}
+		default:
+			errs = append(errs, fmt.Errorf("jobs[%s] requires either command or agent + prompt", name))
 		}
 		if job.Timeout != "" {
 			if _, err := time.ParseDuration(job.Timeout); err != nil {
@@ -342,13 +392,13 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("workflow-rules[%s].trigger must contain at least one action", name))
 		}
 		for i, trigger := range rule.Triggers {
-			if err := validateTrigger(trigger); err != nil {
+			if err := validateTrigger(trigger, c.Agents); err != nil {
 				errs = append(errs, fmt.Errorf("workflow-rules[%s].trigger[%d]: %w", name, i, err))
 			}
 		}
 	}
 	for name, rule := range c.UnfurlRules {
-		if err := validateUnfurlRule(rule); err != nil {
+		if err := validateUnfurlRule(rule, c.Agents); err != nil {
 			errs = append(errs, fmt.Errorf("unfurl-rules[%s]: %w", name, err))
 		}
 	}
@@ -493,25 +543,32 @@ func durationOrDefault(value string, fallback time.Duration) time.Duration {
 	return duration
 }
 
-func validateTrigger(trigger TriggerConfig) error {
+func validateTrigger(trigger TriggerConfig, agents map[string]AgentProfile) error {
 	switch trigger.Type {
 	case "reply-to-slack":
 		if trigger.ReplyToSlack == nil {
 			return errors.New("reply-to-slack config is required")
 		}
-		hasTemplate := strings.TrimSpace(trigger.ReplyToSlack.Template) != ""
-		hasRun := trigger.ReplyToSlack.Run != nil
-		if hasTemplate == hasRun {
-			return errors.New("reply-to-slack requires exactly one of template or run")
+		rts := trigger.ReplyToSlack
+		hasTemplate := strings.TrimSpace(rts.Template) != ""
+		hasRun := rts.Run != nil
+		hasDelegate := rts.DelegateToAgent != nil
+		if countTrue(hasTemplate, hasRun, hasDelegate) != 1 {
+			return errors.New("reply-to-slack requires exactly one of template, run, or delegate-to-agent")
 		}
 		if hasRun {
-			return validateRun(*trigger.ReplyToSlack.Run)
+			return validateRun(*rts.Run)
+		}
+		if hasDelegate {
+			return validateDelegate(rts.DelegateToAgent, agents)
 		}
 	case "run":
 		if trigger.Run == nil {
 			return errors.New("run config is required")
 		}
 		return validateRun(*trigger.Run)
+	case "delegate-to-agent":
+		return validateDelegate(trigger.DelegateToAgent, agents)
 	default:
 		return fmt.Errorf("unsupported trigger action %q", trigger.Type)
 	}
@@ -525,7 +582,35 @@ func validateRun(run RunTriggerConfig) error {
 	return nil
 }
 
-func validateUnfurlRule(rule UnfurlRuleConfig) error {
+// validateDelegate checks a delegate-to-agent block: it needs both an agent and
+// a prompt, and the agent must be defined in agents.yaml.
+func validateDelegate(d *DelegateToAgentConfig, agents map[string]AgentProfile) error {
+	if d == nil {
+		return errors.New("delegate-to-agent config is required")
+	}
+	if strings.TrimSpace(d.Agent) == "" {
+		return errors.New("delegate-to-agent requires an agent")
+	}
+	if strings.TrimSpace(d.Prompt) == "" {
+		return errors.New("delegate-to-agent requires a prompt")
+	}
+	if _, ok := agents[d.Agent]; !ok {
+		return fmt.Errorf("delegate-to-agent references unknown agent %q", d.Agent)
+	}
+	return nil
+}
+
+func countTrue(vals ...bool) int {
+	n := 0
+	for _, v := range vals {
+		if v {
+			n++
+		}
+	}
+	return n
+}
+
+func validateUnfurlRule(rule UnfurlRuleConfig, agents map[string]AgentProfile) error {
 	var errs []error
 	match := rule.Match
 	if strings.TrimSpace(match.Domain) == "" &&
@@ -545,11 +630,17 @@ func validateUnfurlRule(rule UnfurlRuleConfig) error {
 	}
 	hasTemplate := strings.TrimSpace(rule.Unfurl.Template) != ""
 	hasRun := rule.Unfurl.Run != nil
-	if hasTemplate == hasRun {
-		errs = append(errs, errors.New("unfurl requires exactly one of template or run"))
+	hasDelegate := rule.Unfurl.DelegateToAgent != nil
+	if countTrue(hasTemplate, hasRun, hasDelegate) != 1 {
+		errs = append(errs, errors.New("unfurl requires exactly one of template, run, or delegate-to-agent"))
 	}
 	if hasRun {
 		if err := validateRun(*rule.Unfurl.Run); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if hasDelegate {
+		if err := validateDelegate(rule.Unfurl.DelegateToAgent, agents); err != nil {
 			errs = append(errs, err)
 		}
 	}

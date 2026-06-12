@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/frontends/cli"
 	"github.com/miere/murtaugh-dev-toolkit/internal/frontends/mcp"
@@ -243,7 +244,7 @@ func buildRegistry(cfg config.Config, configPath, version string) *tools.Registr
 		j, ok := cfg.Jobs[name]
 		return j, ok
 	}
-	reg.Register(run.New(jobsLookup))
+	reg.Register(run.New(jobsLookup).WithDelegator(newJobDelegator(cfg)))
 
 	jobsPath := func() string {
 		baseDir := cfg.BaseDir
@@ -308,6 +309,17 @@ func buildRegistry(cfg config.Config, configPath, version string) *tools.Registr
 	return reg
 }
 
+// newJobDelegator builds the agent runner that backs agent-delegated jobs
+// (jobs with `agent`/`prompt` instead of `command`). It returns nil when no
+// agents are configured, leaving such jobs to fail with a clear error; config
+// validation already guarantees a job's agent is defined when one is set.
+func newJobDelegator(cfg config.Config) run.AgentDelegator {
+	if len(cfg.Agents) == 0 {
+		return nil
+	}
+	return agentdelegate.NewRunner(cfg.Agents, cfg.ACP, cfg.BaseDir, slog.Default())
+}
+
 // newScheduledRunner builds the executor the gateway scheduler uses to fire
 // cron/every-scheduled jobs. It wraps the same jobs.run tool the CLI and MCP
 // frontends use (streaming child output to the process stdout/stderr, which
@@ -318,7 +330,7 @@ func newScheduledRunner(cfg config.Config) gateway.ScheduledRunner {
 		j, ok := cfg.Jobs[name]
 		return j, ok
 	}
-	runTool := run.New(lookup)
+	runTool := run.New(lookup).WithDelegator(newJobDelegator(cfg))
 	return func(ctx context.Context, name string) error {
 		result, err := runTool.Invoke(ctx, map[string]any{"name": name})
 		if err != nil {

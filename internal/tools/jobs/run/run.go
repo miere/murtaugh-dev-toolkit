@@ -16,6 +16,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,11 +34,20 @@ const defaultTimeout = 10 * time.Minute
 // composition root supplies a closure over the loaded config.
 type JobLookup func(name string) (config.JobProfile, bool)
 
+// AgentDelegator runs an agent-delegated job: it starts the named agent in an
+// isolated one-shot session and sends the rendered prompt, discarding the
+// agent's text output (jobs are fire-and-forget — the agent acts through its
+// own tools). *agentdelegate.Runner satisfies it.
+type AgentDelegator interface {
+	RunAndForget(ctx context.Context, agent, prompt string) error
+}
+
 // Tool is the `jobs.run` capability.
 type Tool struct {
-	lookup JobLookup
-	stdout io.Writer
-	stderr io.Writer
+	lookup    JobLookup
+	delegator AgentDelegator
+	stdout    io.Writer
+	stderr    io.Writer
 }
 
 // New constructs a Tool that resolves jobs through lookup and streams the
@@ -53,6 +64,14 @@ func NewWith(lookup JobLookup, stdout, stderr io.Writer) *Tool {
 	return &Tool{lookup: lookup, stdout: stdout, stderr: stderr}
 }
 
+// WithDelegator wires the agent runner used by agent-delegated jobs (jobs that
+// set `agent`/`prompt` instead of `command`). Without it, such a job fails with
+// a clear error. Returns the receiver for fluent wiring.
+func (t *Tool) WithDelegator(d AgentDelegator) *Tool {
+	t.delegator = d
+	return t
+}
+
 // Name returns the registry key.
 func (t *Tool) Name() string { return "jobs.run" }
 
@@ -67,6 +86,11 @@ func (t *Tool) InputSchema() *jsonschema.Schema {
 		Type: "object",
 		Properties: map[string]*jsonschema.Schema{
 			"name": {Type: "string", Description: "Name of the job as keyed in jobs.yaml."},
+			"args": {
+				Type:        "array",
+				Items:       &jsonschema.Schema{Type: "string"},
+				Description: "Positional arguments forwarded to an agent-delegated job's prompt placeholders ({{ 1 }}, {{ 2 }}, ...). Ignored by command jobs.",
+			},
 		},
 		Required: []string{"name"},
 	}
@@ -76,7 +100,8 @@ func (t *Tool) InputSchema() *jsonschema.Schema {
 // JSON-marshals it; the CLI frontend renders it via String().
 type Result struct {
 	Name     string `json:"name"`
-	Command  string `json:"command"`
+	Command  string `json:"command,omitempty"`
+	Agent    string `json:"agent,omitempty"`
 	ExitCode int    `json:"exit_code"`
 	Stdout   string `json:"stdout,omitempty"`
 	Stderr   string `json:"stderr,omitempty"`
@@ -84,6 +109,9 @@ type Result struct {
 
 // String renders a one-line CLI confirmation.
 func (r Result) String() string {
+	if r.Agent != "" {
+		return fmt.Sprintf("job %q completed via agent %q", r.Name, r.Agent)
+	}
 	return fmt.Sprintf("job %q completed (exit %d)", r.Name, r.ExitCode)
 }
 
@@ -101,18 +129,19 @@ func (t *Tool) Invoke(ctx context.Context, args map[string]any) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("job %q not found in jobs.yaml", name)
 	}
+
+	// Agent-delegated job: hand the rendered prompt to the agent runner instead
+	// of spawning a command. Mutually exclusive with Command (enforced by config
+	// validation), so this branch owns the whole invocation.
+	if strings.TrimSpace(job.Agent) != "" {
+		return t.invokeAgent(ctx, name, job, args)
+	}
+
 	if strings.TrimSpace(job.Command) == "" {
 		return nil, fmt.Errorf("job %q has no command configured", name)
 	}
 
-	timeout := defaultTimeout
-	if job.Timeout != "" {
-		if d, err := time.ParseDuration(job.Timeout); err == nil {
-			timeout = d
-		}
-	}
-
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	runCtx, cancel := context.WithTimeout(ctx, jobTimeout(job))
 	defer cancel()
 
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -139,4 +168,71 @@ func (t *Tool) Invoke(ctx context.Context, args map[string]any) (any, error) {
 		Stdout:   stdoutBuf.String(),
 		Stderr:   stderrBuf.String(),
 	}, nil
+}
+
+// invokeAgent runs an agent-delegated job. It renders the prompt's positional
+// placeholders from the runtime args (falling back to the job's configured
+// args, so scheduled runs can bake them in) and delegates to the agent in a
+// fire-and-forget session bounded by the job's timeout.
+func (t *Tool) invokeAgent(ctx context.Context, name string, job config.JobProfile, args map[string]any) (any, error) {
+	if t.delegator == nil {
+		return nil, fmt.Errorf("job %q delegates to agent %q but agent delegation is unavailable (is ACP enabled?)", name, job.Agent)
+	}
+
+	runtimeArgs := stringArgs(args["args"])
+	if len(runtimeArgs) == 0 {
+		runtimeArgs = job.Args
+	}
+	prompt := renderPositional(job.Prompt, runtimeArgs)
+
+	runCtx, cancel := context.WithTimeout(ctx, jobTimeout(job))
+	defer cancel()
+
+	if err := t.delegator.RunAndForget(runCtx, job.Agent, prompt); err != nil {
+		return nil, fmt.Errorf("job %q: %w", name, err)
+	}
+	return Result{Name: name, Agent: job.Agent}, nil
+}
+
+// jobTimeout resolves the job's execution timeout, defaulting to 10 minutes
+// when unset or unparseable.
+func jobTimeout(job config.JobProfile) time.Duration {
+	if job.Timeout != "" {
+		if d, err := time.ParseDuration(job.Timeout); err == nil {
+			return d
+		}
+	}
+	return defaultTimeout
+}
+
+// positionalRef matches a positional prompt placeholder: {{ 1 }}, {{2}}, etc.
+var positionalRef = regexp.MustCompile(`\{\{\s*(\d+)\s*\}\}`)
+
+// renderPositional substitutes {{ N }} placeholders (1-based) with the
+// corresponding runtime arg. Out-of-range references render as empty strings.
+func renderPositional(prompt string, args []string) string {
+	return positionalRef.ReplaceAllStringFunc(prompt, func(match string) string {
+		n, _ := strconv.Atoi(positionalRef.FindStringSubmatch(match)[1])
+		if n >= 1 && n <= len(args) {
+			return args[n-1]
+		}
+		return ""
+	})
+}
+
+// stringArgs coerces the tool's "args" input — which arrives as []any from the
+// MCP/CLI frontends or []string from direct callers — into a string slice.
+func stringArgs(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		return t
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, e := range t {
+			out = append(out, fmt.Sprint(e))
+		}
+		return out
+	default:
+		return nil
+	}
 }

@@ -68,16 +68,20 @@ internal/slack/       Slack subsystem:
   gateway/            Socket Mode gateway, event loop, all Slack event handlers.
   client/             Slack Web API client wrapper used by the slack.* tools.
 internal/acp/         ACP process client, session manager, protocol types.
+internal/agentdelegate/ One-shot isolated agent runner (delegate-to-agent).
 internal/workflow/    Workflow engine, command runner, template rendering.
 internal/unfurl/      Link matcher and Block Kit attachment renderer.
 assets/               Embedded reference config, JSON templates, agent skills.
 ```
 
 `internal/*` is private to this module. Cross-package dependencies flow in one
-direction: `slack/gateway` orchestrates `config`, `acp`, `workflow`, and
-`unfurl`; those packages do not import `slack/gateway`. Tool packages depend
-on `config`
-where they need shared types (e.g. `JobProfile`), never the other way around.
+direction: `slack/gateway` orchestrates `config`, `acp`, `agentdelegate`,
+`workflow`, and `unfurl`; those packages do not import `slack/gateway`. The
+`agentdelegate` runner builds on `acp` and backs every delegate-to-agent
+surface (the `workflow` engine, the `unfurl` handler, and the `jobs.run`
+tool consume it through small local interfaces). Tool packages depend on
+`config` where they need shared types (e.g. `JobProfile`), never the other way
+around.
 
 ## The Tool contract
 
@@ -211,16 +215,25 @@ routing references, and per-rule checks.
 ### Triggers and actions
 
 `TriggerConfig` has a **custom `UnmarshalYAML`** that requires a mapping with
-exactly one key — either `reply-to-slack` (→ `ReplyToSlackTriggerConfig`) or
-`run` (→ `RunTriggerConfig`). Any other key is rejected at parse time.
+exactly one key — `reply-to-slack` (→ `ReplyToSlackTriggerConfig`), `run`
+(→ `RunTriggerConfig`), or `delegate-to-agent` (→ `DelegateToAgentConfig`). Any
+other key is rejected at parse time.
 
-- `ReplyToSlackTriggerConfig` — `template` (path) or a nested `run`.
+- `ReplyToSlackTriggerConfig` — exactly one of `template` (path), a nested
+  `run`, or `delegate-to-agent`.
 - `RunTriggerConfig` — `cmd`, `args`, `timeout`, `workdir`.
+- `DelegateToAgentConfig` — `agent` (must exist in `agents.yaml`) + `prompt`.
+  Nested in `reply-to-slack` or an unfurl action it captures JSON output; as a
+  top-level trigger it is fire-and-forget.
 
 `UnfurlRuleConfig` = `Match` (`channels`, `domain`, `url_prefix`, `url_pattern`)
-+ `Unfurl` (`template` **xor** `run`). `validateUnfurlRule` requires at least one
-content condition, a compilable `url_pattern`, non-blank channel entries, and
-exactly one action.
++ `Unfurl` (exactly one of `template`, `run`, or `delegate-to-agent`).
+`validateUnfurlRule` requires at least one content condition, a compilable
+`url_pattern`, non-blank channel entries, and exactly one action.
+
+`JobProfile` runs **either** a `command` **or** an agent (`agent` + `prompt`,
+mutually exclusive). An agent job is fire-and-forget; its prompt supports
+positional `{{ N }}` placeholders filled from the run-time/configured args.
 
 ## Slack gateway (`internal/slack/gateway`)
 

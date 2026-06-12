@@ -1,10 +1,12 @@
 # Skill: Murtaugh Jobs
 
-A **job** is a named shell command defined in `jobs.yaml` — a command plus its
-args, working directory, and timeout. Jobs run **on demand** (CLI, MCP, or a
-workflow trigger) and can additionally run **automatically** on a schedule.
-Use this whenever a task involves defining, running, or scheduling work that
-Murtaugh executes — backups, syncs, reconcile scripts, clock-tick automations.
+A **job** is a named unit of work defined in `jobs.yaml`. It runs **either** a
+shell command (with args, working directory, and timeout) **or** an agent
+(`agent` + `prompt`, fire-and-forget) — the two are mutually exclusive. Jobs run
+**on demand** (CLI, MCP, or a workflow trigger) and can additionally run
+**automatically** on a schedule. Use this whenever a task involves defining,
+running, or scheduling work that Murtaugh executes — backups, syncs, reconcile
+scripts, clock-tick automations, or agent-delegated chores.
 
 ## The three trigger modes (at a glance)
 
@@ -24,7 +26,7 @@ daemon** is running — it owns the in-process scheduler.
 
 | When you're… | Read |
 |---|---|
-| Defining a job's command / args / workdir / timeout | `reference/configuring.md` |
+| Defining a job's command / agent+prompt / args / workdir / timeout | `reference/configuring.md` |
 | Choosing or writing a `schedule` / `every` value | `reference/scheduling.md` |
 | Running a job by hand or wiring `jobs.run` / `jobs.define` | `reference/running.md` |
 | Wanting a working `jobs.yaml` | `examples/jobs.yaml` |

@@ -12,15 +12,24 @@ run `murtaugh help jobs run` / `murtaugh help jobs define`, or
 
 ```bash
 murtaugh jobs run --name cleanup-logs
+
+# Agent job: pass positional args for the prompt's {{ 1 }}, {{ 2 }}, … markers
+murtaugh jobs run --name code-review-job --args 1234 --args /path/to/repo
 ```
 
-`--name` is the only flag and is **required**.
+`--name` is **required**. `--args` is optional and repeatable (once per value);
+it fills an **agent** job's positional prompt placeholders and is ignored by
+command jobs.
 
 - Resolves the job by name from `jobs.yaml`.
 - Applies the job's `timeout` (default 10m) as a hard deadline.
-- Runs `command` with `args` in `workdir`.
-- Streams the child's stdout/stderr to the caller (your terminal on the CLI;
-  captured into the JSON result over MCP) and reports the **exit code**.
+- **Command job:** runs `command` with `args` in `workdir`; streams the child's
+  stdout/stderr to the caller (your terminal on the CLI; captured into the JSON
+  result over MCP) and reports the **exit code**.
+- **Agent job:** renders the prompt (positional `{{ N }}` from `--args`, falling
+  back to the job's `args`) and runs the agent fire-and-forget — its text output
+  is discarded; the agent acts through its own tools. The result reports the
+  `agent` it ran instead of an exit code.
 
 A non-zero exit is returned as the result's `exit_code` (it is not, by itself, a
 tool error). A failure to *start* the process (missing binary, etc.) is an error.

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/unfurl"
 	"github.com/miere/murtaugh-dev-toolkit/internal/workflow"
@@ -158,6 +159,17 @@ func New(cfg config.Config, logger *slog.Logger) *Gateway {
 			logger,
 		).WithIdleTimeout(cfg.ACP.EffectiveRequestTimeout())
 	}
+	// One shared runner backs every delegate-to-agent surface (jobs, workflow
+	// triggers, unfurls). Each delegation spins its own isolated agent process,
+	// so this is safe to share. Built only when agents are configured; config
+	// validation guarantees any delegate-to-agent rule names a known agent.
+	var unfurlDelegator UnfurlDelegator
+	var workflowDelegator workflow.AgentDelegator
+	if len(cfg.Agents) > 0 {
+		runner := agentdelegate.NewRunner(cfg.Agents, cfg.ACP, cfg.BaseDir, logger)
+		unfurlDelegator = runner
+		workflowDelegator = runner
+	}
 	var unfurlHandler *LinkUnfurlHandler
 	if len(cfg.UnfurlRules) > 0 {
 		matcher, err := unfurl.NewMatcher(cfg.UnfurlRules)
@@ -165,14 +177,14 @@ func New(cfg config.Config, logger *slog.Logger) *Gateway {
 			logger.Error("custom link unfurling disabled", "error", err)
 		} else {
 			renderer := unfurl.NewRenderer(cfg.BaseDir, nil)
-			unfurlHandler = NewLinkUnfurlHandler(matcher, renderer, nil, api, logger)
+			unfurlHandler = NewLinkUnfurlHandler(matcher, renderer, nil, unfurlDelegator, api, logger)
 		}
 	}
 	return &Gateway{
 		api:             api,
 		socket:          socket,
 		handler:         NewDefaultSlashCommandHandler(cfg.Commands),
-		workflow:        workflow.NewEngine(cfg, workflow.Options{Logger: logger}),
+		workflow:        workflow.NewEngine(cfg, workflow.Options{Logger: logger, Delegator: workflowDelegator}),
 		chat:            chat,
 		chatSessions:    sessions,
 		chatWarmTimeout: cfg.ACP.EffectiveStartupTimeout(),

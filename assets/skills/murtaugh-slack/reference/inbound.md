@@ -17,8 +17,10 @@ buttons, see `outbound.md`; for the blocks themselves, see `blocks.md`.
    `block_actions` to Murtaugh over Socket Mode.
 4. Murtaugh evaluates each `workflow-rules` entry in sorted-key order and runs the
    **first** whose `match` is a subset of the interaction payload.
-5. The matched rule's triggers fire in order: `reply-to-slack` posts a templated
-   response, and/or `run` invokes a command with the interaction JSON on stdin.
+5. The matched rule's triggers fire in order: `reply-to-slack` posts a reply
+   (from a template, a command, or an agent), `run` invokes a command with the
+   interaction JSON on stdin, and `delegate-to-agent` hands the work to an agent
+   fire-and-forget.
 
 ## Stable routing keys
 
@@ -56,18 +58,36 @@ more-specific rules to sort ahead of catch-alls.
 
 ## Responding
 
-- **`reply-to-slack`** renders a Block Kit JSON template (resolved against your
-  config dir first, then the embedded defaults) and POSTs it to the interaction's
-  `response_url`. Templates use Go `text/template` with the payload under
-  `.Payload`, e.g. `{{ .Payload.message.ts }}`. Set `"replace_original": true` in
-  the template to overwrite the clicked message (see
+- **`reply-to-slack`** produces a Block Kit JSON reply and POSTs it to the
+  interaction's `response_url`. The JSON comes from exactly one of: a `template`
+  (Go `text/template`, resolved against your config dir first then the embedded
+  defaults, payload under `.Payload`, e.g. `{{ .Payload.message.ts }}`); the
+  stdout of a `run:` command; or a nested `delegate-to-agent:` (the agent must
+  return solely valid Slack message JSON — non-JSON is logged and skipped). Set
+  `"replace_original": true` to overwrite the clicked message (see
   `templates/code-review/02-approved.json`).
 - **`run`** spawns a command and writes the full Slack interaction callback to its
   stdin as JSON. Use it for side effects (calling the GitHub API, etc.). It does
   **not** post a reply on its own — pair it with `reply-to-slack` if the user needs
   feedback.
+- **`delegate-to-agent`** (top-level) hands the interaction to an agent in an
+  isolated one-shot session and is **fire-and-forget** — no output is captured;
+  the agent acts through its own tools (it may post to Slack itself). The
+  `prompt` is rendered with the payload under `.Payload`. The agent must be
+  defined in `agents.yaml`.
 
-A rule may list both triggers; they execute in the order written.
+A rule may list several triggers; they execute in the order written.
+
+```yaml
+    trigger:
+      - reply-to-slack:
+          delegate-to-agent:           # agent returns the JSON reply
+            agent: default
+            prompt: "Acknowledge {{ .Payload.user.id }}; return solely Slack JSON."
+      - delegate-to-agent:             # fire-and-forget side work
+          agent: default
+          prompt: "Review the PR and post findings in {{ index .Payload.channel \"name\" }}."
+```
 
 ## Security — confirm with the user before you design
 

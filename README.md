@@ -282,7 +282,7 @@ config is the operator's job.
 Add rules to `slack.yaml` under `workflow-rules` to respond to Block Kit
 button and form submissions. Rules match against the raw Slack interaction
 payload; the first match wins. Triggers run in order and may post a rendered
-JSON reply or execute a shell command.
+JSON reply, execute a shell command, or hand the work to an agent.
 
 ~~~yaml
 workflow-rules:
@@ -299,7 +299,17 @@ workflow-rules:
       - run:
           cmd: /path/to/notify-script
           args: [--env, production]
+      # Fire-and-forget: run an agent that acts through its own tools. Prompts
+      # are rendered against the interaction payload under `.Payload`.
+      - delegate-to-agent:
+          agent: default
+          prompt: "Post a review summary for {{ .Payload.user.id }} in the thread."
 ~~~
+
+A `reply-to-slack` trigger can itself delegate to an agent instead of a
+`template`/`run` — the agent must then return solely a valid Slack message
+JSON, which is posted back. `template`, `run`, and `delegate-to-agent` are
+mutually exclusive within `reply-to-slack`.
 
 If `workflow-rules` is omitted, Murtaugh installs the built-in ping/pong rule
 so the startup card works out of the box.
@@ -319,9 +329,13 @@ unfurl-rules:
       template: unfurl/github-pr.json
 ~~~
 
-Template paths are resolved relative to the config directory, then fall back to
-the embedded `assets/` files. Each `match.domain` must also be registered in
-the Slack app's **App Unfurl Domains** list.
+An `unfurl` action is exactly one of `template`, `run`, or `delegate-to-agent`.
+A `delegate-to-agent` unfurl runs an agent whose final output must be a valid
+Slack attachment JSON (the prompt can reference `{{ .URL }}` and
+`{{ .Captures.<name> }}`); non-JSON output is logged and the link is left
+un-unfurled. Template paths are resolved relative to the config directory, then
+fall back to the embedded `assets/` files. Each `match.domain` must also be
+registered in the Slack app's **App Unfurl Domains** list.
 
 ### CLI tools
 
