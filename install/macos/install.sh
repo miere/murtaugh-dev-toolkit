@@ -362,7 +362,10 @@ install_or_update_binary() {
 # unrelated tree that happens to live two directories up.
 find_repo_root() {
   local script_dir root
-  script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+  # ${BASH_SOURCE[0]:-} guards the `curl | bash` path (empty BASH_SOURCE under
+  # set -u): an empty source resolves to the cwd, which fails the go.mod/
+  # cmd/murtaugh checks below and correctly reports "not a checkout".
+  script_dir=$(cd "$(dirname "${BASH_SOURCE[0]:-}")" && pwd -P)
   root="${script_dir%/install/macos}"
   [[ "$root" != "$script_dir" ]] || { printf ''; return 0; }
   [[ -f "$root/go.mod" && -d "$root/cmd/murtaugh" ]] || { printf ''; return 0; }
@@ -617,7 +620,13 @@ main() {
 
 # Only run main when executed directly, so unit tests can source the
 # script to exercise individual helpers like prompt_choice in isolation.
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+#
+# The `:-$0` default matters for the `curl … | bash` install path: bash then
+# reads the script from stdin, BASH_SOURCE is empty, and a bare
+# ${BASH_SOURCE[0]} would trip `set -u` ("unbound variable") before main runs.
+# Defaulting to $0 makes the comparison true when piped or executed, and still
+# false when sourced (BASH_SOURCE[0] is the script path, $0 is the parent shell).
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
   main "$@"
 fi
 
