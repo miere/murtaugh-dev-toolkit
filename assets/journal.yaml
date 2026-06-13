@@ -21,8 +21,10 @@ journal:
   # $XDG_STATE_HOME/murtaugh/journal.db (i.e. ~/.local/state/murtaugh/journal.db).
   # path: ~/.local/state/murtaugh/journal.db
 
-  # Directory for large bodies stored outside the database (e.g. full ACP
-  # session transcripts in a later release). Defaults beside the database.
+  # Directory for large bodies stored outside the database — full ACP session
+  # transcripts are written here, one NDJSON file per session, referenced by the
+  # acp_session rows. Defaults beside the database. Pruning removes a transcript
+  # once its last session.turn row ages out.
   # blob_dir: ~/.local/state/murtaugh/journal-blobs
 
   streams:
@@ -38,8 +40,8 @@ journal:
       enabled: true
       retention: 720h    # 30d
 
-    # Persistent ACP chat session logs. The config slot exists now; recording is
-    # wired in a later release.
+    # Persistent ACP chat session logs: one session.turn row per turn plus a
+    # full transcript under blob_dir. Set false to stop recording conversations.
     acp_session:
       enabled: true
       retention: 2160h   # 90d

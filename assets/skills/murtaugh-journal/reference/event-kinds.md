@@ -43,4 +43,11 @@ If you see `interactive.received` but **no** `workflow.matched`, look for
 
 ## `acp_session` stream
 
-Reserved for persistent chat session logs. No event kinds are emitted yet.
+Persistent ACP chat session logs.
+
+| kind | level | meaning / payload |
+|------|-------|-------------------|
+| `session.turn` | info / warn / error | One completed chat turn. keys: `session_id` + channel/thread/user. payload: `agent`, `source`, `outcome` (`completed`/`interrupted`/`timed_out`/`errored`), `duration_ms`, `chunks`, `bytes`. Level follows the outcome (timeout → warn, error → error). **The full prompt/response text is not in the row** — it lives in the transcript file at `blob_ref` (NDJSON under the journal `blob_dir`). |
+
+Reviewing transcripts (as opposed to debugging gateway interactions) has its own
+skill: `murtaugh-acp-sessions`.

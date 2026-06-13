@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -53,6 +54,19 @@ CREATE INDEX IF NOT EXISTS idx_events_session       ON events(session_id);
 type Store struct {
 	db        *sql.DB
 	retention map[string]time.Duration
+	// blobDir, when set, is where transcript blobs live. Prune uses it to
+	// remove files orphaned by row deletion; empty disables blob cleanup.
+	blobDir string
+}
+
+// OpenOption customises a Store at Open time.
+type OpenOption func(*Store)
+
+// WithBlobDir tells the store where transcript blobs live so Prune can delete
+// files orphaned when their last referencing row is removed. Without it, Prune
+// trims rows only and leaves blob files alone.
+func WithBlobDir(dir string) OpenOption {
+	return func(s *Store) { s.blobDir = strings.TrimSpace(dir) }
 }
 
 // Open opens (creating if absent) the journal database at path and ensures the
@@ -66,7 +80,7 @@ type Store struct {
 // out rather than erroring. MaxOpenConns is pinned to 1: within a process the
 // journal is single-writer by design, and serializing also keeps WAL and the
 // pragmas deterministic.
-func Open(path string, retention map[string]time.Duration) (*Store, error) {
+func Open(path string, retention map[string]time.Duration, opts ...OpenOption) (*Store, error) {
 	if path != ":memory:" && !strings.HasPrefix(path, "file:") {
 		if dir := filepath.Dir(path); dir != "" && dir != "." {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -89,7 +103,11 @@ func Open(path string, retention map[string]time.Duration) (*Store, error) {
 	if retention == nil {
 		retention = map[string]time.Duration{}
 	}
-	return &Store{db: db, retention: retention}, nil
+	store := &Store{db: db, retention: retention}
+	for _, opt := range opts {
+		opt(store)
+	}
+	return store, nil
 }
 
 // dsn builds the modernc.org/sqlite connection string, attaching the pragmas
@@ -318,6 +336,12 @@ func (s *Store) Prune(ctx context.Context, now time.Time) (PruneResult, error) {
 			continue
 		}
 		cutoff := now.Add(-d).UnixMilli()
+		// Collect the blob refs about to lose rows before deleting, so we can
+		// remove any that end up unreferenced.
+		candidates, err := s.expiringBlobRefs(ctx, stream, cutoff)
+		if err != nil {
+			return res, err
+		}
 		r, err := s.db.ExecContext(ctx, `DELETE FROM events WHERE stream = ? AND ts < ?`, stream, cutoff)
 		if err != nil {
 			return res, fmt.Errorf("prune journal stream %q: %w", stream, err)
@@ -330,8 +354,49 @@ func (s *Store) Prune(ctx context.Context, now time.Time) (PruneResult, error) {
 			res.Removed[stream] = n
 			res.Total += n
 		}
+		s.removeOrphanBlobs(ctx, candidates)
 	}
 	return res, nil
+}
+
+// expiringBlobRefs lists the distinct blob refs on rows about to be pruned from
+// a stream. Returns nil when no blob dir is configured (cleanup disabled).
+func (s *Store) expiringBlobRefs(ctx context.Context, stream string, cutoff int64) ([]string, error) {
+	if s.blobDir == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT blob_ref FROM events WHERE stream = ? AND ts < ? AND blob_ref IS NOT NULL AND blob_ref <> ''`,
+		stream, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("collect expiring blob refs for %q: %w", stream, err)
+	}
+	defer rows.Close()
+	var refs []string
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			return nil, err
+		}
+		refs = append(refs, ref)
+	}
+	return refs, rows.Err()
+}
+
+// removeOrphanBlobs deletes each candidate blob file that no surviving row still
+// references. A session's transcript file is kept while any of its turns remain
+// and removed once the whole session has aged out. Deletion is best-effort.
+func (s *Store) removeOrphanBlobs(ctx context.Context, refs []string) {
+	if s.blobDir == "" {
+		return
+	}
+	for _, ref := range refs {
+		var one int
+		err := s.db.QueryRowContext(ctx, `SELECT 1 FROM events WHERE blob_ref = ? LIMIT 1`, ref).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			_ = os.Remove(filepath.Join(s.blobDir, ref))
+		}
+	}
 }
 
 func nullStr(s string) any {

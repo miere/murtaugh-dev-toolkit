@@ -56,6 +56,10 @@ type ChatHandler struct {
 	logger                *slog.Logger
 	statusRefreshInterval time.Duration
 	idleTimeout           time.Duration
+	// sessionLog records each turn to the journal's acp_session stream. nil
+	// (the default) records nothing; the gateway wires it only when that stream
+	// is enabled.
+	sessionLog *sessionLogger
 }
 
 type ChatRequest struct {
@@ -91,6 +95,13 @@ func (h *ChatHandler) effectiveIdleTimeout() time.Duration {
 		return h.idleTimeout
 	}
 	return defaultIdleTimeout
+}
+
+// WithSessionLogger attaches the acp_session turn recorder and returns the
+// handler for chaining. nil leaves session logging off.
+func (h *ChatHandler) WithSessionLogger(sl *sessionLogger) *ChatHandler {
+	h.sessionLog = sl
+	return h
 }
 
 // resetIdleTimer restarts t for another idle window, draining an already-fired
@@ -139,6 +150,42 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 	streamThreadTS := streamThreadTS(req)
 	if streamThreadTS == "" {
 		return fmt.Errorf("Slack streaming requires a source message timestamp")
+	}
+
+	// Session-log accumulation. Declared before the defers below so the deferred
+	// recorder (registered first → runs last, after the interrupt handler has
+	// settled retErr) reads the final outcome, transcript, and session id.
+	var (
+		respBuf   strings.Builder
+		chunkSeen int
+		byteSeen  int
+		timedOut  bool
+		turnErr   error
+		sessionID string
+	)
+	if h.sessionLog != nil {
+		defer func() {
+			// An agent failure returns through writer.Fail, which may itself
+			// return nil, so retErr alone does not reveal it — turnErr captures
+			// the agent error explicitly. Interrupt (ctx cancelled) and idle
+			// timeout take precedence as they are not failures of the agent.
+			outcome := turnCompleted
+			switch {
+			case errors.Is(context.Cause(ctx), context.Canceled):
+				outcome = turnInterrupted
+			case timedOut:
+				outcome = turnTimedOut
+			case turnErr != nil || retErr != nil:
+				outcome = turnErrored
+			}
+			// Fresh context: on the interrupt/timeout paths the request ctx is
+			// already cancelled, but the row enqueue + transcript write must run.
+			h.sessionLog.record(context.Background(), sessionTurn{
+				req: req, agent: agentName, sessionID: sessionID, prompt: prompt,
+				response: respBuf.String(), outcome: outcome,
+				duration: time.Since(startedAt), chunks: chunkSeen, bytes: byteSeen,
+			})
+		}()
 	}
 	teamID, userID := req.TeamID, req.UserID
 	if req.DM {
@@ -205,10 +252,13 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 	defer cancelPrompt()
 	events, err := sessions.Prompt(promptCtx, key, metadata, acp.PromptRequest{Text: prompt})
 	if err != nil {
+		turnErr = err
 		return writer.Fail(ctx, err)
 	}
-	chunks := 0
-	bytes := 0
+	// The session now exists; capture its id for the turn record.
+	if id, ok := sessions.Lookup(key); ok {
+		sessionID = id
+	}
 	firstChunkLogged := false
 	streamStarted := false
 	runningTasks := make(map[string]acp.TaskStatus)
@@ -226,6 +276,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 			// stream tears down cleanly. Task cards keep their last reported
 			// status: the agent did not fail, we stopped waiting, so we never
 			// repaint them red.
+			timedOut = true
 			if err := h.handleIdleTimeout(ctx, sessions, key, writer, streamStarted); err != nil {
 				h.logger.Warn("failed to finalise stream on idle timeout", "error", err)
 			}
@@ -241,14 +292,15 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 			if !ok {
 				// Channel closed without an explicit EventComplete/EventError. No
 				// error surfaced, so treat leftover running tasks as completed.
-				return h.finishStream(ctx, writer, taskWriter, runningTasks, &streamStarted, req, startedAt, chunks, bytes)
+				return h.finishStream(ctx, writer, taskWriter, runningTasks, &streamStarted, req, startedAt, chunkSeen, byteSeen)
 			}
 			resetIdleTimer(idle, h.effectiveIdleTimeout())
 			switch event.Type {
 			case acp.EventText, acp.EventStatus:
 				if event.Text != "" {
-					chunks++
-					bytes += len(event.Text)
+					chunkSeen++
+					byteSeen += len(event.Text)
+					respBuf.WriteString(event.Text)
 					if !firstChunkLogged {
 						firstChunkLogged = true
 						h.logger.Info("received first ACP text chunk", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "bytes", len(event.Text))
@@ -297,6 +349,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 				// Only the still-running tasks were genuinely cut short by the
 				// error; tasks that already reported a terminal status have been
 				// removed from runningTasks and keep their real outcome.
+				turnErr = event.Error
 				h.finalizeTasks(ctx, taskWriter, runningTasks, slack.TaskCardStatusError)
 				return writer.Fail(ctx, event.Error)
 			case acp.EventComplete:
@@ -304,7 +357,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 				// never received an explicit terminal update (common with parallel
 				// tool calls). Complete them rather than abandoning them
 				// mid-spinner or — worse — painting them red.
-				return h.finishStream(ctx, writer, taskWriter, runningTasks, &streamStarted, req, startedAt, chunks, bytes)
+				return h.finishStream(ctx, writer, taskWriter, runningTasks, &streamStarted, req, startedAt, chunkSeen, byteSeen)
 			}
 		}
 	}

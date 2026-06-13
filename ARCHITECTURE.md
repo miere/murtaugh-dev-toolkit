@@ -362,8 +362,16 @@ filtered queries. Two lanes, never conflated.
   stamp it on their events, so every event from one interaction ties together.
 - **Recording points** — `workflow.Engine` (match / no-match / per-trigger
   outcome), the unfurl handler (`unfurl.*`), the gateway ingress (`slash.command`,
-  `interactive.received`), and `jobs.run` (`job.run`, the `job` stream). All take
-  a `journal.Recorder`, defaulting to no-op.
+  `interactive.received`), `jobs.run` (`job.run`, the `job` stream), and the
+  `ChatHandler` (`session.turn`, the `acp_session` stream). All take a
+  `journal.Recorder`, defaulting to no-op.
+- **Transcripts & blobs** (`blob.go`) — ACP chat is full-fidelity: each turn's
+  prompt and response go to a per-session NDJSON transcript file under
+  `blob_dir`, referenced from the row's `blob_ref`; the row keeps only the
+  queryable envelope + metrics. `BlobStore` does the appends; the gateway's
+  `sessionLogger` (`session_log.go`, wired only when `acp_session` is enabled)
+  ties the transcript write to the row. `Store.Prune` removes a transcript file
+  once its last referencing row ages out (`WithBlobDir`).
 - **Lifecycle & sweeper** — `main` opens the store and builds the recorder for
   non-setup invocations (fail-soft: a store that can't open degrades to no-op and
   logs a warning), draining on shutdown. The daemon (single writer) runs the

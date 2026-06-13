@@ -41,6 +41,9 @@ link unfurling, and an MCP server — all configured in two YAML files.
 - **Gateway Debug Mode** — every gateway interaction, workflow rule, unfurl, and
   job run is recorded as a structured event you (or an agent) can query back with
   `journal query` to debug what happened.
+- **ACP session logs** — chat conversations are recorded with full transcripts
+  (the `acp_session` journal stream) so a maintainer or curator can review how
+  users experience Murtaugh.
 - **MCP server** — expose every tool to AI clients over JSON-RPC stdio.
 - **CLI** — call any registered tool directly from your terminal.
 
@@ -396,6 +399,13 @@ filter to find a failure, then re-query by `--corr-id` to see that interaction
 end to end. The bundled `murtaugh-journal` agent skill teaches the chatbot this
 workflow. The gateway daemon prunes past-retention events automatically (at
 startup and every `sweep.every`); `journal prune` is the manual equivalent.
+
+ACP **chat conversations** are recorded too, on the `acp_session` stream: one
+`session.turn` row per turn (queryable like above) plus a full per-session
+transcript written under `blob_dir` and referenced by the row's `blob_ref`.
+Review them with `journal query --stream acp_session --session <id>` and read the
+transcript file for the message bodies — the `murtaugh-acp-sessions` skill walks
+a curator through it. Pruning removes transcripts along with their rows.
 
 ---
 

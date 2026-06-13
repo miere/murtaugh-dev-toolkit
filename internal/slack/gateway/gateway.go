@@ -165,6 +165,12 @@ func New(cfg config.Config, logger *slog.Logger, recorder journal.Recorder) *Gat
 			return cfg.Chat.DefaultAgent
 		}
 
+		// Record chat turns to the acp_session stream only when it is enabled,
+		// so a disabled stream writes neither rows nor transcript files.
+		var sessionLog *sessionLogger
+		if cfg.Journal.EffectiveEnabled(journal.StreamACPSession) {
+			sessionLog = newSessionLogger(recorder, cfg.Journal.EffectiveBlobDir(), logger)
+		}
 		chat = NewChatHandler(
 			api,
 			sessions,
@@ -172,7 +178,7 @@ func New(cfg config.Config, logger *slog.Logger, recorder journal.Recorder) *Gat
 			cfg.ACP.EffectiveStreamAppendInterval(),
 			cfg.ACP.EffectiveStreamMinChunkChars(),
 			logger,
-		).WithIdleTimeout(cfg.ACP.EffectiveRequestTimeout())
+		).WithIdleTimeout(cfg.ACP.EffectiveRequestTimeout()).WithSessionLogger(sessionLog)
 	}
 	// One shared runner backs every delegate-to-agent surface (jobs, workflow
 	// triggers, unfurls). Each delegation spins its own isolated agent process,

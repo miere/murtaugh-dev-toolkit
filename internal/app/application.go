@@ -281,7 +281,8 @@ func buildRegistry(cfg config.Config, configPath, version string, recorder journ
 	// backs all three. They are how Gateway Debug Mode and admins inspect and
 	// trim the journal over CLI and MCP.
 	journalOpener := func() (*journal.Store, error) {
-		return journal.Open(cfg.Journal.EffectivePath(), cfg.Journal.RetentionByStream())
+		return journal.Open(cfg.Journal.EffectivePath(), cfg.Journal.RetentionByStream(),
+			journal.WithBlobDir(cfg.Journal.EffectiveBlobDir()))
 	}
 	reg.Register(journalquery.New(journalOpener))
 	reg.Register(journalstats.New(journalOpener))
