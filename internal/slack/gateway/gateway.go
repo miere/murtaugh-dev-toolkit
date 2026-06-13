@@ -102,6 +102,12 @@ type Gateway struct {
 	// engine and unfurl handler. Never nil after New: a nil argument becomes a
 	// no-op recorder so call sites never branch.
 	recorder journal.Recorder
+	// journalSweep runs one retention pass over the journal; journalSweepEvery
+	// is its cadence. Wired by the composition root (WithJournalSweeper) as a
+	// closure over the daemon's store. nil disables the sweeper, so CLI/MCP and
+	// tests never start it.
+	journalSweep      func(context.Context) error
+	journalSweepEvery time.Duration
 }
 
 func New(cfg config.Config, logger *slog.Logger, recorder journal.Recorder) *Gateway {
@@ -271,6 +277,16 @@ func (a *Gateway) WithScheduledRunner(runner ScheduledRunner) *Gateway {
 	return a
 }
 
+// WithJournalSweeper attaches the retention sweep and its cadence. The sweep
+// runs once at startup and then every interval, inside the daemon (the single
+// writer that may delete). nil disables it, so CLI/MCP and tests never sweep.
+// Returns the receiver for fluent wiring.
+func (a *Gateway) WithJournalSweeper(sweep func(context.Context) error, every time.Duration) *Gateway {
+	a.journalSweep = sweep
+	a.journalSweepEvery = every
+	return a
+}
+
 func (a *Gateway) Run(ctx context.Context) error {
 	resolveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	err := a.resolveAllowSet(resolveCtx)
@@ -285,6 +301,7 @@ func (a *Gateway) Run(ctx context.Context) error {
 	}()
 	a.warmChat(ctx)
 	a.startConfigWatcher(ctx)
+	a.startJournalSweeper(ctx)
 	stopScheduler := a.startScheduler(ctx)
 	defer stopScheduler()
 
@@ -346,6 +363,45 @@ func (a *Gateway) onConfigFileChanged(ctx context.Context, path string, mtime ti
 	a.logger.Info("config file change detected", "path", path, "mtime", mtime)
 	if _, _, err := a.SuggestRestart(ctx, "", reason); err != nil {
 		a.logger.Error("config watcher: restart suggestion failed", "path", path, "error", err)
+	}
+}
+
+// startJournalSweeper launches the retention sweeper in a goroutine that lives
+// for the Run context. It sweeps once at startup (the daemon is not always up,
+// so a bare interval timer would drift across sleeps/restarts) and then every
+// configured interval. No-op when no sweep is wired, so only the journal-enabled
+// daemon path pays for it.
+func (a *Gateway) startJournalSweeper(ctx context.Context) {
+	if a.journalSweep == nil {
+		return
+	}
+	every := a.journalSweepEvery
+	if every <= 0 {
+		every = 24 * time.Hour
+	}
+	a.logger.Info("journal sweeper started", "every", every.String())
+	go func() {
+		a.runJournalSweep(ctx)
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				a.runJournalSweep(ctx)
+			}
+		}
+	}()
+}
+
+// runJournalSweep performs one bounded sweep, logging (never propagating) any
+// error so a transient failure does not stop the ticker.
+func (a *Gateway) runJournalSweep(ctx context.Context) {
+	sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := a.journalSweep(sweepCtx); err != nil {
+		a.logger.Warn("journal sweep failed", "error", err)
 	}
 }
 

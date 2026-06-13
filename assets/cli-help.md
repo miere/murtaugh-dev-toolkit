@@ -132,6 +132,61 @@ murtaugh jobs define --name nightly-backup \
   --workdir /srv --timeout 30m --schedule "0 2 * * *"
 ```
 
+## murtaugh journal query
+
+Read structured events back out of the **event journal** — the queryable record
+of what Murtaugh did (gateway interactions, workflow rules, link unfurls, job
+runs). This is how Gateway Debug Mode answers "why did this interaction
+misbehave?". Distinct from the daemon's stderr logs: the journal is for filtered,
+correlated inspection. Configure it in `journal.yaml`.
+
+All filters are optional and ANDed; results are most-recent-first.
+
+| Flag        | Required | Type     | Notes                                                                 |
+|-------------|----------|----------|-----------------------------------------------------------------------|
+| `--stream`  | no       | string   | `gateway`, `job`, or `acp_session`.                                   |
+| `--kind`    | no       | string   | Exact event kind, e.g. `workflow.trigger`, `unfurl.render`, `job.run`.|
+| `--level`   | no       | string   | Minimum severity (at least): `debug`, `info`, `warn`, `error`.        |
+| `--channel` | no       | string   | Slack channel ID.                                                     |
+| `--user`    | no       | string   | Slack user ID.                                                        |
+| `--session` | no       | string   | ACP session ID.                                                       |
+| `--corr-id` | no       | string   | Correlation id — every event from one interaction shares it.          |
+| `--rule`    | no       | string   | Workflow or unfurl rule name.                                         |
+| `--since`   | no       | string   | Lower time bound: a Go duration ago (`2h`) or an RFC3339 timestamp.   |
+| `--until`   | no       | string   | Upper time bound: a Go duration ago (`5m`) or an RFC3339 timestamp.   |
+| `--limit`   | no       | integer  | Max events (default `50`, capped at `500`).                           |
+
+- The typical flow: filter by `--channel`/`--since`/`--level error` to find a
+  failure, then re-query with `--corr-id` to see that whole interaction.
+- Each event's `payload` carries the detail (template path, render error,
+  non-JSON agent output, command error, …).
+
+```
+murtaugh journal query --stream gateway --channel C0REVIEWS --since 1h --level warn
+murtaugh journal query --corr-id gw_3f9c2b1a
+```
+
+## murtaugh journal stats
+
+Summarise the journal: row count and oldest/newest timestamp per stream. Every
+known stream is listed, including empty ones — a `0` count on `gateway` means
+Gateway Debug Mode is not recording (check `journal.yaml` and restart the
+daemon). Takes no flags.
+
+```
+murtaugh journal stats
+```
+
+## murtaugh journal prune
+
+Delete events older than each stream's configured retention (from `journal.yaml`)
+— a manual run of the sweep the gateway daemon performs automatically (on startup
+and every `sweep.every`). Takes no flags; uses the configured retention.
+
+```
+murtaugh journal prune
+```
+
 ## murtaugh slack send-msg
 
 Post a message (or upload a file) to a Slack channel or user. Uses the bot
