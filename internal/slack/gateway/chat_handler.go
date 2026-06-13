@@ -156,12 +156,13 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 	// recorder (registered first → runs last, after the interrupt handler has
 	// settled retErr) reads the final outcome, transcript, and session id.
 	var (
-		respBuf   strings.Builder
-		chunkSeen int
-		byteSeen  int
-		timedOut  bool
-		turnErr   error
-		sessionID string
+		respBuf    strings.Builder
+		chunkSeen  int
+		byteSeen   int
+		timedOut   bool
+		turnErr    error
+		sessionID  string
+		stopReason string
 	)
 	if h.sessionLog != nil {
 		defer func() {
@@ -182,7 +183,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 			// already cancelled, but the row enqueue + transcript write must run.
 			h.sessionLog.record(context.Background(), sessionTurn{
 				req: req, agent: agentName, sessionID: sessionID, prompt: prompt,
-				response: respBuf.String(), outcome: outcome,
+				response: respBuf.String(), outcome: outcome, stopReason: stopReason,
 				duration: time.Since(startedAt), chunks: chunkSeen, bytes: byteSeen,
 			})
 		}()
@@ -292,7 +293,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 			if !ok {
 				// Channel closed without an explicit EventComplete/EventError. No
 				// error surfaced, so treat leftover running tasks as completed.
-				return h.finishStream(ctx, writer, taskWriter, runningTasks, &streamStarted, req, startedAt, chunkSeen, byteSeen)
+				return h.finishStream(ctx, writer, taskWriter, runningTasks, &streamStarted, req, startedAt, chunkSeen, byteSeen, stopReason)
 			}
 			resetIdleTimer(idle, h.effectiveIdleTimeout())
 			switch event.Type {
@@ -357,7 +358,8 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 				// never received an explicit terminal update (common with parallel
 				// tool calls). Complete them rather than abandoning them
 				// mid-spinner or — worse — painting them red.
-				return h.finishStream(ctx, writer, taskWriter, runningTasks, &streamStarted, req, startedAt, chunkSeen, byteSeen)
+				stopReason = event.StopReason
+				return h.finishStream(ctx, writer, taskWriter, runningTasks, &streamStarted, req, startedAt, chunkSeen, byteSeen, stopReason)
 			}
 		}
 	}
@@ -366,7 +368,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 // finishStream resolves a successful turn: it completes any task cards the agent
 // left open, makes sure a Slack message exists, stops the stream, and logs. It
 // is shared by the explicit EventComplete and the channel-closed-cleanly paths.
-func (h *ChatHandler) finishStream(ctx context.Context, writer *StreamWriter, taskWriter *TaskCardWriter, runningTasks map[string]acp.TaskStatus, streamStarted *bool, req ChatRequest, startedAt time.Time, chunks, bytes int) error {
+func (h *ChatHandler) finishStream(ctx context.Context, writer *StreamWriter, taskWriter *TaskCardWriter, runningTasks map[string]acp.TaskStatus, streamStarted *bool, req ChatRequest, startedAt time.Time, chunks, bytes int, stopReason string) error {
 	h.finalizeTasks(ctx, taskWriter, runningTasks, slack.TaskCardStatusComplete)
 	if !*streamStarted {
 		if err := writer.Start(ctx); err != nil {
@@ -374,11 +376,31 @@ func (h *ChatHandler) finishStream(ctx context.Context, writer *StreamWriter, ta
 		}
 		*streamStarted = true
 	}
+	// A turn that completed but streamed no agent text would otherwise leave the
+	// user staring at silence (or just task cards). Surface a short note — with
+	// the agent's stop reason when it explains the emptiness — so an empty reply
+	// is legible rather than mistaken for a dead bot.
+	if bytes == 0 {
+		if err := writer.Append(ctx, emptyReplyNote(stopReason)); err != nil {
+			return err
+		}
+		h.logger.Warn("ACP turn completed with no agent text", "source", req.Source, "channel", req.ChannelID, "stop_reason", stopReason)
+	}
 	if err := writer.Stop(ctx); err != nil {
 		return err
 	}
-	h.logger.Info("completed ACP chat response", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "chunks", chunks, "bytes", bytes)
+	h.logger.Info("completed ACP chat response", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "chunks", chunks, "bytes", bytes, "stop_reason", stopReason)
 	return nil
+}
+
+// emptyReplyNote builds the message shown when a turn produced no agent text.
+// A non-"end_turn" stop reason (max_tokens, refusal, …) is the likely cause and
+// is named; otherwise the note nudges the user to retry.
+func emptyReplyNote(stopReason string) string {
+	if stopReason != "" && stopReason != "end_turn" {
+		return fmt.Sprintf(":warning: _The agent ended the turn without a reply (stop reason: `%s`). Try rephrasing or asking again._", stopReason)
+	}
+	return ":warning: _The agent finished without a text reply — it may have only run tools. Nudge it with another message to continue._"
 }
 
 // handleIdleTimeout reacts to a stalled turn: it asks the agent to stop (so it

@@ -105,6 +105,46 @@ func TestChatHandlerRecordsErroredTurn(t *testing.T) {
 	}
 }
 
+func TestChatHandlerSurfacesEmptyReplyWithStopReason(t *testing.T) {
+	blobDir := t.TempDir()
+	rec := &journalSpy{}
+	// A turn that streams no text and completes with a non-end_turn stop reason
+	// (the goose "investigated but produced no reply" case).
+	sessions := scriptedSessions{id: "sess-empty", events: []acp.Event{
+		{Type: acp.EventComplete, StopReason: "max_tokens"},
+	}}
+	api := &fakeStreamAPI{}
+	handler := NewChatHandler(api, map[string]ChatSessionManager{"default": sessions},
+		func(ChatRequest) string { return "default" }, time.Hour, 1, discardLogger()).
+		WithSessionLogger(newSessionLogger(rec, blobDir, discardLogger()))
+
+	if err := handler.Handle(context.Background(), ChatRequest{ChannelID: "C1", MessageTS: "1.1", Text: "why is it broken?", Source: "dm"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	// The user must see a note rather than silence, naming the stop reason.
+	if api.appends == 0 {
+		t.Fatalf("expected a fallback note to be appended for an empty reply")
+	}
+	note, err := extractMarkdownTextFromOptions(api.appendOptions[len(api.appendOptions)-1]...)
+	if err != nil {
+		t.Fatalf("extract note: %v", err)
+	}
+	if !strings.Contains(note, "max_tokens") {
+		t.Fatalf("fallback note should name the stop reason, got %q", note)
+	}
+
+	// The journal turn records the empty outcome + stop reason.
+	turns := rec.byKind("session.turn")
+	if len(turns) != 1 {
+		t.Fatalf("expected one session.turn, got %d", len(turns))
+	}
+	payload := turns[0].Payload.(map[string]any)
+	if payload["bytes"] != 0 || payload["stop_reason"] != "max_tokens" {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
 func TestChatHandlerNoSessionLogIsNoop(t *testing.T) {
 	// Without a session logger, Handle must work and record nothing.
 	sessions := scriptedSessions{id: "s", events: []acp.Event{{Type: acp.EventText, Text: "hi"}, {Type: acp.EventComplete}}}

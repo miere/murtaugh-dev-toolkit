@@ -47,7 +47,9 @@ Persistent ACP chat session logs.
 
 | kind | level | meaning / payload |
 |------|-------|-------------------|
-| `session.turn` | info / warn / error | One completed chat turn. keys: `session_id` + channel/thread/user. payload: `agent`, `source`, `outcome` (`completed`/`interrupted`/`timed_out`/`errored`), `duration_ms`, `chunks`, `bytes`. Level follows the outcome (timeout → warn, error → error). **The full prompt/response text is not in the row** — it lives in the transcript file at `blob_ref` (NDJSON under the journal `blob_dir`). |
+| `session.turn` | info / warn / error | One completed chat turn. keys: `session_id` + channel/thread/user. payload: `agent`, `source`, `outcome` (`completed`/`interrupted`/`timed_out`/`errored`), `stop_reason` (the agent's reported reason, e.g. `end_turn`/`max_tokens`/`refusal`), `duration_ms`, `chunks`, `bytes`. Level follows the outcome (timeout → warn, error → error). **The full prompt/response text is not in the row** — it lives in the transcript file at `blob_ref` (NDJSON under the journal `blob_dir`). |
+
+When a turn shows `bytes: 0` (an **empty reply**), check `stop_reason`: a value other than `end_turn` (e.g. `max_tokens`, `refusal`) means the agent ended without producing text — Murtaugh surfaces this to the user as a note rather than silence. A `stop_reason` of `end_turn` with `bytes: 0` means the agent ran only tools and sent no message. Enable `configuration.debug: true` to also log every raw `session/update` kind, which reveals if the agent streamed text under an envelope Murtaugh didn't recognise.
 
 Reviewing transcripts (as opposed to debugging gateway interactions) has its own
 skill: `murtaugh-acp-sessions`.

@@ -181,10 +181,16 @@ func (c *ProcessClient) Prompt(ctx context.Context, sessionID string, request Pr
 			events <- Event{Type: EventError, Error: err}
 			return
 		}
-		if text := extractText(result); text != "" {
+		text := extractText(result)
+		stopReason := extractStopReason(result)
+		// stop_reason is logged at INFO because it explains why a turn ended,
+		// including the cases that produce no reply (max_tokens, refusal): the
+		// single most useful signal when a chat comes back empty.
+		c.log.Info("ACP prompt completed", "session_id", sessionID, "stop_reason", stopReason, "response_text", text != "")
+		if text != "" {
 			events <- Event{Type: EventText, Text: text}
 		}
-		events <- Event{Type: EventComplete}
+		events <- Event{Type: EventComplete, StopReason: stopReason}
 	}()
 	return events, nil
 }
@@ -389,6 +395,9 @@ func (c *ProcessClient) deliverNotification(notification rpcNotification) {
 	if ch == nil {
 		return
 	}
+	kind := sessionUpdateKind(notification.Params)
+	c.log.Debug("ACP session/update", "session_id", sessionID, "update", kind)
+
 	if task := extractTask(notification.Params); task != nil {
 		// Block on the send: dropping task or text notifications truncates the
 		// agent response in the consumer (chat handler). The readLoop is back-
@@ -398,6 +407,14 @@ func (c *ProcessClient) deliverNotification(notification rpcNotification) {
 	}
 	event := Event{Type: EventText, Text: extractNotificationText(notification.Params)}
 	if event.Text == "" {
+		// An update we neither rendered as a task nor recognised as agent text.
+		// Thought chunks etc. are expected and silent; but if an *unrecognised*
+		// kind carries text we'd otherwise drop it, which looks like an empty
+		// reply — log it at WARN so protocol drift (e.g. a goose update changing
+		// the answer's envelope) is visible rather than silent.
+		if kind != "" && !knownSilentUpdate(kind) && carriesText(notification.Params) {
+			c.log.Warn("ACP session/update carried text under an unhandled kind; reply may appear empty", "session_id", sessionID, "update", kind)
+		}
 		return
 	}
 	ch <- event
@@ -451,6 +468,80 @@ func extractNotificationText(raw json.RawMessage) string {
 		return strings.Join(extractStrings(content), "")
 	}
 	return strings.Join(extractStrings(updateMap), "")
+}
+
+// extractStopReason pulls the agent's stop reason out of a session/prompt
+// result, tolerating either the camelCase (ACP spec) or snake_case spelling.
+// Returns "" when none is present.
+func extractStopReason(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return ""
+	}
+	for _, key := range []string{"stopReason", "stop_reason"} {
+		if s, ok := m[key].(string); ok && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// sessionUpdateKind returns the update.sessionUpdate discriminator of a
+// session/update notification, or "" when absent. Used for diagnostics.
+func sessionUpdateKind(raw json.RawMessage) string {
+	var value any
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	m, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	update, ok := m["update"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	kind, _ := update["sessionUpdate"].(string)
+	return kind
+}
+
+// knownSilentUpdate reports whether an update kind is one we deliberately do
+// not turn into a chat reply (reasoning, plans, tool bookkeeping). These are
+// expected to carry no agent-message text, so dropping them is not drift.
+func knownSilentUpdate(kind string) bool {
+	switch kind {
+	case "agent_thought_chunk", "tool_call", "tool_call_update",
+		"plan", "available_commands_update", "current_mode_update", "user_message_chunk":
+		return true
+	default:
+		return false
+	}
+}
+
+// carriesText reports whether a session/update's update.content holds any
+// non-empty text. Used to detect an unrecognised kind that is smuggling the
+// agent's reply (protocol drift) so we can log rather than silently drop it.
+func carriesText(raw json.RawMessage) bool {
+	var value any
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	m, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	update, ok := m["update"].(map[string]any)
+	if !ok {
+		return false
+	}
+	content, ok := update["content"]
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(strings.Join(extractStrings(content), "")) != ""
 }
 
 func extractTask(raw json.RawMessage) *TaskEvent {

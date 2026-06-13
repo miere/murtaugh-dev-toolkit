@@ -27,10 +27,15 @@ type PromptRequest struct {
 }
 
 type Event struct {
-	Type  EventType
-	Text  string
-	Error error
-	Task  *TaskEvent
+	Type EventType
+	Text string
+	// StopReason is the agent's reported reason for ending a turn, carried on
+	// EventComplete (e.g. "end_turn", "max_tokens", "refusal"). Empty when the
+	// agent did not report one. The chat handler surfaces a non-"end_turn"
+	// reason to the user so a turn that ends without a reply is not silent.
+	StopReason string
+	Error      error
+	Task       *TaskEvent
 }
 
 type EventType string
