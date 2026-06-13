@@ -24,6 +24,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 )
 
 // defaultTimeout matches the previous hand-rolled subcommand: jobs without an
@@ -48,6 +49,7 @@ type Tool struct {
 	delegator AgentDelegator
 	stdout    io.Writer
 	stderr    io.Writer
+	recorder  journal.Recorder
 }
 
 // New constructs a Tool that resolves jobs through lookup and streams the
@@ -55,13 +57,13 @@ type Tool struct {
 // CLI frontend gets a live console; the MCP frontend wraps it with a Tool
 // configured via NewWith to capture output into the result instead.
 func New(lookup JobLookup) *Tool {
-	return &Tool{lookup: lookup, stdout: os.Stdout, stderr: os.Stderr}
+	return &Tool{lookup: lookup, stdout: os.Stdout, stderr: os.Stderr, recorder: journal.NopRecorder{}}
 }
 
 // NewWith returns a Tool whose stdout/stderr are redirected to the supplied
 // writers. Intended for tests and for frontends that need to capture output.
 func NewWith(lookup JobLookup, stdout, stderr io.Writer) *Tool {
-	return &Tool{lookup: lookup, stdout: stdout, stderr: stderr}
+	return &Tool{lookup: lookup, stdout: stdout, stderr: stderr, recorder: journal.NopRecorder{}}
 }
 
 // WithDelegator wires the agent runner used by agent-delegated jobs (jobs that
@@ -70,6 +72,30 @@ func NewWith(lookup JobLookup, stdout, stderr io.Writer) *Tool {
 func (t *Tool) WithDelegator(d AgentDelegator) *Tool {
 	t.delegator = d
 	return t
+}
+
+// WithRecorder wires the journal recorder that receives a job-stream `job.run`
+// event for each invocation (command or agent), recording the outcome and
+// duration. A nil recorder is ignored, leaving the no-op default in place.
+// Returns the receiver for fluent wiring.
+func (t *Tool) WithRecorder(recorder journal.Recorder) *Tool {
+	if recorder != nil {
+		t.recorder = recorder
+	}
+	return t
+}
+
+// record emits a job-stream `job.run` event keyed by job name.
+func (t *Tool) record(ctx context.Context, level journal.Level, summary, name string, payload any) {
+	t.recorder.Record(ctx, journal.Event{
+		Stream:  journal.StreamJob,
+		Kind:    "job.run",
+		Level:   level,
+		Summary: summary,
+		CorrID:  journal.CorrIDFromContext(ctx),
+		Keys:    journal.Keys{JobName: name},
+		Payload: payload,
+	})
 }
 
 // Name returns the registry key.
@@ -151,16 +177,26 @@ func (t *Tool) Invoke(ctx context.Context, args map[string]any) (any, error) {
 	cmd.Stdout = io.MultiWriter(t.stdout, &stdoutBuf)
 	cmd.Stderr = io.MultiWriter(t.stderr, &stderrBuf)
 
+	start := time.Now()
 	err := cmd.Run()
+	elapsed := time.Since(start)
 	exit := 0
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			exit = exitErr.ExitCode()
 		} else {
+			t.record(ctx, journal.LevelError, fmt.Sprintf("job %q failed to start", name), name,
+				map[string]any{"command": job.Command, "error": err.Error(), "duration_ms": elapsed.Milliseconds()})
 			return nil, fmt.Errorf("job %q: %w", name, err)
 		}
 	}
+	level, summary := journal.LevelInfo, fmt.Sprintf("job %q completed (exit %d)", name, exit)
+	if exit != 0 {
+		level, summary = journal.LevelError, fmt.Sprintf("job %q exited non-zero (exit %d)", name, exit)
+	}
+	t.record(ctx, level, summary, name,
+		map[string]any{"command": job.Command, "exit_code": exit, "duration_ms": elapsed.Milliseconds()})
 	return Result{
 		Name:     name,
 		Command:  job.Command,
@@ -188,9 +224,14 @@ func (t *Tool) invokeAgent(ctx context.Context, name string, job config.JobProfi
 	runCtx, cancel := context.WithTimeout(ctx, jobTimeout(job))
 	defer cancel()
 
+	start := time.Now()
 	if err := t.delegator.RunAndForget(runCtx, job.Agent, prompt); err != nil {
+		t.record(ctx, journal.LevelError, fmt.Sprintf("agent job %q failed", name), name,
+			map[string]any{"agent": job.Agent, "error": err.Error(), "duration_ms": time.Since(start).Milliseconds()})
 		return nil, fmt.Errorf("job %q: %w", name, err)
 	}
+	t.record(ctx, journal.LevelInfo, fmt.Sprintf("agent job %q completed", name), name,
+		map[string]any{"agent": job.Agent, "duration_ms": time.Since(start).Milliseconds()})
 	return Result{Name: name, Agent: job.Agent}, nil
 }
 

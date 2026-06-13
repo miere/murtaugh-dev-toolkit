@@ -12,6 +12,7 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
 	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 	"github.com/miere/murtaugh-dev-toolkit/internal/unfurl"
 	"github.com/miere/murtaugh-dev-toolkit/internal/workflow"
 	"github.com/slack-go/slack"
@@ -96,11 +97,19 @@ type Gateway struct {
 	// tool. nil disables the scheduler, so CLI/MCP and tests never pay for
 	// it.
 	runJob ScheduledRunner
+	// recorder receives gateway-stream journal events for inbound interactions
+	// (slash commands, interactive callbacks) and is threaded into the workflow
+	// engine and unfurl handler. Never nil after New: a nil argument becomes a
+	// no-op recorder so call sites never branch.
+	recorder journal.Recorder
 }
 
-func New(cfg config.Config, logger *slog.Logger) *Gateway {
+func New(cfg config.Config, logger *slog.Logger, recorder journal.Recorder) *Gateway {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if recorder == nil {
+		recorder = journal.NopRecorder{}
 	}
 	api := slack.New(cfg.OAuth.BotToken, slack.OptionAppLevelToken(cfg.OAuth.AppToken))
 	socket := socketmode.New(api, socketmode.OptionDebug(cfg.Configuration.Debug))
@@ -177,14 +186,14 @@ func New(cfg config.Config, logger *slog.Logger) *Gateway {
 			logger.Error("custom link unfurling disabled", "error", err)
 		} else {
 			renderer := unfurl.NewRenderer(cfg.BaseDir, nil)
-			unfurlHandler = NewLinkUnfurlHandler(matcher, renderer, nil, unfurlDelegator, api, logger)
+			unfurlHandler = NewLinkUnfurlHandler(matcher, renderer, nil, unfurlDelegator, api, logger).WithRecorder(recorder)
 		}
 	}
 	return &Gateway{
 		api:             api,
 		socket:          socket,
 		handler:         NewDefaultSlashCommandHandler(cfg.Commands),
-		workflow:        workflow.NewEngine(cfg, workflow.Options{Logger: logger, Delegator: workflowDelegator}),
+		workflow:        workflow.NewEngine(cfg, workflow.Options{Logger: logger, Delegator: workflowDelegator, Recorder: recorder}),
 		chat:            chat,
 		chatSessions:    sessions,
 		chatWarmTimeout: cfg.ACP.EffectiveStartupTimeout(),
@@ -198,7 +207,27 @@ func New(cfg config.Config, logger *slog.Logger) *Gateway {
 		cfg:             cfg.Configuration,
 		messaging:       api,
 		scheduledJobs:   cfg.Jobs,
+		recorder:        recorder,
 	}
+}
+
+// record emits a gateway-stream journal event, stamping the correlation id
+// carried on ctx (minted at interaction ingress). A nil recorder (struct-literal
+// Gateways in tests) is a no-op, matching how the gateway treats its other
+// optional collaborators.
+func (a *Gateway) record(ctx context.Context, kind string, level journal.Level, summary string, keys journal.Keys, payload any) {
+	if a.recorder == nil {
+		return
+	}
+	a.recorder.Record(ctx, journal.Event{
+		Stream:  journal.StreamGateway,
+		Kind:    kind,
+		Level:   level,
+		Summary: summary,
+		CorrID:  journal.CorrIDFromContext(ctx),
+		Keys:    keys,
+		Payload: payload,
+	})
 }
 
 // WithResumeMarkerStore attaches the persistent store used to bridge
@@ -422,9 +451,18 @@ func (a *Gateway) handleInteractive(event socketmode.Event) {
 		}()
 		return
 	}
+	// Mint a correlation id for this interaction and record its arrival. The
+	// same id is propagated into the workflow engine via the context so the
+	// match/no-match/trigger events all tie back to this one click.
+	corrID := journal.NewCorrID("gw")
+	a.record(journal.WithCorrID(context.Background(), corrID), "interactive.received", journal.LevelInfo,
+		"interactive callback received",
+		journal.Keys{TeamID: interaction.Team.ID, ChannelID: interaction.Channel.ID, UserID: interaction.User.ID},
+		map[string]any{"interaction_type": string(interaction.Type), "callback_id": interaction.CallbackID})
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
+		ctx = journal.WithCorrID(ctx, corrID)
 		if err := a.workflow.Execute(ctx, interaction); err != nil {
 			a.logger.Error("interactive workflow failed", "error", err)
 		}
@@ -444,6 +482,11 @@ func (a *Gateway) handleSlashCommand(ctx context.Context, event socketmode.Event
 		a.ack(event, ephemeralText("Sorry, you are not authorized to use this command."))
 		return
 	}
+
+	ctx = journal.WithCorrID(ctx, journal.NewCorrID("gw"))
+	a.record(ctx, "slash.command", journal.LevelInfo, "slash command received",
+		journal.Keys{TeamID: command.TeamID, ChannelID: command.ChannelID, UserID: command.UserID},
+		map[string]any{"command": command.Command, "text": command.Text})
 
 	response, err := a.handler.HandleSlashCommand(ctx, command)
 	if isRestartSlashCommand(command.Text) {
@@ -607,6 +650,7 @@ func (a *Gateway) handleLinkShared(teamID string, inner *slackevents.LinkSharedE
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), a.unfurlTimeout)
 		defer cancel()
+		ctx = journal.WithCorrID(ctx, journal.NewCorrID("gw"))
 		if err := a.unfurl.Handle(ctx, req); err != nil {
 			a.logger.Error("link unfurl failed", "channel", inner.Channel, "error", err)
 		}

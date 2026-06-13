@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"regexp"
 
+	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 	"github.com/miere/murtaugh-dev-toolkit/internal/unfurl"
 	"github.com/miere/murtaugh-dev-toolkit/internal/workflow"
 	"github.com/slack-go/slack"
@@ -40,6 +41,7 @@ type LinkUnfurlHandler struct {
 	api       Unfurler
 	botUserID string
 	logger    *slog.Logger
+	recorder  journal.Recorder
 }
 
 // LinkSharedRequest is the typed projection of a link_shared event.
@@ -62,7 +64,38 @@ func NewLinkUnfurlHandler(matcher *unfurl.Matcher, renderer *unfurl.Renderer, ru
 	if runner == nil {
 		runner = workflow.OSCommandRunner{}
 	}
-	return &LinkUnfurlHandler{matcher: matcher, renderer: renderer, runner: runner, delegator: delegator, api: api, logger: logger}
+	return &LinkUnfurlHandler{matcher: matcher, renderer: renderer, runner: runner, delegator: delegator, api: api, logger: logger, recorder: journal.NopRecorder{}}
+}
+
+// WithRecorder wires the journal recorder that receives gateway-stream unfurl
+// events (per-link render outcome, the chat.unfurl post). A nil recorder is
+// ignored, leaving the no-op default in place. Returns the receiver for fluent
+// wiring at the composition root.
+func (h *LinkUnfurlHandler) WithRecorder(recorder journal.Recorder) *LinkUnfurlHandler {
+	if recorder != nil {
+		h.recorder = recorder
+	}
+	return h
+}
+
+// record emits a gateway-stream journal event for an unfurl, stamping the
+// correlation id the gateway minted for this link_shared event (carried on
+// ctx) and the request's channel/team/user keys.
+func (h *LinkUnfurlHandler) record(ctx context.Context, kind string, level journal.Level, summary string, req LinkSharedRequest, ruleID string, payload any) {
+	h.recorder.Record(ctx, journal.Event{
+		Stream:  journal.StreamGateway,
+		Kind:    kind,
+		Level:   level,
+		Summary: summary,
+		CorrID:  journal.CorrIDFromContext(ctx),
+		Keys: journal.Keys{
+			TeamID:    req.TeamID,
+			ChannelID: req.ChannelID,
+			UserID:    req.UserID,
+			RuleID:    ruleID,
+		},
+		Payload: payload,
+	})
 }
 
 // Handle matches each shared link, builds previews, and posts a single
@@ -97,13 +130,19 @@ func (h *LinkUnfurlHandler) Handle(ctx context.Context, req LinkSharedRequest) e
 
 		match, ok := h.matcher.Match(link.URL, link.Domain, req.ChannelID)
 		if !ok {
+			h.record(ctx, "unfurl.no_match", journal.LevelDebug, "no unfurl rule matched", req, "",
+				map[string]any{"url": link.URL, "domain": link.Domain})
 			continue
 		}
 		attachment, err := h.build(ctx, match, req, link)
 		if err != nil {
 			h.logger.Warn("failed to build unfurl", "rule", match.Rule.Name, "url", link.URL, "error", err)
+			h.record(ctx, "unfurl.render", journal.LevelError, "failed to build unfurl", req, match.Rule.Name,
+				map[string]any{"url": link.URL, "error": err.Error()})
 			continue
 		}
+		h.record(ctx, "unfurl.render", journal.LevelInfo, "built unfurl preview", req, match.Rule.Name,
+			map[string]any{"url": link.URL})
 		unfurls[link.URL] = attachment
 	}
 
@@ -111,9 +150,13 @@ func (h *LinkUnfurlHandler) Handle(ctx context.Context, req LinkSharedRequest) e
 		return nil
 	}
 	if _, _, _, err := h.api.UnfurlMessageContext(ctx, req.ChannelID, req.MessageTS, unfurls); err != nil {
+		h.record(ctx, "unfurl.post", journal.LevelError, "chat.unfurl failed", req, "",
+			map[string]any{"count": len(unfurls), "error": err.Error()})
 		return fmt.Errorf("unfurl message: %w", err)
 	}
 	h.logger.Info("unfurled shared links", "channel", req.ChannelID, "count", len(unfurls))
+	h.record(ctx, "unfurl.post", journal.LevelInfo, "posted link unfurls", req, "",
+		map[string]any{"count": len(unfurls)})
 	return nil
 }
 

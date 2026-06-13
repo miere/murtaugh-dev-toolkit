@@ -16,6 +16,7 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/assets"
 	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 	"github.com/slack-go/slack"
 )
 
@@ -35,6 +36,7 @@ type Engine struct {
 	templateDir string
 	templateFS  fs.FS
 	logger      *slog.Logger
+	recorder    journal.Recorder
 }
 
 type Rule struct {
@@ -49,6 +51,10 @@ type Options struct {
 	TemplateDir string
 	TemplateFS  fs.FS
 	Logger      *slog.Logger
+	// Recorder receives gateway-stream journal events for each interaction the
+	// engine processes (match, no-match, per-trigger outcome). Nil defaults to
+	// a no-op, so the engine records nothing unless wired with a real recorder.
+	Recorder journal.Recorder
 }
 
 func NewEngine(cfg config.Config, opts Options) *Engine {
@@ -93,8 +99,12 @@ func NewEngine(cfg config.Config, opts Options) *Engine {
 	if runner == nil {
 		runner = OSCommandRunner{}
 	}
+	recorder := opts.Recorder
+	if recorder == nil {
+		recorder = journal.NopRecorder{}
+	}
 
-	return &Engine{rules: rules, poster: poster, runner: runner, delegator: opts.Delegator, templateDir: templateDir, templateFS: templateFS, logger: logger}
+	return &Engine{rules: rules, poster: poster, runner: runner, delegator: opts.Delegator, templateDir: templateDir, templateFS: templateFS, logger: logger, recorder: recorder}
 }
 
 func defaultWorkflowRules() map[string]config.WorkflowRuleConfig {
@@ -123,12 +133,22 @@ func (e *Engine) Execute(ctx context.Context, interaction slack.InteractionCallb
 		return fmt.Errorf("marshal interaction payload: %w", err)
 	}
 
+	keys := journal.Keys{
+		TeamID:    interaction.Team.ID,
+		ChannelID: interaction.Channel.ID,
+		UserID:    interaction.User.ID,
+	}
+
 	for _, rule := range e.rules {
 		if rule.Config.RequestEvent != "interactive" || !matches(rule.Config.Match, payload) {
 			continue
 		}
 		e.logger.Info("workflow rule matched", "rule", rule.Name)
-		return e.executeRule(ctx, rule, interaction.ResponseURL, payload, payloadJSON)
+		ruleKeys := keys
+		ruleKeys.RuleID = rule.Name
+		e.record(ctx, "workflow.matched", journal.LevelInfo, "matched workflow rule "+rule.Name, ruleKeys,
+			map[string]any{"interaction_type": string(interaction.Type)})
+		return e.executeRule(ctx, rule, interaction.ResponseURL, payload, payloadJSON, keys)
 	}
 
 	e.logger.Info(
@@ -138,10 +158,16 @@ func (e *Engine) Execute(ctx context.Context, interaction slack.InteractionCallb
 		"callback_id", interaction.CallbackID,
 		"action_ids", blockActionIDs(interaction.ActionCallback.BlockActions),
 	)
+	e.record(ctx, "workflow.no_match", journal.LevelDebug, "no workflow rule matched", keys, map[string]any{
+		"interaction_type": string(interaction.Type),
+		"callback_id":      interaction.CallbackID,
+		"action_ids":       blockActionIDs(interaction.ActionCallback.BlockActions),
+	})
 	return nil
 }
 
-func (e *Engine) executeRule(ctx context.Context, rule Rule, responseURL string, payload map[string]any, payloadJSON []byte) error {
+func (e *Engine) executeRule(ctx context.Context, rule Rule, responseURL string, payload map[string]any, payloadJSON []byte, keys journal.Keys) error {
+	keys.RuleID = rule.Name
 	for _, trigger := range rule.Config.Triggers {
 		switch trigger.Type {
 		case "reply-to-slack":
@@ -151,24 +177,55 @@ func (e *Engine) executeRule(ctx context.Context, rule Rule, responseURL string,
 				// failure: the runner already logged a warning with the output.
 				// Skip posting and move on rather than failing the whole rule.
 				if errors.Is(err, agentdelegate.ErrNonJSONOutput) {
+					e.record(ctx, "workflow.trigger", journal.LevelWarn, "reply-to-slack skipped: agent returned non-JSON", keys,
+						map[string]any{"trigger": "reply-to-slack", "json_valid": false})
 					continue
 				}
+				e.record(ctx, "workflow.trigger", journal.LevelError, "reply-to-slack render failed", keys,
+					map[string]any{"trigger": "reply-to-slack", "error": err.Error()})
 				return fmt.Errorf("render Slack response for rule %s: %w", rule.Name, err)
 			}
 			if err := e.poster.Post(ctx, responseURL, body); err != nil {
+				e.record(ctx, "workflow.trigger", journal.LevelError, "reply-to-slack post failed", keys,
+					map[string]any{"trigger": "reply-to-slack", "error": err.Error()})
 				return fmt.Errorf("post Slack response for rule %s: %w", rule.Name, err)
 			}
+			e.record(ctx, "workflow.trigger", journal.LevelInfo, "reply-to-slack posted", keys,
+				map[string]any{"trigger": "reply-to-slack"})
 		case "run":
 			if _, err := e.runner.Run(ctx, *trigger.Run, payloadJSON); err != nil {
+				e.record(ctx, "workflow.trigger", journal.LevelError, "run command failed", keys,
+					map[string]any{"trigger": "run", "error": err.Error()})
 				return fmt.Errorf("run command for rule %s: %w", rule.Name, err)
 			}
+			e.record(ctx, "workflow.trigger", journal.LevelInfo, "run command executed", keys,
+				map[string]any{"trigger": "run"})
 		case "delegate-to-agent":
 			if err := e.delegate(ctx, *trigger.DelegateToAgent, payload); err != nil {
+				e.record(ctx, "workflow.trigger", journal.LevelError, "delegate-to-agent failed", keys,
+					map[string]any{"trigger": "delegate-to-agent", "error": err.Error()})
 				return fmt.Errorf("delegate-to-agent for rule %s: %w", rule.Name, err)
 			}
+			e.record(ctx, "workflow.trigger", journal.LevelInfo, "delegate-to-agent dispatched", keys,
+				map[string]any{"trigger": "delegate-to-agent"})
 		}
 	}
 	return nil
+}
+
+// record emits a gateway-stream journal event, stamping the correlation id the
+// gateway minted for this interaction (carried on ctx). A nil-configured engine
+// uses a no-op recorder, so this is always safe to call.
+func (e *Engine) record(ctx context.Context, kind string, level journal.Level, summary string, keys journal.Keys, payload any) {
+	e.recorder.Record(ctx, journal.Event{
+		Stream:  journal.StreamGateway,
+		Kind:    kind,
+		Level:   level,
+		Summary: summary,
+		CorrID:  journal.CorrIDFromContext(ctx),
+		Keys:    keys,
+		Payload: payload,
+	})
 }
 
 // delegate runs a fire-and-forget top-level delegate-to-agent trigger: it

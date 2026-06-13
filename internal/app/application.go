@@ -19,6 +19,7 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/frontends/cli"
 	"github.com/miere/murtaugh-dev-toolkit/internal/frontends/mcp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 	gateway "github.com/miere/murtaugh-dev-toolkit/internal/slack/gateway"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/jobs/define"
@@ -71,6 +72,10 @@ type Application struct {
 	// advances, makes the gateway suggest a restart to the
 	// admin via Block Kit. Empty disables the watcher entirely.
 	configWatchPaths []string
+	// recorder is the journal recorder shared by the registry tools
+	// (jobs.run) and the gateway domains. Never nil: main passes a no-op
+	// recorder when the journal is disabled or could not be opened.
+	recorder journal.Recorder
 }
 
 // New constructs an Application for the given mode. cfg/configPath/logger
@@ -78,8 +83,11 @@ type Application struct {
 // frontends. args is the list of positional arguments handed to the CLI
 // frontend (Slack/MCP ignore it). version is the binary's compile-time
 // version string (e.g. "v0.4.1" or "dev") and is consumed by setup.update.
-func New(mode Mode, args []string, cfg config.Config, configPath, version string, logger *slog.Logger) *Application {
-	reg := buildRegistry(cfg, configPath, version)
+func New(mode Mode, args []string, cfg config.Config, configPath, version string, logger *slog.Logger, recorder journal.Recorder) *Application {
+	if recorder == nil {
+		recorder = journal.NopRecorder{}
+	}
+	reg := buildRegistry(cfg, configPath, version, recorder)
 	return &Application{
 		mode:       mode,
 		args:       args,
@@ -88,6 +96,7 @@ func New(mode Mode, args []string, cfg config.Config, configPath, version string
 		version:    version,
 		logger:     logger,
 		registry:   reg,
+		recorder:   recorder,
 	}
 }
 
@@ -99,7 +108,7 @@ func (a *Application) Run(ctx context.Context) error {
 	case ModeMCP:
 		return mcp.New(a.registry).Serve(ctx)
 	case ModeGateway:
-		gw := gateway.New(a.cfg, a.logger)
+		gw := gateway.New(a.cfg, a.logger, a.recorder)
 		if rc := a.restart; rc != nil {
 			// Adapt the coordinator's Request method into the gateway's
 			// stringly-typed trigger so the gateway package stays free
@@ -125,7 +134,7 @@ func (a *Application) Run(ctx context.Context) error {
 		// run behaves identically to a manual one (same timeout, workdir, and
 		// exit-code handling). Output streams to the daemon's stdout/stderr,
 		// which launchd captures into the Murtaugh log files.
-		gw = gw.WithScheduledRunner(newScheduledRunner(a.cfg))
+		gw = gw.WithScheduledRunner(newScheduledRunner(a.cfg, a.recorder))
 		a.logger.Info("starting Slack gateway (Socket Mode)", "config", a.configPath)
 		err := gw.Run(ctx)
 		if err != nil && ctx.Err() != nil {
@@ -236,7 +245,7 @@ func (a *Application) WithConfigWatchPaths(paths []string) *Application {
 
 // buildRegistry wires every tool Murtaugh ships with. New tools must be
 // registered here so they appear in both the CLI and MCP frontends.
-func buildRegistry(cfg config.Config, configPath, version string) *tools.Registry {
+func buildRegistry(cfg config.Config, configPath, version string, recorder journal.Recorder) *tools.Registry {
 	reg := tools.NewRegistry()
 	reg.Register(ping.New())
 
@@ -244,7 +253,7 @@ func buildRegistry(cfg config.Config, configPath, version string) *tools.Registr
 		j, ok := cfg.Jobs[name]
 		return j, ok
 	}
-	reg.Register(run.New(jobsLookup).WithDelegator(newJobDelegator(cfg)))
+	reg.Register(run.New(jobsLookup).WithDelegator(newJobDelegator(cfg)).WithRecorder(recorder))
 
 	jobsPath := func() string {
 		baseDir := cfg.BaseDir
@@ -325,12 +334,12 @@ func newJobDelegator(cfg config.Config) run.AgentDelegator {
 // frontends use (streaming child output to the process stdout/stderr, which
 // launchd captures), and maps a non-zero exit code onto an error so the
 // gateway logs the run as failed.
-func newScheduledRunner(cfg config.Config) gateway.ScheduledRunner {
+func newScheduledRunner(cfg config.Config, recorder journal.Recorder) gateway.ScheduledRunner {
 	lookup := func(name string) (config.JobProfile, bool) {
 		j, ok := cfg.Jobs[name]
 		return j, ok
 	}
-	runTool := run.New(lookup).WithDelegator(newJobDelegator(cfg))
+	runTool := run.New(lookup).WithDelegator(newJobDelegator(cfg)).WithRecorder(recorder)
 	return func(ctx context.Context, name string) error {
 		result, err := runTool.Invoke(ctx, map[string]any{"name": name})
 		if err != nil {

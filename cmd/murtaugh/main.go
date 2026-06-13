@@ -19,10 +19,12 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/app"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/help"
+	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 )
 
 var version = "dev"
@@ -79,10 +81,16 @@ func run(rawArgs []string) error {
 
 	logger := newLogger(cfg.Configuration.Debug, mode)
 
+	// The journal records agent-facing domain events (gateway interactions, job
+	// runs). It is opened here so its drain-on-shutdown is tied to process exit;
+	// a failure to open degrades to a no-op recorder rather than blocking start.
+	recorder, closeJournal := newJournalRecorder(cfg, mode, rest, logger)
+	defer closeJournal()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	application := app.New(mode, rest, cfg, configPath, version, logger)
+	application := app.New(mode, rest, cfg, configPath, version, logger, recorder)
 	// The Slack gateway is the only long-running mode that needs a
 	// user-triggered restart path. stop is reused as the cancel hook so
 	// the coordinator's shutdown looks identical to a SIGTERM from the
@@ -176,6 +184,35 @@ func helpRequest(args []string) ([]string, bool) {
 		return tokens, true
 	}
 	return nil, false
+}
+
+// newJournalRecorder opens the event journal and returns a recorder plus a
+// cleanup that drains and closes it. It degrades to a no-op (with a no-op
+// cleanup) for setup invocations — which run before a valid config exists — and
+// whenever the store cannot be opened, so journaling never blocks startup. The
+// caller must invoke the returned cleanup before exit so buffered events flush.
+func newJournalRecorder(cfg config.Config, mode app.Mode, rest []string, logger *slog.Logger) (journal.Recorder, func()) {
+	if isSetupInvocation(mode, rest) {
+		return journal.NopRecorder{}, func() {}
+	}
+	path := cfg.Journal.EffectivePath()
+	store, err := journal.Open(path, cfg.Journal.RetentionByStream())
+	if err != nil {
+		logger.Warn("journal disabled: could not open event store", "path", path, "error", err)
+		return journal.NopRecorder{}, func() {}
+	}
+	recorder := journal.NewRecorder(store, cfg.Journal.EnabledStreams(), logger)
+	cleanup := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := recorder.Close(ctx); err != nil {
+			logger.Warn("journal recorder did not drain cleanly", "error", err)
+		}
+		if err := store.Close(); err != nil {
+			logger.Warn("journal store close failed", "error", err)
+		}
+	}
+	return recorder, cleanup
 }
 
 // isSetupInvocation reports whether the CLI was asked to run a setup.* tool.
