@@ -39,15 +39,16 @@ func newSessionLogger(recorder journal.Recorder, blobDir string, logger *slog.Lo
 
 // sessionTurn is one completed ACP chat turn to record.
 type sessionTurn struct {
-	req       ChatRequest
-	agent     string
-	sessionID string
-	prompt    string
-	response  string
-	outcome   string
-	duration  time.Duration
-	chunks    int
-	bytes     int
+	req        ChatRequest
+	agent      string
+	sessionID  string
+	prompt     string
+	response   string
+	outcome    string
+	stopReason string
+	duration   time.Duration
+	chunks     int
+	bytes      int
 }
 
 // record writes the transcript blob (best-effort) and the journal row. A blob
@@ -95,6 +96,7 @@ func (s *sessionLogger) record(ctx context.Context, t sessionTurn) {
 			"agent":       t.agent,
 			"source":      t.req.Source,
 			"outcome":     t.outcome,
+			"stop_reason": t.stopReason,
 			"duration_ms": t.duration.Milliseconds(),
 			"chunks":      t.chunks,
 			"bytes":       t.bytes,
