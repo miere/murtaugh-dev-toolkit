@@ -15,6 +15,7 @@ import (
 const defaultRelativePath = ".config/murtaugh/slack.yaml"
 const defaultAgentsRelativePath = ".config/murtaugh/agents.yaml"
 const defaultJobsRelativePath = ".config/murtaugh/jobs.yaml"
+const defaultJournalRelativePath = ".config/murtaugh/journal.yaml"
 
 type Config struct {
 	BaseDir       string                        `yaml:"-"`
@@ -24,6 +25,7 @@ type Config struct {
 	ACP           ACPConfig                     `yaml:"-"`
 	Agents        map[string]AgentProfile       `yaml:"-"`
 	Jobs          map[string]JobProfile         `yaml:"-"`
+	Journal       JournalConfig                 `yaml:"-"`
 	Commands      []CommandConfig               `yaml:"commands"`
 	WorkflowRules map[string]WorkflowRuleConfig `yaml:"workflow-rules"`
 	UnfurlRules   map[string]UnfurlRuleConfig   `yaml:"unfurl-rules"`
@@ -242,6 +244,14 @@ func DefaultJobsPath() (string, error) {
 	return filepath.Join(home, defaultJobsRelativePath), nil
 }
 
+func DefaultJournalPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home: %w", err)
+	}
+	return filepath.Join(home, defaultJournalRelativePath), nil
+}
+
 func Load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -283,6 +293,20 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("read jobs config %q: %w", jobsPath, err)
 	}
 
+	journalPath := filepath.Join(cfg.BaseDir, "journal.yaml")
+	journalData, err := os.ReadFile(journalPath)
+	if err == nil {
+		var journal struct {
+			Journal JournalConfig `yaml:"journal"`
+		}
+		if err := yaml.Unmarshal(journalData, &journal); err != nil {
+			return Config{}, fmt.Errorf("parse journal config %q: %w", journalPath, err)
+		}
+		cfg.Journal = journal.Journal
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Config{}, fmt.Errorf("read journal config %q: %w", journalPath, err)
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -309,6 +333,9 @@ func (c Config) Validate() error {
 		if !strings.HasPrefix(strings.TrimSpace(command.Name), "/") {
 			errs = append(errs, fmt.Errorf("commands[%d].name must start with /", i))
 		}
+	}
+	if err := c.Journal.Validate(); err != nil {
+		errs = append(errs, err)
 	}
 	for i, allowed := range c.Configuration.AllowedUsers {
 		if strings.TrimSpace(allowed) == "" {

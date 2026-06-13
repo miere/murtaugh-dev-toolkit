@@ -80,6 +80,7 @@ func BootstrapWithReport(configPath string) (BootstrapReport, error) {
 		{"slack.yaml", configPath},
 		{"agents.yaml", filepath.Join(baseDir, "agents.yaml")},
 		{"jobs.yaml", filepath.Join(baseDir, "jobs.yaml")},
+		{"journal.yaml", filepath.Join(baseDir, "journal.yaml")},
 	}
 	for _, name := range optionalBootstrapDocs {
 		plan = append(plan, struct{ src, dst string }{name, filepath.Join(baseDir, name)})

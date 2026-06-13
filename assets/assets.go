@@ -8,5 +8,5 @@ import "embed"
 // and cli-help.md (the canonical CLI/MCP command reference surfaced by
 // `murtaugh help`). Both templates and skills are embedded recursively.
 //
-//go:embed slack.yaml agents.yaml jobs.yaml cli-help.md templates skills
+//go:embed slack.yaml agents.yaml jobs.yaml journal.yaml cli-help.md templates skills
 var FS embed.FS

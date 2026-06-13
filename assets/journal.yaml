@@ -1,0 +1,50 @@
+# Journal configuration for Murtaugh.
+#
+# The journal is Murtaugh's agent-facing event store: a structured, queryable
+# record of what happened, kept so an AI agent can read it back and reason about
+# it. It is separate from ordinary logging (which still goes to stderr / the
+# launchd log files): logs are for a human tailing the daemon, the journal is
+# for an agent answering questions like "why did this workflow fail?".
+#
+# Inspect it with the `journal.*` tools (CLI and MCP):
+#   murtaugh journal query --stream gateway --level error --since 1h
+#   murtaugh journal stats
+#   murtaugh journal prune
+#
+# Events are grouped into independent streams, each enabled and retained on its
+# own. Every stream is ON by default; an absent journal.yaml keeps them all on
+# with the default retentions below. Set `enabled: false` on a stream to opt it
+# out. Changes apply on the next gateway restart.
+
+journal:
+  # Where the SQLite database lives. Defaults to
+  # $XDG_STATE_HOME/murtaugh/journal.db (i.e. ~/.local/state/murtaugh/journal.db).
+  # path: ~/.local/state/murtaugh/journal.db
+
+  # Directory for large bodies stored outside the database (e.g. full ACP
+  # session transcripts in a later release). Defaults beside the database.
+  # blob_dir: ~/.local/state/murtaugh/journal-blobs
+
+  streams:
+    # Gateway Debug Mode: workflow rules, unfurls, slash commands, scheduled
+    # jobs. On by default so the events are already there when a user asks the
+    # bot why something misbehaved. Set false to opt out.
+    gateway:
+      enabled: true
+      retention: 168h    # 7d
+
+    # Job execution (murtaugh jobs run, scheduled or manual).
+    job:
+      enabled: true
+      retention: 720h    # 30d
+
+    # Persistent ACP chat session logs. The config slot exists now; recording is
+    # wired in a later release.
+    acp_session:
+      enabled: true
+      retention: 2160h   # 90d
+
+  sweep:
+    # How often the gateway prunes events past their retention. The sweeper also
+    # runs once at startup.
+    every: 24h
