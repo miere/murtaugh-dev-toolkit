@@ -84,7 +84,7 @@ func run(rawArgs []string) error {
 	// The journal records agent-facing domain events (gateway interactions, job
 	// runs). It is opened here so its drain-on-shutdown is tied to process exit;
 	// a failure to open degrades to a no-op recorder rather than blocking start.
-	recorder, closeJournal := newJournalRecorder(cfg, mode, rest, logger)
+	store, recorder, closeJournal := openJournal(cfg, mode, rest, logger)
 	defer closeJournal()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -105,6 +105,21 @@ func run(rawArgs []string) error {
 			application = application.WithResumeMarkerPath(path)
 		}
 		application = application.WithConfigWatchPaths(defaultConfigWatchPaths(configPath))
+		// The daemon is the single writer, so the retention sweep runs here,
+		// reusing the recorder's store (Prune serializes with the writer on the
+		// one connection). The journal.prune tool is the manual equivalent.
+		if store != nil {
+			application = application.WithJournalSweeper(func(ctx context.Context) error {
+				res, err := store.Prune(ctx, time.Now())
+				if err != nil {
+					return err
+				}
+				if res.Total > 0 {
+					logger.Info("journal swept old events", "removed", res.Total, "by_stream", res.Removed)
+				}
+				return nil
+			}, cfg.Journal.EffectiveSweepEvery())
+		}
 	}
 	if mode == app.ModeCLI && len(rest) == 0 {
 		return errors.New(application.UsageLine())
@@ -186,20 +201,22 @@ func helpRequest(args []string) ([]string, bool) {
 	return nil, false
 }
 
-// newJournalRecorder opens the event journal and returns a recorder plus a
-// cleanup that drains and closes it. It degrades to a no-op (with a no-op
-// cleanup) for setup invocations — which run before a valid config exists — and
-// whenever the store cannot be opened, so journaling never blocks startup. The
-// caller must invoke the returned cleanup before exit so buffered events flush.
-func newJournalRecorder(cfg config.Config, mode app.Mode, rest []string, logger *slog.Logger) (journal.Recorder, func()) {
+// openJournal opens the event journal and returns the store, a recorder, and a
+// cleanup that drains and closes them. The store is returned so the gateway can
+// reuse it for the retention sweep (the daemon is the single writer). It
+// degrades to a nil store + no-op recorder (with a no-op cleanup) for setup
+// invocations — which run before a valid config exists — and whenever the store
+// cannot be opened, so journaling never blocks startup. The caller must invoke
+// the returned cleanup before exit so buffered events flush.
+func openJournal(cfg config.Config, mode app.Mode, rest []string, logger *slog.Logger) (*journal.Store, journal.Recorder, func()) {
 	if isSetupInvocation(mode, rest) {
-		return journal.NopRecorder{}, func() {}
+		return nil, journal.NopRecorder{}, func() {}
 	}
 	path := cfg.Journal.EffectivePath()
 	store, err := journal.Open(path, cfg.Journal.RetentionByStream())
 	if err != nil {
 		logger.Warn("journal disabled: could not open event store", "path", path, "error", err)
-		return journal.NopRecorder{}, func() {}
+		return nil, journal.NopRecorder{}, func() {}
 	}
 	recorder := journal.NewRecorder(store, cfg.Journal.EnabledStreams(), logger)
 	cleanup := func() {
@@ -212,7 +229,7 @@ func newJournalRecorder(cfg config.Config, mode app.Mode, rest []string, logger 
 			logger.Warn("journal store close failed", "error", err)
 		}
 	}
-	return recorder, cleanup
+	return store, recorder, cleanup
 }
 
 // isSetupInvocation reports whether the CLI was asked to run a setup.* tool.

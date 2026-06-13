@@ -33,6 +33,9 @@ func TestRegistry_ContainsAllExpectedTools(t *testing.T) {
 		{"setup.mcp-register", []string{"client", "binary_path"}},
 		{"setup.launchd", []string{"binary_path"}},
 		{"setup.update", []string{}},
+		{"journal.query", []string{}},
+		{"journal.stats", nil},
+		{"journal.prune", nil},
 	}
 
 	for _, c := range cases {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -87,6 +88,32 @@ func TestUnfurlHandlerRecordsNoMatch(t *testing.T) {
 	if len(rec.byKind("unfurl.post")) != 0 {
 		t.Fatalf("did not expect an unfurl.post with no matches")
 	}
+}
+
+func TestJournalSweeperRunsAtStartup(t *testing.T) {
+	var calls atomic.Int32
+	app := &Gateway{
+		logger:            discardLogger(),
+		journalSweep:      func(context.Context) error { calls.Add(1); return nil },
+		journalSweepEvery: time.Hour, // long, so only the startup sweep fires within the test
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app.startJournalSweeper(ctx)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && calls.Load() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if calls.Load() == 0 {
+		t.Fatal("expected a startup sweep")
+	}
+}
+
+func TestJournalSweeperNoopWhenUnset(t *testing.T) {
+	// A Gateway with no sweep wired must not start a goroutine or panic.
+	app := &Gateway{logger: discardLogger()}
+	app.startJournalSweeper(context.Background())
 }
 
 func TestHandleInteractiveRecordsIngress(t *testing.T) {

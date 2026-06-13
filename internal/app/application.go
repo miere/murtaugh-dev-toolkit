@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
@@ -24,6 +25,9 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/jobs/define"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/jobs/run"
+	journalprune "github.com/miere/murtaugh-dev-toolkit/internal/tools/journal/prune"
+	journalquery "github.com/miere/murtaugh-dev-toolkit/internal/tools/journal/query"
+	journalstats "github.com/miere/murtaugh-dev-toolkit/internal/tools/journal/stats"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/ping"
 	setupagents "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/agents"
 	setupbootstrap "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/bootstrap"
@@ -76,6 +80,11 @@ type Application struct {
 	// (jobs.run) and the gateway domains. Never nil: main passes a no-op
 	// recorder when the journal is disabled or could not be opened.
 	recorder journal.Recorder
+	// journalSweep runs one retention pass over the journal; journalSweepEvery
+	// is its cadence. Only the gateway path consumes them (the daemon is the
+	// single writer that may delete). nil disables the sweeper.
+	journalSweep      func(context.Context) error
+	journalSweepEvery time.Duration
 }
 
 // New constructs an Application for the given mode. cfg/configPath/logger
@@ -135,6 +144,9 @@ func (a *Application) Run(ctx context.Context) error {
 		// exit-code handling). Output streams to the daemon's stdout/stderr,
 		// which launchd captures into the Murtaugh log files.
 		gw = gw.WithScheduledRunner(newScheduledRunner(a.cfg, a.recorder))
+		if a.journalSweep != nil {
+			gw = gw.WithJournalSweeper(a.journalSweep, a.journalSweepEvery)
+		}
 		a.logger.Info("starting Slack gateway (Socket Mode)", "config", a.configPath)
 		err := gw.Run(ctx)
 		if err != nil && ctx.Err() != nil {
@@ -243,6 +255,15 @@ func (a *Application) WithConfigWatchPaths(paths []string) *Application {
 	return a
 }
 
+// WithJournalSweeper attaches the retention sweep (one pass) and its cadence,
+// consumed only by the gateway path. Empty/nil disables the sweeper. Returns
+// the receiver for fluent wiring.
+func (a *Application) WithJournalSweeper(sweep func(context.Context) error, every time.Duration) *Application {
+	a.journalSweep = sweep
+	a.journalSweepEvery = every
+	return a
+}
+
 // buildRegistry wires every tool Murtaugh ships with. New tools must be
 // registered here so they appear in both the CLI and MCP frontends.
 func buildRegistry(cfg config.Config, configPath, version string, recorder journal.Recorder) *tools.Registry {
@@ -254,6 +275,17 @@ func buildRegistry(cfg config.Config, configPath, version string, recorder journ
 		return j, ok
 	}
 	reg.Register(run.New(jobsLookup).WithDelegator(newJobDelegator(cfg)).WithRecorder(recorder))
+
+	// Journal read/maintenance tools open the event store on demand from the
+	// configured path; one opener (carrying per-stream retention for prune)
+	// backs all three. They are how Gateway Debug Mode and admins inspect and
+	// trim the journal over CLI and MCP.
+	journalOpener := func() (*journal.Store, error) {
+		return journal.Open(cfg.Journal.EffectivePath(), cfg.Journal.RetentionByStream())
+	}
+	reg.Register(journalquery.New(journalOpener))
+	reg.Register(journalstats.New(journalOpener))
+	reg.Register(journalprune.New(journalOpener))
 
 	jobsPath := func() string {
 		baseDir := cfg.BaseDir

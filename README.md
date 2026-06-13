@@ -38,6 +38,9 @@ link unfurling, and an MCP server — all configured in two YAML files.
   template-rendered replies or arbitrary shell commands.
 - **Custom link unfurling** — replace bare URLs with rich Block Kit previews,
   powered by templates or external scripts.
+- **Gateway Debug Mode** — every gateway interaction, workflow rule, unfurl, and
+  job run is recorded as a structured event you (or an agent) can query back with
+  `journal query` to debug what happened.
 - **MCP server** — expose every tool to AI clients over JSON-RPC stdio.
 - **CLI** — call any registered tool directly from your terminal.
 
@@ -370,11 +373,38 @@ protocol; diagnostics go to stderr.
 
 ---
 
+## Gateway Debug Mode
+
+Murtaugh records what it does — gateway interactions (slash commands, button
+clicks), workflow rule matches and trigger outcomes, link unfurls, and job runs
+— as **structured events** in a local SQLite journal, so you (or the gateway
+chatbot) can ask *why did this misbehave?* and get an answer by querying rather
+than grepping logs. This is separate from the daemon's stderr logs.
+
+It is **on by default**; tune it in `journal.yaml` (per-stream `enabled` and
+`retention`, the DB `path`, and the sweep cadence). Inspect it with:
+
+```
+murtaugh journal query --stream gateway --channel C123 --since 1h --level error
+murtaugh journal query --corr-id gw_3f9c2b1a   # the whole story of one interaction
+murtaugh journal stats                         # per-stream counts and time span
+murtaugh journal prune                         # drop events past their retention
+```
+
+Every event from one interaction shares a correlation id, so the usual flow is:
+filter to find a failure, then re-query by `--corr-id` to see that interaction
+end to end. The bundled `murtaugh-journal` agent skill teaches the chatbot this
+workflow. The gateway daemon prunes past-retention events automatically (at
+startup and every `sweep.every`); `journal prune` is the manual equivalent.
+
+---
+
 ## Reference assets
 
 The `assets/` directory ships a starter `slack.yaml`, default ping/pong JSON
-payloads, and an example `unfurl/github-pr.json` template. Copy or adapt them
-to your config directory to override the built-in defaults.
+payloads, an example `unfurl/github-pr.json` template, and a `journal.yaml`
+reference. Copy or adapt them to your config directory to override the built-in
+defaults.
 
 ---
 

@@ -62,8 +62,10 @@ internal/tools/       Shared Tool interface + one package per tool.
   ping/               Health-check tool (the canonical example).
   jobs/run/           Tool `jobs.run`: execute a job defined in jobs.yaml.
   jobs/define/        Tool `jobs.define`: register a job in jobs.yaml.
+  journal/            Tools `journal.query`/`.stats`/`.prune`: inspect the event journal.
   slack/              Slack tools: send-msg, fetch-msgs, fetch-reactions, update-msg.
 internal/config/      Config schema, loading, and validation.
+internal/journal/     Event journal: SQLite store, async recorder, query/stats/prune.
 internal/slack/       Slack subsystem:
   gateway/            Socket Mode gateway, event loop, all Slack event handlers.
   client/             Slack Web API client wrapper used by the slack.* tools.
@@ -335,6 +337,43 @@ stdin and print a single JSON object on stdout.**
 
 Each `match.domain` must be registered in the Slack app's **App Unfurl Domains**
 list (max 5) or no `link_shared` event is delivered.
+
+## Event journal (`internal/journal`)
+
+The journal is the **agent-facing** record of what Murtaugh did — a structured,
+queryable event store backing Gateway Debug Mode (and, later, persistent ACP
+session logs). It is deliberately distinct from `slog`: `slog` → stderr is for a
+human tailing the daemon; the journal is for an AI agent (or admin) issuing
+filtered queries. Two lanes, never conflated.
+
+- **Store** (`store.go`) — SQLite via the pure-Go `modernc.org/sqlite` driver
+  (no CGo). One `events` table partitioned **logically** by a `stream` column
+  (`gateway`, `job`, `acp_session`); WAL + `busy_timeout` so the CLI/MCP reader
+  processes never block the daemon's single writer. Exposes `Query`, `Stats`,
+  and `Prune` (age-based, per the retention passed at `Open`).
+- **Recorder** (`recorder.go`) — the write seam every domain package depends on.
+  `AsyncRecorder` never blocks the caller: `Record` enqueues onto a bounded
+  buffer and a single goroutine drains it in batched transactions (the
+  single-writer model SQLite wants). A disabled stream or a full buffer **drops**
+  (surfacing the count) rather than waiting — observability must not backpressure
+  a Slack turn. `NopRecorder` backs disabled streams so call sites never branch.
+- **Correlation** (`context.go`) — the gateway mints a `corr_id` at interaction
+  ingress and carries it on the context; the workflow engine and unfurl handler
+  stamp it on their events, so every event from one interaction ties together.
+- **Recording points** — `workflow.Engine` (match / no-match / per-trigger
+  outcome), the unfurl handler (`unfurl.*`), the gateway ingress (`slash.command`,
+  `interactive.received`), and `jobs.run` (`job.run`, the `job` stream). All take
+  a `journal.Recorder`, defaulting to no-op.
+- **Lifecycle & sweeper** — `main` opens the store and builds the recorder for
+  non-setup invocations (fail-soft: a store that can't open degrades to no-op and
+  logs a warning), draining on shutdown. The daemon (single writer) runs the
+  retention **sweeper** in `Gateway.startJournalSweeper` — once at startup and
+  every `journal.yaml` `sweep.every` — reusing that same store; `journal.prune`
+  is the manual equivalent.
+- **Config** — `journal.yaml` (a sibling of `agents.yaml`/`jobs.yaml`, loaded by
+  `config.Load`): per-stream `enabled` (a `*bool` so streams default on and opt
+  out with `enabled: false`) and `retention`, plus the DB `path` and `sweep`
+  cadence. See `internal/config/journal.go`.
 
 ## Assets and embedding (`internal/../assets`)
 
