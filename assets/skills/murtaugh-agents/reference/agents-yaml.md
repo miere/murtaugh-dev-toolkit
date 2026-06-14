@@ -39,7 +39,7 @@ applies when the field is omitted (the bootstrapped file ships tuned values).
 | `stream_append_interval` | `250ms` | How often buffered chunks are flushed to Slack. |
 | `stream_min_chunk_chars` | `24` | Minimum characters before a chunk is flushed (avoids choppy edits). |
 | `cancel_grace_period` | `2s` | After asking the agent to cancel, how long to let trailing chunks flush before hard-cancelling. |
-| `progress_display` | `simplified` | How tool/step progress renders while a turn streams: `simplified` (a single, last-write-wins status line that resolves to a check) or `tasks` (the full multi-card plan). Per-agent profiles can override it. |
+| `progress_display` | `simplified` | How tool/step progress renders while a turn streams: `simplified` (one small context-line message — "Reading file…" — that updates in place as the agent works and resolves to "✓ Done thinking" when the turn ends) or `tasks` (the full multi-card plan woven into the reply). Per-agent profiles can override it. |
 
 ## `agents` profiles
 

@@ -140,6 +140,11 @@ func (w *TaskCardWriter) resolveTitle(taskID, title string) string {
 	return defaultTaskTitle
 }
 
+// Finish is a no-op: task cards live in the answer stream and are resolved by
+// finalizeTasks, so there is no side-channel message to tear down. It exists to
+// satisfy progressRenderer alongside StatusLineWriter.
+func (w *TaskCardWriter) Finish(context.Context) error { return nil }
+
 // UpdateFromEvent maps an ACP task event to a Slack task update and sends it.
 func (w *TaskCardWriter) UpdateFromEvent(ctx context.Context, event *acp.TaskEvent) error {
 	if event == nil {

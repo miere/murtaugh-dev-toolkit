@@ -10,65 +10,99 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
 )
 
-func TestStatusLineWriterEmitsSingleCardNoPlan(t *testing.T) {
-	api := &fakeStreamAPI{}
-	streamer := NewStreamWriter(api, "C1", StreamWriterOptions{Interval: time.Hour, MinChars: 5, TaskDisplayMode: slack.TaskDisplayModeTimeline})
-	writer := NewStatusLineWriter(api, streamer, time.Hour, nil)
+// fakeStatusMessenger records the post/update/delete calls StatusLineWriter
+// makes so tests can assert the single-message, last-write-wins lifecycle.
+type fakeStatusMessenger struct {
+	posts   int
+	updates int
 
-	if err := writer.UpdateFromEvent(context.Background(), &acp.TaskEvent{ID: "abc", Title: "Reading file…"}); err != nil {
-		t.Fatalf("UpdateFromEvent returned error: %v", err)
-	}
-	if api.appends != 0 || len(api.startOptions) != 1 {
-		t.Fatalf("expected one stream start, no appends, got appends=%d starts=%d", api.appends, len(api.startOptions))
-	}
-	chunks, err := extractChunksFromOptions(api.startOptions[0]...)
+	postChannel   string
+	postThreadTS  string
+	postOptions   []slack.MsgOption
+	updateTS      string
+	updateOptions []slack.MsgOption
+}
+
+func (f *fakeStatusMessenger) PostMessageContext(_ context.Context, channelID string, options ...slack.MsgOption) (string, string, error) {
+	f.posts++
+	f.postChannel = channelID
+	f.postOptions = options
+	f.postThreadTS = optionValue(options, "thread_ts")
+	return channelID, "status-ts", nil
+}
+
+func (f *fakeStatusMessenger) UpdateMessageContext(_ context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error) {
+	f.updates++
+	f.updateTS = timestamp
+	f.updateOptions = options
+	return channelID, timestamp, "", nil
+}
+
+// optionValue applies the message options and returns one of the url.Values
+// they set (e.g. "text", "thread_ts"). Blocks live on a separate config field
+// not exposed here, so block structure is asserted via statusContextBlock.
+func optionValue(options []slack.MsgOption, key string) string {
+	_, values, err := slack.UnsafeApplyMsgOptions("xoxb-test", "C1", "https://slack.com/api", options...)
 	if err != nil {
-		t.Fatalf("extract chunks: %v", err)
+		return ""
 	}
-	// Simplified mode never opens a Plan block — a single bare task card only.
-	if got := planChunks(chunks); len(got) != 0 {
-		t.Fatalf("expected no plan_update chunk, got %+v", got)
+	return values.Get(key)
+}
+
+func TestStatusContextBlockShape(t *testing.T) {
+	block, ok := statusContextBlock("Reading file…").(*slack.ContextBlock)
+	if !ok {
+		t.Fatalf("expected a *slack.ContextBlock")
 	}
-	tasks := taskChunks(chunks)
-	if len(tasks) != 1 {
-		t.Fatalf("expected one task_update chunk, got %d", len(tasks))
+	if len(block.ContextElements.Elements) != 1 {
+		t.Fatalf("expected one element, got %d", len(block.ContextElements.Elements))
 	}
-	if tasks[0].ID != statusLineTaskID || tasks[0].Title != "Reading file…" || tasks[0].Status != slack.TaskCardStatusInProgress {
-		t.Fatalf("unexpected chunk: %+v", tasks[0])
+	text, ok := block.ContextElements.Elements[0].(*slack.TextBlockObject)
+	if !ok {
+		t.Fatalf("expected a plain_text element, got %T", block.ContextElements.Elements[0])
+	}
+	if text.Type != slack.PlainTextType || text.Text != "Reading file…" {
+		t.Fatalf("unexpected text object: %+v", text)
+	}
+	if text.Emoji == nil || !*text.Emoji {
+		t.Fatalf("expected emoji:true on the plain_text element, got %v", text.Emoji)
 	}
 }
 
-func TestStatusLineWriterReusesOneIDLastWriteWins(t *testing.T) {
-	api := &fakeStreamAPI{}
-	streamer := NewStreamWriter(api, "C1", StreamWriterOptions{Interval: time.Hour, MinChars: 5})
-	// interval 0 → default; use a tiny interval so the second update is not throttled.
-	writer := NewStatusLineWriter(api, streamer, time.Nanosecond, nil)
+func TestStatusLineWriterPostsThenUpdatesSameMessage(t *testing.T) {
+	msg := &fakeStatusMessenger{}
+	writer := NewStatusLineWriter(msg, "C1", "thread-1", time.Nanosecond, nil)
 	ctx := context.Background()
 
-	// Two different ACP task ids must collapse onto the one status-line id, so the
-	// second write overwrites the first card rather than stacking a new one.
 	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "task-1", Title: "Reading"}); err != nil {
 		t.Fatalf("first update: %v", err)
 	}
 	time.Sleep(time.Millisecond)
+	// A second event with a different ACP task id must edit the same message in
+	// place — one line, last-write-wins — not post a new one.
 	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "task-2", Title: "Writing"}); err != nil {
 		t.Fatalf("second update: %v", err)
 	}
-	startChunks, _ := extractChunksFromOptions(api.startOptions[0]...)
-	if id := taskChunks(startChunks)[0].ID; id != statusLineTaskID {
-		t.Fatalf("first card id = %q, want %q", id, statusLineTaskID)
+	if msg.posts != 1 || msg.updates != 1 {
+		t.Fatalf("expected one post + one in-place update, got posts=%d updates=%d", msg.posts, msg.updates)
 	}
-	appendChunks, _ := extractChunksFromOptions(api.appendOptions[len(api.appendOptions)-1]...)
-	second := taskChunks(appendChunks)
-	if len(second) != 1 || second[0].ID != statusLineTaskID || second[0].Title != "Writing" {
-		t.Fatalf("expected the same id with the latest title, got %+v", second)
+	if msg.postChannel != "C1" || msg.postThreadTS != "thread-1" {
+		t.Fatalf("expected post to C1 in thread-1, got channel=%q thread=%q", msg.postChannel, msg.postThreadTS)
+	}
+	if msg.updateTS != "status-ts" {
+		t.Fatalf("expected the update to target the posted ts, got %q", msg.updateTS)
+	}
+	if got := optionValue(msg.postOptions, "text"); got != "Reading" {
+		t.Fatalf("post fallback text = %q, want Reading", got)
+	}
+	if got := optionValue(msg.updateOptions, "text"); got != "Writing" {
+		t.Fatalf("update fallback text = %q, want Writing (last write wins)", got)
 	}
 }
 
-func TestStatusLineWriterThrottlesInProgress(t *testing.T) {
-	api := &fakeStreamAPI{}
-	streamer := NewStreamWriter(api, "C1", StreamWriterOptions{Interval: time.Hour, MinChars: 5})
-	writer := NewStatusLineWriter(api, streamer, time.Hour, nil)
+func TestStatusLineWriterThrottles(t *testing.T) {
+	msg := &fakeStatusMessenger{}
+	writer := NewStatusLineWriter(msg, "C1", "", time.Hour, nil)
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
@@ -76,49 +110,88 @@ func TestStatusLineWriterThrottlesInProgress(t *testing.T) {
 			t.Fatalf("update %d: %v", i, err)
 		}
 	}
-	// First write starts the stream; the rest fall inside the one-hour window.
-	if len(api.startOptions) != 1 || api.appends != 0 {
-		t.Fatalf("expected a single throttled write, got starts=%d appends=%d", len(api.startOptions), api.appends)
+	if msg.posts != 1 || msg.updates != 0 {
+		t.Fatalf("expected a single throttled post, got posts=%d updates=%d", msg.posts, msg.updates)
 	}
 }
 
-func TestStatusLineWriterCompleteResolvesOnceWithLatestTitle(t *testing.T) {
-	api := &fakeStreamAPI{}
-	streamer := NewStreamWriter(api, "C1", StreamWriterOptions{Interval: time.Hour, MinChars: 5})
-	writer := NewStatusLineWriter(api, streamer, time.Hour, nil)
+func TestStatusLineWriterFinishResolvesOnce(t *testing.T) {
+	msg := &fakeStatusMessenger{}
+	writer := NewStatusLineWriter(msg, "C1", "", time.Hour, nil)
 	ctx := context.Background()
 
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "t", Title: "Reading file…"}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "t", Title: "Reading"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	// finalizeTasks may call Complete once per still-running task; only the first
-	// must reach Slack, and it reuses the last title since Complete carries none.
-	if err := writer.Complete(ctx, "t", ""); err != nil {
-		t.Fatalf("first complete: %v", err)
+	if err := writer.Finish(ctx); err != nil {
+		t.Fatalf("finish: %v", err)
 	}
-	if err := writer.Complete(ctx, "other", ""); err != nil {
-		t.Fatalf("second complete: %v", err)
+	if err := writer.Finish(ctx); err != nil {
+		t.Fatalf("second finish: %v", err)
 	}
-	if api.appends != 1 {
-		t.Fatalf("expected exactly one terminal write, got appends=%d", api.appends)
+	// Finish edits the posted message once to the done line; the second is a no-op.
+	if msg.posts != 1 || msg.updates != 1 || msg.updateTS != "status-ts" {
+		t.Fatalf("expected one resolving edit of the posted message, got posts=%d updates=%d ts=%q", msg.posts, msg.updates, msg.updateTS)
 	}
-	chunks, _ := extractChunksFromOptions(api.appendOptions[0]...)
-	tasks := taskChunks(chunks)
-	if len(tasks) != 1 || tasks[0].Status != slack.TaskCardStatusComplete || tasks[0].Title != "Reading file…" {
-		t.Fatalf("expected single complete card with the last title, got %+v", tasks)
+	if got := optionValue(msg.updateOptions, "text"); got != statusLineDoneText {
+		t.Fatalf("expected the message resolved to %q, got %q", statusLineDoneText, got)
+	}
+}
+
+func TestStatusLineWriterFinishWithoutPostIsNoop(t *testing.T) {
+	msg := &fakeStatusMessenger{}
+	writer := NewStatusLineWriter(msg, "C1", "", time.Hour, nil)
+	if err := writer.Finish(context.Background()); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	// No task events → no message → nothing to resolve.
+	if msg.posts != 0 || msg.updates != 0 {
+		t.Fatalf("expected no writes when nothing was posted, got posts=%d updates=%d", msg.posts, msg.updates)
+	}
+}
+
+func TestStatusLineWriterSuppressesUpdatesAfterFinish(t *testing.T) {
+	msg := &fakeStatusMessenger{}
+	writer := NewStatusLineWriter(msg, "C1", "", time.Nanosecond, nil)
+	ctx := context.Background()
+
+	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "t", Title: "Reading"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if err := writer.Finish(ctx); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	time.Sleep(time.Millisecond)
+	// A late event after the message has resolved must not overwrite the done line.
+	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "t", Title: "Late"}); err != nil {
+		t.Fatalf("late update: %v", err)
+	}
+	if msg.posts != 1 || msg.updates != 1 {
+		t.Fatalf("expected only the resolving edit after finish, got posts=%d updates=%d", msg.posts, msg.updates)
+	}
+	if got := optionValue(msg.updateOptions, "text"); got != statusLineDoneText {
+		t.Fatalf("expected the line to stay resolved at %q, got %q", statusLineDoneText, got)
 	}
 }
 
 func TestStatusLineWriterDefaultsBlankTitle(t *testing.T) {
-	api := &fakeStreamAPI{}
-	streamer := NewStreamWriter(api, "C1", StreamWriterOptions{Interval: time.Hour, MinChars: 5})
-	writer := NewStatusLineWriter(api, streamer, time.Hour, nil)
-
+	msg := &fakeStatusMessenger{}
+	writer := NewStatusLineWriter(msg, "C1", "", time.Hour, nil)
 	if err := writer.UpdateFromEvent(context.Background(), &acp.TaskEvent{ID: "t"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	chunks, _ := extractChunksFromOptions(api.startOptions[0]...)
-	if title := taskChunks(chunks)[0].Title; title != defaultStatusLineTitle {
-		t.Fatalf("expected default title %q, got %q", defaultStatusLineTitle, title)
+	if got := optionValue(msg.postOptions, "text"); got != defaultStatusLineTitle {
+		t.Fatalf("expected default title %q, got %q", defaultStatusLineTitle, got)
+	}
+}
+
+func TestStatusLineWriterNilMessengerNoOp(t *testing.T) {
+	writer := NewStatusLineWriter(nil, "C1", "", time.Hour, nil)
+	ctx := context.Background()
+	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "t", Title: "x"}); err != nil {
+		t.Fatalf("update with nil messenger should be a no-op, got %v", err)
+	}
+	if err := writer.Finish(ctx); err != nil {
+		t.Fatalf("finish with nil messenger should be a no-op, got %v", err)
 	}
 }
