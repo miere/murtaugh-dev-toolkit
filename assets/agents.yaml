@@ -9,9 +9,9 @@ acp:
   stream_final_feedback: false
   cancel_grace_period: 2s
   # progress_display: how tool/step progress renders while a turn streams.
-  # "simplified" (default) collapses it into one last-write-wins status line
-  # that resolves to a check; "tasks" keeps the full multi-card plan. Per-agent
-  # profiles may override it.
+  # "simplified" (default) shows one small context-line message that updates in
+  # place as the agent works and resolves to "✓ Done thinking" at the end;
+  # "tasks" keeps the full multi-card plan. Per-agent profiles may override it.
   progress_display: simplified
 
 agents:

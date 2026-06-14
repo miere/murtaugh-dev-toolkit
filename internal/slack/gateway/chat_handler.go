@@ -64,6 +64,10 @@ type ChatHandler struct {
 	// progressDisplay resolves the per-agent progress rendering. nil defaults
 	// every agent to the simplified single-line view.
 	progressDisplay func(agent string) config.ProgressDisplay
+	// statusMessenger lets the simplified renderer post/edit/delete its own
+	// context-block message. nil makes the simplified line a no-op (tests that
+	// do not wire Slack); the gateway always supplies it in production.
+	statusMessenger statusMessenger
 }
 
 type ChatRequest struct {
@@ -116,6 +120,14 @@ func (h *ChatHandler) WithProgressDisplay(resolve func(agent string) config.Prog
 	return h
 }
 
+// WithStatusMessenger wires the Slack surface the simplified progress renderer
+// uses to manage its own context-block message. Returns the handler for
+// chaining. nil leaves the simplified line a no-op.
+func (h *ChatHandler) WithStatusMessenger(m statusMessenger) *ChatHandler {
+	h.statusMessenger = m
+	return h
+}
+
 // resolveProgressDisplay returns the configured mode for the agent, defaulting
 // to simplified when no resolver is wired or it returns an empty value.
 func (h *ChatHandler) resolveProgressDisplay(agent string) config.ProgressDisplay {
@@ -128,14 +140,14 @@ func (h *ChatHandler) resolveProgressDisplay(agent string) config.ProgressDispla
 	return config.ProgressDisplaySimplified
 }
 
-// taskDisplayModeFor maps a progress mode to the Slack stream's task display
-// mode: the full task list groups cards under a Plan, the simplified line lays
-// its single card out on a Timeline so no Plan header appears.
-func taskDisplayModeFor(mode config.ProgressDisplay) slack.TaskDisplayMode {
+// newProgressRenderer builds the per-turn progress renderer for the resolved
+// mode: the full task-card plan woven into the answer stream, or the simplified
+// single context-block line in its own thread message.
+func (h *ChatHandler) newProgressRenderer(mode config.ProgressDisplay, writer *StreamWriter, channelID, threadTS string) progressRenderer {
 	if mode == config.ProgressDisplayTasks {
-		return slack.TaskDisplayModePlan
+		return NewTaskCardWriter(h.api, writer, 0, h.logger)
 	}
-	return slack.TaskDisplayModeTimeline
+	return NewStatusLineWriter(h.statusMessenger, channelID, threadTS, 0, h.logger)
 }
 
 // resetIdleTimer restarts t for another idle window, draining an already-fired
@@ -227,7 +239,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 		teamID, userID = "", ""
 	}
 	progressMode := h.resolveProgressDisplay(agentName)
-	writer := NewStreamWriter(h.api, req.ChannelID, StreamWriterOptions{ThreadTS: streamThreadTS, TeamID: teamID, UserID: userID, Interval: h.interval, MinChars: h.minChars, TaskDisplayMode: taskDisplayModeFor(progressMode), Logger: h.logger})
+	writer := NewStreamWriter(h.api, req.ChannelID, StreamWriterOptions{ThreadTS: streamThreadTS, TeamID: teamID, UserID: userID, Interval: h.interval, MinChars: h.minChars, Logger: h.logger})
 	// Safety net: guarantee the Slack stream is finalised on every exit path.
 	// Declared first so it runs last (after the interrupt handler below). The
 	// happy path and interrupt path stop the stream themselves, making this a
@@ -246,12 +258,18 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 		h.renderInterrupted(writer)
 		retErr = nil
 	}()
-	var taskWriter progressRenderer
-	if progressMode == config.ProgressDisplayTasks {
-		taskWriter = NewTaskCardWriter(h.api, writer, 0, h.logger)
-	} else {
-		taskWriter = NewStatusLineWriter(h.api, writer, 0, h.logger)
-	}
+	taskWriter := h.newProgressRenderer(progressMode, writer, req.ChannelID, streamThreadTS)
+	// Tear down any side-channel progress message (the simplified line) on every
+	// exit path — success, error, idle, or interrupt — on a fresh context since
+	// the request ctx may already be cancelled. TaskCardWriter's Finish is a
+	// no-op. Declared here so it runs before the stream-stop defers below.
+	defer func() {
+		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := taskWriter.Finish(finishCtx); err != nil {
+			h.logger.Debug("progress renderer finish failed", "error", err)
+		}
+	}()
 	if err := h.api.SetAssistantThreadsStatusContext(ctx, slack.AssistantThreadsSetStatusParameters{
 		ChannelID: req.ChannelID,
 		ThreadTS:  streamThreadTS,

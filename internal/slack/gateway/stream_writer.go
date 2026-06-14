@@ -11,15 +11,14 @@ import (
 )
 
 type StreamWriter struct {
-	api         StreamAPI
-	channelID   string
-	threadTS    string
-	teamID      string
-	userID      string
-	interval    time.Duration
-	minChars    int
-	displayMode slack.TaskDisplayMode
-	logger      *slog.Logger
+	api       StreamAPI
+	channelID string
+	threadTS  string
+	teamID    string
+	userID    string
+	interval  time.Duration
+	minChars  int
+	logger    *slog.Logger
 
 	streamChannel string
 	streamTS      string
@@ -42,11 +41,7 @@ func NewStreamWriter(api StreamAPI, channelID string, opts StreamWriterOptions) 
 	if logger == nil {
 		logger = slog.Default()
 	}
-	displayMode := opts.TaskDisplayMode
-	if displayMode == "" {
-		displayMode = slack.TaskDisplayModePlan
-	}
-	return &StreamWriter{api: api, channelID: channelID, threadTS: opts.ThreadTS, teamID: opts.TeamID, userID: opts.UserID, interval: opts.Interval, minChars: opts.MinChars, displayMode: displayMode, logger: logger}
+	return &StreamWriter{api: api, channelID: channelID, threadTS: opts.ThreadTS, teamID: opts.TeamID, userID: opts.UserID, interval: opts.Interval, minChars: opts.MinChars, logger: logger}
 }
 
 type StreamWriterOptions struct {
@@ -55,11 +50,7 @@ type StreamWriterOptions struct {
 	UserID   string
 	Interval time.Duration
 	MinChars int
-	// TaskDisplayMode controls how task_update chunks render. Empty defaults to
-	// the grouped Plan view; the simplified progress line uses Timeline so its
-	// single card stands alone without a Plan header.
-	TaskDisplayMode slack.TaskDisplayMode
-	Logger          *slog.Logger
+	Logger   *slog.Logger
 }
 
 func (w *StreamWriter) Start(ctx context.Context) error {
@@ -70,12 +61,11 @@ func (w *StreamWriter) StartWithOptions(ctx context.Context, extraOptions ...sla
 	if w.started {
 		return nil
 	}
-	// Display mode governs how task_update chunks render: Plan groups them under
-	// a single Plan block (TaskCardWriter opens it with a plan_update chunk on the
-	// first task), while Timeline lays them out as a flat sequence — which the
-	// simplified single-card progress line relies on so its card stands alone.
-	// See https://docs.slack.dev/reference/block-kit/blocks/plan-block/
-	options := []slack.MsgOption{slack.MsgOptionTaskDisplayMode(w.displayMode)}
+	// Plan mode groups every task_update chunk under a single Plan block
+	// (with a shared title) instead of stacking them as a flat timeline of
+	// separate cards. TaskCardWriter opens the plan with a plan_update chunk
+	// on the first task. See https://docs.slack.dev/reference/block-kit/blocks/plan-block/
+	options := []slack.MsgOption{slack.MsgOptionTaskDisplayMode(slack.TaskDisplayModePlan)}
 	options = append(options, extraOptions...)
 	if w.threadTS != "" {
 		options = append(options, slack.MsgOptionTS(w.threadTS))
