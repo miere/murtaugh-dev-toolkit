@@ -11,7 +11,7 @@ any file they replace.
 > `murtaugh help setup slack`) or `murtaugh setup <tool> --help` for the full
 > per-command reference.
 
-## `setup.bootstrap` — seed the workspace
+## `setup_bootstrap` — seed the workspace
 
 *Seed the Murtaugh config directory with embedded defaults.*
 
@@ -28,7 +28,7 @@ can run it by hand). What it touches:
 Returns a report of which files were **created**, **updated** (refreshed), and
 **preserved**. Run it first on a fresh install; safe to re-run any time.
 
-## `setup.slack` — write slack.yaml
+## `setup_slack` — write slack.yaml
 
 *Write slack.yaml with OAuth tokens, admin user, and the /murtaugh slash command.*
 
@@ -46,7 +46,7 @@ existing file. Re-run to rotate tokens or change the admin.
 murtaugh setup slack --app-token xapp-… --bot-token xoxb-… --admin-user @you
 ```
 
-## `setup.agents` — write agents.yaml
+## `setup_agents` — write agents.yaml
 
 *Write agents.yaml with the ACP block and an optional default agent.*
 

@@ -15,11 +15,11 @@ reason over.
 
 | Tool | Use it to… |
 |------|-----------|
-| `journal.query` | Pull events with filters (the workhorse). |
-| `journal.stats` | See per-stream row counts and time span — confirm a stream is recording. |
-| `journal.prune` | Delete events past their retention (rarely needed; the daemon sweeps automatically). |
+| `journal_query` | Pull events with filters (the workhorse). |
+| `journal_stats` | See per-stream row counts and time span — confirm a stream is recording. |
+| `journal_prune` | Delete events past their retention (rarely needed; the daemon sweeps automatically). |
 
-Over MCP the names are dotted (`journal.query`); on the CLI they are spaced
+Over MCP the names are dotted (`journal_query`); on the CLI they are spaced
 (`murtaugh journal query …`).
 
 ## Streams (what's recorded where)
@@ -27,7 +27,7 @@ Over MCP the names are dotted (`journal.query`); on the CLI they are spaced
 - **`gateway`** — everything from a Slack interaction: slash commands, button
   clicks / form submissions, workflow rules, and link unfurls. This is the GDM
   stream.
-- **`job`** — `jobs.run` executions (command or agent), with exit code/duration.
+- **`job`** — `jobs_run` executions (command or agent), with exit code/duration.
 - **`acp_session`** — chat session events (when enabled).
 
 ## The debugging move (mental model)
@@ -55,7 +55,7 @@ murtaugh journal query --corr-id gw_3f9c2b1a…
 #      "render Slack response: template execute … map has no entry for key …")
 ```
 
-If `journal.stats` shows the `gateway` stream at **0 rows**, recording is off —
+If `journal_stats` shows the `gateway` stream at **0 rows**, recording is off —
 check `journal.yaml` (`streams.gateway.enabled`) and that the daemon restarted.
 
 ## Useful filters (all optional, ANDed)

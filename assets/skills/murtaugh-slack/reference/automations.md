@@ -40,7 +40,7 @@ jobs:
 ```
 
 Define/run jobs with `murtaugh jobs define …` / `murtaugh jobs run --name <name>`
-(also exposed as MCP tools `jobs.define` / `jobs.run`). Murtaugh schedules jobs
+(also exposed as MCP tools `jobs_define` / `jobs_run`). Murtaugh schedules jobs
 itself: add `schedule:` (cron) or `every:` (interval) to the job and the
 gateway runs it automatically — see the **`murtaugh-jobs`** skill for the full
 configuration. Whatever the cadence, make every run a full reconcile so a
