@@ -1,6 +1,6 @@
 # Sending & updating messages
 
-## `slack.send-msg` — post a message
+## `slack_send-msg` — post a message
 
 *Send a message (optionally with an attachment) to a Slack channel or user.*
 
@@ -35,7 +35,7 @@ murtaugh slack send-msg --to "#dev" --body "Deploy started" \
   --blocks /path/to/card.json --thread 1700000000.000100
 ```
 
-## `slack.update-msg` — replace a message's content
+## `slack_update-msg` — replace a message's content
 
 *Update an existing message in a Slack channel.*
 

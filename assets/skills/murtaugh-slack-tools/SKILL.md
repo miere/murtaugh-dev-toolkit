@@ -2,7 +2,7 @@
 
 The programmatic way an agent or automation **acts on Slack** through Murtaugh:
 four tools to post, update, and read messages. They're exposed both on the CLI
-(`murtaugh slack <tool> …`) and over MCP (`slack.<tool>`), backed by the
+(`murtaugh slack <tool> …`) and over MCP (`slack_<tool>`), backed by the
 gateway's bot token — so a script never needs a raw Slack token of its own. Use
 these whenever a task posts a status card, edits a message in place, or reads
 recent messages/reactions.
@@ -15,10 +15,10 @@ recent messages/reactions.
 
 | Tool | Does | Key args |
 |---|---|---|
-| `slack.send-msg` | post a message (blocks or text, optional file) | `to`, `body` |
-| `slack.update-msg` | replace an existing message's content | `channel`, `ts` |
-| `slack.fetch-msgs` | read a channel or thread, oldest-first | `channel` |
-| `slack.fetch-reactions` | find messages a user reacted to with an emoji | `from`, `emoji`, `channel` |
+| `slack_send-msg` | post a message (blocks or text, optional file) | `to`, `body` |
+| `slack_update-msg` | replace an existing message's content | `channel`, `ts` |
+| `slack_fetch-msgs` | read a channel or thread, oldest-first | `channel` |
+| `slack_fetch-reactions` | find messages a user reacted to with an emoji | `from`, `emoji`, `channel` |
 
 ## Read the right file (don't load everything)
 
@@ -32,7 +32,7 @@ recent messages/reactions.
 - **CLI:** `murtaugh slack send-msg --to "#dev" --body "hi"`. Flags are the
   schema property names in kebab-case (`attachment_type` → `--attachment-type`)
   and every flag carries a value (there are no bare switches).
-- **MCP:** the same tools appear as `slack.send-msg`, `slack.fetch-msgs`, etc.;
+- **MCP:** the same tools appear as `slack_send-msg`, `slack_fetch-msgs`, etc.;
   pass the schema properties as the tool arguments.
 - **Full flag reference:** `murtaugh help slack <tool>` (e.g.
   `murtaugh help slack send-msg`) or `murtaugh slack <tool> --help` — required

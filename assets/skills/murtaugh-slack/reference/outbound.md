@@ -8,7 +8,7 @@ messages see `blocks.md`; for what happens when someone clicks, see `inbound.md`
 ## How to invoke these
 
 Murtaugh ships concrete tools for posting, updating, and reading messages —
-`slack.send-msg`, `slack.update-msg`, `slack.fetch-msgs`, `slack.fetch-reactions`
+`slack_send-msg`, `slack_update-msg`, `slack_fetch-msgs`, `slack_fetch-reactions`
 — on the CLI (`murtaugh slack <tool> …`) and over MCP. They use the gateway's bot
 token, so you never reach around Murtaugh with a raw token. **The
 `murtaugh-slack-tools` skill documents each tool's arguments**; this file covers

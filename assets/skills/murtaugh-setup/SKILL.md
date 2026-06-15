@@ -1,13 +1,13 @@
 # Skill: Murtaugh Setup & Install
 
-How to install and configure Murtaugh from scratch using the `setup.*` tools.
+How to install and configure Murtaugh from scratch using the `setup_*` tools.
 This is **operator-facing**: getting the binary in place, writing the config
 files, and (on macOS) installing the daemon. For *running and debugging* the
 daemon afterward, see the `murtaugh-operations` skill.
 
-Every `setup.*` tool is idempotent, so re-running is safe. The config writers
-(`setup.slack`, `setup.agents`, `setup.launchd`, `setup.mcp-register`) back up
-any file they replace (`<file>.bak.<timestamp>`). `setup.bootstrap` is the one
+Every `setup_*` tool is idempotent, so re-running is safe. The config writers
+(`setup_slack`, `setup_agents`, `setup_launchd`, `setup_mcp-register`) back up
+any file they replace (`<file>.bak.<timestamp>`). `setup_bootstrap` is the one
 exception that **refreshes in place**: it keeps the bundled agent skills in sync
 with the shipped binary on every run (config files and templates stay
 preserved) — see `reference/config-tools.md`.
@@ -15,15 +15,15 @@ preserved) — see `reference/config-tools.md`.
 ## Install order (the workflow)
 
 1. **Get the binary** on `PATH` (download a release, or `go build`).
-2. **`setup.bootstrap`** — seed the config dir with defaults (must run first, so
+2. **`setup_bootstrap`** — seed the config dir with defaults (must run first, so
    later steps edit real files). → `reference/config-tools.md`
-3. **`setup.slack`** — write `slack.yaml` (OAuth tokens, admin user).
-4. **`setup.agents`** — write `agents.yaml` (ACP block + an agent, or disable ACP).
-5. **`setup.launchd`** *(macOS, optional)* — install the daemon as a LaunchAgent.
+3. **`setup_slack`** — write `slack.yaml` (OAuth tokens, admin user).
+4. **`setup_agents`** — write `agents.yaml` (ACP block + an agent, or disable ACP).
+5. **`setup_launchd`** *(macOS, optional)* — install the daemon as a LaunchAgent.
    → `reference/daemon-and-clients.md`
-6. **`setup.mcp-register`** *(optional)* — register Murtaugh in an MCP client.
+6. **`setup_mcp-register`** *(optional)* — register Murtaugh in an MCP client.
 
-Later: **`setup.update`** self-updates the binary from a GitHub release.
+Later: **`setup_update`** self-updates the binary from a GitHub release.
 
 ## Read the right file (don't load everything)
 
@@ -36,13 +36,13 @@ Later: **`setup.update`** self-updates the binary from a GitHub release.
 
 ## Global guidelines (defaults — follow unless the user says otherwise)
 
-- **`setup.bootstrap` first.** It creates the workspace (`~/.config/murtaugh`)
+- **`setup_bootstrap` first.** It creates the workspace (`~/.config/murtaugh`)
   and seeds templates/skills; the other tools edit files that must already exist.
 - **`slack.yaml`/`agents.yaml` hold secrets** — they're written `0600`. Don't
   commit them or echo tokens into logs.
-- **`setup.launchd` is macOS-only**; on other platforms run the gateway under
+- **`setup_launchd` is macOS-only**; on other platforms run the gateway under
   your own supervisor (`murtaugh slack gateway`).
-- Tools run as `murtaugh setup <tool> …` on the CLI and as `setup.<tool>` over
+- Tools run as `murtaugh setup <tool> …` on the CLI and as `setup_<tool>` over
   MCP. Setup tools work **before** a valid config exists (they create it).
 - **CLI flags always carry a value — booleans included.** Write `--load true`
   and `--force true`; a bare `--load` is rejected. snake_case arg names map to

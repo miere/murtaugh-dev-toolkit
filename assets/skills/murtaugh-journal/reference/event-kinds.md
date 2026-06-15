@@ -39,7 +39,7 @@ If you see `interactive.received` but **no** `workflow.matched`, look for
 
 | kind | level | meaning / payload |
 |------|-------|-------------------|
-| `job.run` | info / error | A `jobs.run` invocation. keys: `job_name`. payload: `command` or `agent`, `duration_ms`, and `exit_code` (command jobs). A non-zero exit is recorded at **error** level; a process that failed to start carries `error`. |
+| `job.run` | info / error | A `jobs_run` invocation. keys: `job_name`. payload: `command` or `agent`, `duration_ms`, and `exit_code` (command jobs). A non-zero exit is recorded at **error** level; a process that failed to start carries `error`. |
 
 ## `acp_session` stream
 

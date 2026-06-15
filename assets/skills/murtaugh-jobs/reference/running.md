@@ -8,7 +8,7 @@ For the full per-command reference (every flag, required/optional, defaults),
 run `murtaugh help jobs run` / `murtaugh help jobs define`, or
 `murtaugh jobs <run|define> --help`.
 
-## `jobs.run` — execute a job
+## `jobs_run` — execute a job
 
 ```bash
 murtaugh jobs run --name cleanup-logs
@@ -34,7 +34,7 @@ command jobs.
 A non-zero exit is returned as the result's `exit_code` (it is not, by itself, a
 tool error). A failure to *start* the process (missing binary, etc.) is an error.
 
-## `jobs.define` — register / update a job
+## `jobs_define` — register / update a job
 
 ```bash
 murtaugh jobs define --name hourly-sync \
@@ -62,7 +62,7 @@ murtaugh jobs define --name nightly-backup \
 | Caller | How |
 |---|---|
 | You, by hand | `murtaugh jobs run --name <n>` |
-| An MCP client / agent | the `jobs.run` tool |
+| An MCP client / agent | the `jobs_run` tool |
 | A Slack workflow | a `run` trigger in `workflow-rules` (see the `murtaugh-slack` skill) |
 | The scheduler | automatically, per `schedule` / `every` (see `scheduling.md`) |
 

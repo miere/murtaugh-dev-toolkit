@@ -35,7 +35,7 @@ The first run happens one interval after the gateway starts (not immediately).
 ## How runs behave
 
 - **Same execution path as manual.** A scheduled run goes through the same
-  `jobs.run` machinery (`reference/running.md`) — same `timeout`, same
+  `jobs_run` machinery (`reference/running.md`) — same `timeout`, same
   `workdir`, same exit-code handling. Output streams to the daemon's
   stdout/stderr, which launchd captures into the Murtaugh log files.
 - **No overlap.** Each job runs in singleton mode (`LimitModeReschedule`): if a

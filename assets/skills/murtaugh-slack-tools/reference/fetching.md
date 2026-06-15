@@ -13,7 +13,7 @@ semantics. Each result message carries `ts`, `user`, `text`, optional
 > `--emoji` for reactions). Run `murtaugh help slack fetch-msgs` /
 > `murtaugh help slack fetch-reactions` for the canonical reference.
 
-## `slack.fetch-msgs` — read a channel or thread
+## `slack_fetch-msgs` — read a channel or thread
 
 *Fetch messages from a Slack channel or thread, oldest first.*
 
@@ -31,7 +31,7 @@ murtaugh slack fetch-msgs --channel "#releases" --since "2026-06-10 09:00:00"
 murtaugh slack fetch-msgs --channel C123 --thread 1700000000.000100
 ```
 
-## `slack.fetch-reactions` — find what a user reacted to
+## `slack_fetch-reactions` — find what a user reacted to
 
 *Fetch messages a specific user reacted to with a given emoji.*
 

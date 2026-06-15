@@ -15,7 +15,7 @@ exclusive** fields:
 
 | Mode | Fields set | Runs when |
 |---|---|---|
-| **manual** | neither | only when you invoke it (`jobs.run`, MCP, or a workflow) |
+| **manual** | neither | only when you invoke it (`jobs_run`, MCP, or a workflow) |
 | **cron** | `schedule:` | automatically, on a 5-field cron expression (e.g. `"0 2 * * *"`) |
 | **interval** | `every:` | automatically, on a fixed interval (e.g. `"1h"`, `"30m"`) |
 
@@ -28,7 +28,7 @@ daemon** is running — it owns the in-process scheduler.
 |---|---|
 | Defining a job's command / agent+prompt / args / workdir / timeout | `reference/configuring.md` |
 | Choosing or writing a `schedule` / `every` value | `reference/scheduling.md` |
-| Running a job by hand or wiring `jobs.run` / `jobs.define` | `reference/running.md` |
+| Running a job by hand or wiring `jobs_run` / `jobs_define` | `reference/running.md` |
 | Wanting a working `jobs.yaml` | `examples/jobs.yaml` |
 
 ## Global guidelines (defaults — follow unless the user says otherwise)

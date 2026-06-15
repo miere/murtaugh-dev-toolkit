@@ -5,9 +5,11 @@ registry:
 
 - **CLI** — direct invocation: `murtaugh <command> [flags...]`.
 - **MCP** — JSON-RPC stdio server (`murtaugh mcp`) exposing every tool below to
-  AI clients. The MCP tool name is the dotted registry name (e.g. `jobs.run`,
-  `slack.send-msg`); the CLI spells the same tool with a space (`jobs run`,
-  `slack send-msg`).
+  AI clients. The MCP tool name is the registry name with every dot replaced by
+  an underscore (e.g. `jobs_run`, `slack_send-msg`) — some providers (e.g.
+  Gemini) reject a `.` in a function name, so it is normalised at the MCP
+  boundary. The dotted form (`jobs.run`) remains the registry key, and the CLI
+  spells the same tool with a space (`jobs run`, `slack send-msg`).
 - **Slack gateway** — the long-running Socket Mode daemon
   (`murtaugh slack gateway`).
 

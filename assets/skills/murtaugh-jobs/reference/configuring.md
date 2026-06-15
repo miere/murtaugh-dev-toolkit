@@ -76,5 +76,5 @@ gateway logs it and skips that one job at startup — see `scheduling.md`.
 
 ## Defining jobs programmatically
 
-You usually edit `jobs.yaml` by hand, but `jobs.define` (CLI / MCP) writes an
+You usually edit `jobs.yaml` by hand, but `jobs_define` (CLI / MCP) writes an
 entry for you and preserves the others. See `running.md`.

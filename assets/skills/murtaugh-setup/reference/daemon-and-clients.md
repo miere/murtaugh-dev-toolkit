@@ -8,7 +8,7 @@
 > boolean. Run `murtaugh help setup <tool>` or `murtaugh setup <tool> --help`
 > for the full reference.
 
-## `setup.launchd` — install the daemon (macOS)
+## `setup_launchd` — install the daemon (macOS)
 
 *Write the dev.murtaugh LaunchAgent plist (macOS) and optionally load it.*
 
@@ -31,7 +31,7 @@ With `load: true` it lints the plist (`plutil`) then `launchctl bootout` →
 murtaugh setup launchd --binary-path "$(which murtaugh)" --load true
 ```
 
-## `setup.mcp-register` — register Murtaugh in an MCP client
+## `setup_mcp-register` — register Murtaugh in an MCP client
 
 *Register Murtaugh as an MCP server in opencode, auggie, or goose.*
 
@@ -55,7 +55,7 @@ The entry runs `murtaugh mcp` (see `reference/mcp-server.md`).
 murtaugh setup mcp-register --client opencode --binary-path "$(which murtaugh)"
 ```
 
-## `setup.update` — self-update the binary
+## `setup_update` — self-update the binary
 
 *Update the running Murtaugh binary from a GitHub release asset.*
 
@@ -69,7 +69,7 @@ Fetches the matching `murtaugh-<tag>-<os>-<arch>` asset from
 `github.com/miere/murtaugh-dev-toolkit`, sanity-checks it (`<asset> version`),
 backs up the current binary, and swaps it in. **Skips** if already on the target
 version; refuses to replace a `dev` build unless `--force true`. After updating a
-daemon, reload it (`setup.launchd --load true`, or your supervisor).
+daemon, reload it (`setup_launchd --load true`, or your supervisor).
 
 ```bash
 murtaugh setup update                 # latest release; refuses on a dev build
