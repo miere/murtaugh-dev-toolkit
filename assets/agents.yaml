@@ -14,8 +14,43 @@ acp:
   # "tasks" keeps the full multi-card plan. Per-agent profiles may override it.
   progress_display: simplified
 
+# `agent:` is the new spelling of the runtime block above and is accepted as an
+# alias for `acp:` (the knobs apply to both native and ACP backends). The `acp:`
+# key keeps working for existing configs.
+
+# External MCP servers a native agent can attach to (referenced by name from an
+# agent's `mcp_servers:` list below). Each server uses exactly one transport: a
+# stdio child process (command/args/env) or a remote endpoint (url). Secrets in
+# env come from ~/.config/murtaugh/.env via ${VAR}.
+# mcp_servers:
+#   vaultre:
+#     command: vaultre-mcp
+#     args: [--stdio]
+#     env:
+#       VAULTRE_TOKEN: ${VAULTRE_TOKEN}
+#   data-api:
+#     url: https://data-api.internal/mcp
+
 agents:
+  # --- Native agent (kind: native is the DEFAULT) ----------------------------
+  # Murtaugh talks to the model itself — no external ACP agent process. Provider
+  # is one of gemini / anthropic / openai; GLM, DeepSeek and Kimi ride the
+  # anthropic- or openai-compatible families via a base_url override. The API key
+  # never lives here: api_key_env names the variable in ~/.config/murtaugh/.env.
+  # emily:
+  #   provider: gemini
+  #   model: gemini-2.5-pro
+  #   api_key_env: GEMINI_API_KEY
+  #   # base_url:            # set for Z.ai/DeepSeek/Kimi compat endpoints
+  #   workdir: ${HOME}/work/emily      # roots the files/terminal tools
+  #   system_prompt_file: prompts/emily.md   # or inline `system_prompt: |`
+  #   tools: [files, terminal, skills, slack, jobs]  # native groups + registry namespaces
+  #   mcp_servers: [vaultre, data-api]               # from the block above
+  #   max_turns: 40
+
+  # --- ACP agent (kind: acp — external process over ACP) ---------------------
   default:
+    kind: acp
     command: /path/to/acp-agent
     args: [--stdio]
     workdir: /path/to/workspace

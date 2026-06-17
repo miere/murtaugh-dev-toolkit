@@ -12,8 +12,10 @@ shared Tool registry:
 - **Slack gateway** — Socket Mode daemon (`murtaugh slack gateway`) that
   responds to slash commands, runs YAML-defined **workflow rules** against
   interactive payloads (Block Kit buttons, etc.), bridges Slack conversations
-  to an **ACP** (Agent Communication Protocol) agent with live response
-  streaming, and renders **custom link unfurls** for shared URLs.
+  to an **agent** — either the in-process native LLM loop (`kind: native`, the
+  default) or an external **ACP** (Agent Communication Protocol) agent
+  (`kind: acp`) — with live response streaming, and renders **custom link
+  unfurls** for shared URLs.
 - **CLI** — human-facing direct invocation (`murtaugh <tool> [...]`), including
   the Slack tools under the `slack` namespace (`murtaugh slack send-msg`, …).
 - **MCP** — JSON-RPC stdio server (`murtaugh mcp`) that exposes every
@@ -69,7 +71,14 @@ internal/journal/     Event journal: SQLite store, async recorder, query/stats/p
 internal/slack/       Slack subsystem:
   gateway/            Socket Mode gateway, event loop, all Slack event handlers.
   client/             Slack Web API client wrapper used by the slack.* tools.
-internal/acp/         ACP process client, session manager, protocol types.
+internal/agent/       Agent backend interface, session manager, protocol types.
+  native/             In-process LLM agent loop (kind: native): conversation,
+                      turn loop, system prompt, recovery.
+internal/agentbuild/  Kind-aware backend builder (native vs ACP ProcessClient).
+internal/llm/         Provider-agnostic LLM boundary over litellm (gemini /
+                      anthropic-compat / openai-compat).
+internal/toolset/     Per-agent toolset resolver (native tools + registry + MCP).
+internal/mcpclient/   External MCP client: remote tools as tools.Tool.
 internal/agentdelegate/ One-shot isolated agent runner (delegate-to-agent).
 internal/workflow/    Workflow engine, command runner, template rendering.
 internal/unfurl/      Link matcher and Block Kit attachment renderer.
@@ -270,13 +279,33 @@ Inner Events API events:
 Handlers **ack first, then work asynchronously** in a goroutine with a bounded
 context. Long work must never block the event loop.
 
-## ACP chat (`internal/acp` + `slack/gateway/chat_handler.go`)
+## Agent chat (`internal/agent` + `slack/gateway/chat_handler.go`)
 
-`acp.Client` is the interface (`Initialize`, `NewSession`, `Prompt`, `Cancel`,
-`Close`). `ProcessClient` implements it by speaking **JSON-RPC over the agent's
-stdio** (NDJSON): requests carry an incrementing id, responses are matched via a
-`pending` map, and `session/update` notifications fan out to per-session
-subscriber channels as `Event`s (`text`, `status`, `complete`, `error`).
+`agent.Client` is the backend interface (`Initialize`, `NewSession`, `Prompt`,
+`Cancel`, `Close`). There are **two implementations**, selected per agent by
+`agents.yaml` `kind:` (default `native`); `agentbuild.Client` is the single place
+the choice is made, shared by the gateway and the `agentdelegate` runner:
+
+- **`agent.ProcessClient`** (`kind: acp`) drives an **external** agent process by
+  speaking **JSON-RPC over its stdio** (NDJSON): requests carry an incrementing
+  id, responses are matched via a `pending` map, and `session/update`
+  notifications fan out to per-session subscriber channels as `Event`s.
+- **`agent/native.Client`** (`kind: native`) runs the agent loop **in-process**:
+  it owns the provider conversation array (`internal/llm` over `litellm` —
+  gemini/anthropic-compat/openai-compat), executes tools itself, and emits the
+  same `Event`s. Its tools are resolved per-agent by `internal/toolset` from the
+  `tools:` allowlist (native `files`/`terminal`/`skills` rooted at the agent's
+  workdir + registry namespaces) plus any attached `mcp_servers:` (external MCP
+  servers via `internal/mcpclient`). Per-turn context (time, cwd, skills, Slack
+  location) lives in the **system prompt**, never as a standalone message —
+  `native.Conversation` exposes no API to do otherwise, and
+  `assertNoConsecutiveUserAfterTool` guards every provider call. This is the
+  structural fix for the consecutive-`user` empty-completion bug that motivated
+  owning the loop. Provider credentials come from `~/.config/murtaugh/.env`
+  (`api_key_env` names the variable); secrets never live in YAML.
+
+Both implementations satisfy the same interface, so `SessionManager`, the Slack
+`ChatHandler`, streaming, and the journal are identical across backends.
 
 `SessionManager` caches sessions keyed by `ConversationKey`
 (`TeamID`/`ChannelID`/`ThreadTS`/`DM`). It initializes the client lazily (or via

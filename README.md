@@ -1,8 +1,8 @@
 # Murtaugh Dev Toolkit
 
 A single Go binary that turns Slack into a first-class developer surface: slash
-commands, Block Kit workflow rules, AI chat via any ACP-compatible agent, rich
-link unfurling, and an MCP server — all configured in two YAML files.
+commands, Block Kit workflow rules, AI chat via a built-in native LLM agent
+(or any ACP-compatible agent), rich link unfurling, and an MCP server.
 
 ---
 
@@ -173,7 +173,7 @@ sends the startup ping message.
 Create `~/.config/murtaugh/agents.yaml`:
 
 ~~~yaml
-acp:
+agent:               # `acp:` is still accepted as an alias for this block
   enabled: true
   request_timeout: 10m
   session_idle_timeout: 30m
@@ -182,16 +182,27 @@ acp:
   stream_min_chunk_chars: 96
 
 agents:
+  # Native agent (kind: native is the default): Murtaugh talks to the model
+  # directly — no external agent binary to install. Credentials come from
+  # ~/.config/murtaugh/.env (api_key_env names the variable); never from YAML.
   default:
-    command: /path/to/default-agent
-    args: [--stdio]
+    provider: gemini          # gemini | anthropic | openai (compat via base_url)
+    model: gemini-2.5-pro
+    api_key_env: GEMINI_API_KEY
+    tools: [files, terminal, skills, slack]   # native groups + registry namespaces
+  # ACP agent (kind: acp): drive an external agent process over ACP.
   coding:
+    kind: acp
     command: /path/to/coding-agent
     args: [--stdio]
 ~~~
 
-Set `acp.enabled: false` (or omit `agents.yaml` entirely) if you do not need
-AI chat.
+Each agent is either **native** (`kind: native`, the default — Murtaugh runs the
+LLM loop in-process) or **ACP** (`kind: acp` — an external agent binary). Set
+`agent.enabled: false` (or omit `agents.yaml`) if you do not need AI chat.
+Credentials for native agents (and your Slack tokens) live in
+`~/.config/murtaugh/.env`, which is seeded on first run; the YAML files only
+reference them via `${VAR}`.
 
 ---
 
