@@ -1,3 +1,8 @@
+---
+name: murtaugh-slack-tools
+description: The active Slack surface for Murtaugh — four tools an agent or automation calls to programmatically post, update, and read Slack messages and reactions, exposed both on the CLI (`murtaugh slack <tool>`) and over MCP (`slack_<tool>`), backed by the gateway bot token so no raw Slack token is needed. Use when a task must post or update a status message/card (slack_send-msg, slack_update-msg), read recent channel or thread messages (slack_fetch-msgs), or find messages a user reacted to with an emoji (slack_fetch-reactions). Distinct from murtaugh-slack, which covers the reactive/workflow-rules side (buttons, link previews); load this skill for outbound posting and inbound reading driven by the agent itself.
+---
+
 # Skill: Murtaugh Slack Tools
 
 The programmatic way an agent or automation **acts on Slack** through Murtaugh:

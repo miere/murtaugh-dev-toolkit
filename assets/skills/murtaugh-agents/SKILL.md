@@ -1,3 +1,8 @@
+---
+name: murtaugh-agents
+description: Configures Murtaugh's ACP (Agent Client Protocol) chat feature, which routes Slack DMs and @-mentions to an AI agent and streams replies into the thread. Use when enabling or tuning agent chat via `agents.yaml` (e.g. `acp.enabled`, agent `command`, `workdir`, `interruptible`, timeouts, streaming, sessions) or `slack.yaml` (`chat.default_agent`, `channel_agents`). Use when wiring which agent answers DMs versus specific channels, or when explaining the `/murtaugh chat` and `/stop` commands, reply streaming, interrupts, or agent warmup.
+---
+
 # Skill: Murtaugh ACP Chat & Agents
 
 Murtaugh can route Slack **DMs and @-mentions to an AI agent** over ACP (the

@@ -1,3 +1,8 @@
+---
+name: murtaugh-acp-sessions
+description: Guide for reviewing and curating Murtaugh's persisted ACP chat conversation logs stored in the journal's `acp_session` stream (queryable `session.turn` rows plus per-session NDJSON transcript files referenced by `blob_ref` under the journal `blob_dir`). Use when auditing or curating real user conversations for quality, UX, or failure patterns; when running `murtaugh journal query --stream acp_session` (filtering by `--session`, `--user`, `--since`, or `--level warn`/`--level error`) to find sessions or surface turns with `timed_out`/`errored` outcomes; or when reading transcript content, or configuring `acp_session` retention/enablement and pruning in `journal.yaml`. Not for debugging gateway interactions (use the `murtaugh-journal` skill instead).
+---
+
 # Skill: Reviewing ACP Chat Session Logs
 
 Murtaugh persists its ACP chat conversations to the journal's **`acp_session`**

@@ -1,3 +1,8 @@
+---
+name: murtaugh-journal
+description: Debugs Murtaugh gateway interactions, workflow rules, link unfurls, and job runs by querying its structured event journal (a local SQLite database, the engine behind Gateway Debug Mode/GDM) instead of reading log files. Use when someone asks why a Slack workflow button did nothing, why a link unfurl is wrong, or whether a job ran, or otherwise needs to inspect the gateway/job/acp_session streams. Concerns the journal_query, journal_stats, and journal_prune tools (CLI `murtaugh journal query|stats|prune`), correlation-id tracing via --corr-id, filters like --stream/--channel/--level/--since, the journal.yaml config, and reference/event-kinds.md.
+---
+
 # Skill: Debugging Murtaugh with the Event Journal
 
 Murtaugh records what happened — gateway interactions, workflow rules, link
