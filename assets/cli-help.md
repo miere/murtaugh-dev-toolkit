@@ -306,13 +306,16 @@ murtaugh setup bootstrap
 
 ## murtaugh setup slack
 
-Write `slack.yaml` (OAuth tokens, admin user, and the `/murtaugh` slash
-command). An existing file is backed up before being replaced.
+Write `slack.yaml` (admin user and the `/murtaugh` slash command) and store the
+Slack tokens in `~/.config/murtaugh/.env`. The YAML references them as
+`${SLACK_APP_TOKEN}` / `${SLACK_BOT_TOKEN}`, so the tokens never live in a file
+the troubleshoot bundler collects. Both `slack.yaml` and `.env` are backed up
+before being replaced/merged.
 
 | Flag              | Required | Type   | Notes                                                       |
 |-------------------|----------|--------|-------------------------------------------------------------|
-| `--app-token`     | yes      | string | Slack app-level token; must start with `xapp-`.             |
-| `--bot-token`     | yes      | string | Slack bot OAuth token; must start with `xoxb-`.             |
+| `--app-token`     | yes      | string | Slack app-level token; must start with `xapp-`. Stored in `.env`. |
+| `--bot-token`     | yes      | string | Slack bot OAuth token; must start with `xoxb-`. Stored in `.env`. |
 | `--admin-user`    | yes      | string | Admin handle (`@name`) or user ID (`U…`).                   |
 | `--default-agent` | no       | string | `agents.yaml` key to wire into `chat.default_agent`.        |
 
@@ -320,22 +323,54 @@ command). An existing file is backed up before being replaced.
 murtaugh setup slack --app-token xapp-… --bot-token xoxb-… --admin-user @miere
 ```
 
-## murtaugh setup agents
+## murtaugh setup env
 
-Write `agents.yaml` with the ACP tuning block and an optional named agent. ACP
-is enabled only when `--command` is supplied; with no command the file is
-written with `acp.enabled: false`.
+Upsert `KEY=VALUE` secrets into `~/.config/murtaugh/.env`, preserving existing
+entries and comments. This is where LLM provider API keys live; `agents.yaml`
+references them by name via `api_key_env`. The file is backed up before being
+merged. Output reports key **names** only — never the secret values.
 
-| Flag           | Required | Type            | Notes                                                         |
-|----------------|----------|-----------------|---------------------------------------------------------------|
-| `--agent-name` | no       | string          | Key the agent is registered under. Defaults to `default`.     |
-| `--command`    | no       | string          | Absolute path to the ACP-speaking binary. Blank disables ACP. |
-| `--args`       | no       | string (repeat) | Arguments passed to the agent command. Requires `--command`.  |
-
-- Supplying `--args` without `--command` is an error.
+| Flag    | Required | Type            | Notes                                   |
+|---------|----------|-----------------|-----------------------------------------|
+| `--set` | yes      | string (repeat) | A `KEY=VALUE` pair. Repeat for several. |
 
 ```
-murtaugh setup agents --agent-name claude --command /usr/local/bin/claude-acp --args --acp
+murtaugh setup env --set GEMINI_API_KEY=AIza… --set VAULTRE_TOKEN=…
+```
+
+## murtaugh setup agents
+
+Write `agents.yaml` with the runtime tuning block and a single named agent.
+Supports both backends: a **native** LLM agent (`kind: native`, the default —
+Murtaugh talks to the model directly) and an external **ACP** agent
+(`kind: acp`). The kind is inferred from the flags when `--kind` is omitted:
+`--provider` ⇒ native, `--command` ⇒ acp. With no agent flags the file is
+written with chat disabled. Secrets are never written here — a native profile
+records `--api-key-env` (the `.env` variable name); set the value with
+`setup env`.
+
+| Flag                   | Required | Type            | Notes                                                             |
+|------------------------|----------|-----------------|------------------------------------------------------------------|
+| `--agent-name`         | no       | string          | Key the agent is registered under. Defaults to `default`.         |
+| `--kind`               | no       | enum            | `native` or `acp`. Inferred from the other flags when omitted.    |
+| `--command`            | acp      | string          | ACP: absolute path to the ACP-speaking binary.                    |
+| `--args`               | no       | string (repeat) | ACP: arguments passed to the command.                             |
+| `--provider`           | native   | enum            | `gemini`, `anthropic`, or `openai` (compat via `--base-url`).     |
+| `--model`              | native   | string          | Provider model id (e.g. `gemini-2.5-pro`).                        |
+| `--api-key-env`        | native   | string          | Name of the `.env` variable holding the API key.                  |
+| `--base-url`           | no       | string          | Native: endpoint override for compat providers.                   |
+| `--tools`              | no       | string (repeat) | Native: tool allowlist (`files`, `terminal`, `skills`, namespaces).|
+| `--mcp-servers`        | no       | string (repeat) | Native: `mcp_servers` entries to attach.                          |
+| `--system-prompt-file` | no       | string          | Native: path (relative to config dir) to the system prompt.       |
+| `--context-limit`      | no       | integer         | Native: token budget for compaction. 0 = per-family default.      |
+| `--compaction`         | no       | enum            | Native: `truncate` (default) or `summarize`.                      |
+
+- For ACP, supplying `--args` without `--command` is an error.
+
+```
+murtaugh setup agents --provider gemini --model gemini-2.5-pro \
+  --api-key-env GEMINI_API_KEY --tools files --tools terminal --tools skills
+murtaugh setup agents --kind acp --agent-name goose --command /usr/local/bin/goose --args acp
 ```
 
 ## murtaugh setup mcp-register

@@ -18,6 +18,15 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/internal/backup"
+	"github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/internal/envfile"
+)
+
+// Env variable names slack.yaml references for the Slack credentials. The actual
+// tokens live in ~/.config/murtaugh/.env, never in the YAML — so a shared config
+// file (or a troubleshoot bundle) carries only the ${VAR} references.
+const (
+	appTokenVar = "SLACK_APP_TOKEN"
+	botTokenVar = "SLACK_BOT_TOKEN"
 )
 
 // PathProvider returns the absolute path of slack.yaml. A closure over the
@@ -63,18 +72,22 @@ type Result struct {
 	Path       string `json:"path"`
 	Created    bool   `json:"created"`
 	BackupPath string `json:"backup_path,omitempty"`
+	// EnvPath is the .env the Slack tokens were written to (referenced from
+	// slack.yaml as ${SLACK_APP_TOKEN}/${SLACK_BOT_TOKEN}).
+	EnvPath string `json:"env_path,omitempty"`
 }
 
-// String renders a one-line CLI confirmation.
+// String renders a one-line CLI confirmation. It never echoes the tokens.
 func (r Result) String() string {
 	verb := "updated"
 	if r.Created {
 		verb = "created"
 	}
+	msg := fmt.Sprintf("%s %s (tokens → %s)", verb, r.Path, r.EnvPath)
 	if r.BackupPath != "" {
-		return fmt.Sprintf("%s %s (backup: %s)", verb, r.Path, r.BackupPath)
+		msg += " (backup: " + r.BackupPath + ")"
 	}
-	return fmt.Sprintf("%s %s", verb, r.Path)
+	return msg
 }
 
 // document mirrors the on-disk YAML shape produced by the bash installer so
@@ -128,8 +141,18 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 		return nil, fmt.Errorf("ensure config dir: %w", err)
 	}
 
+	// Secrets go to the .env sibling; slack.yaml only references them. This is
+	// what keeps tokens out of a shareable config / troubleshoot bundle.
+	envPath := filepath.Join(filepath.Dir(path), ".env")
+	if _, err := envfile.Merge(envPath, map[string]string{
+		appTokenVar: appToken,
+		botTokenVar: botToken,
+	}); err != nil {
+		return nil, fmt.Errorf("write Slack tokens to .env: %w", err)
+	}
+
 	doc := document{
-		OAuth:         oauthBlock{AppToken: appToken, BotToken: botToken},
+		OAuth:         oauthBlock{AppToken: "${" + appTokenVar + "}", BotToken: "${" + botTokenVar + "}"},
 		Configuration: configurationBlock{AdminUser: adminUser, Debug: false},
 		Chat:          map[string]string{},
 		Commands: []commandEntry{
@@ -152,5 +175,5 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 	if err := os.WriteFile(path, out, 0o600); err != nil {
 		return nil, fmt.Errorf("write %q: %w", path, err)
 	}
-	return Result{Path: path, Created: backupPath == "", BackupPath: backupPath}, nil
+	return Result{Path: path, Created: backupPath == "", BackupPath: backupPath, EnvPath: envPath}, nil
 }

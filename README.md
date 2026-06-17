@@ -81,17 +81,22 @@ The installer is **safe to re-run**:
 
 #### Supported chat agents
 
-During installation you can point Murtaugh at any ACP-compatible agent binary
-already on your machine:
+During installation you choose how chat is backed:
 
-- `opencode acp`
-- `goose acp`
-- `auggie --acp --allow-indexing`
-- a custom command of your choice
-- skip — set this up later in `agents.yaml`
+- **native** — Murtaugh talks to an LLM directly (no separate agent to install).
+  The installer asks for a provider (`gemini` / `anthropic` / `openai`), a model,
+  and an API key. The key is stored in `~/.config/murtaugh/.env`; the agent is
+  written to `agents.yaml` referencing it by name.
+- an **ACP** agent binary already on your machine — `opencode acp`,
+  `goose acp`, `auggie --acp --allow-indexing`, or a custom command.
+- skip — set this up later in `agents.yaml`.
 
-> **Note:** the installer does not download or install third-party agents for
-> you; it only records the command in `agents.yaml`.
+For unattended installs (`--yes`), set `MURTAUGH_CHAT_AGENT=native` with
+`MURTAUGH_NATIVE_PROVIDER`, `MURTAUGH_NATIVE_MODEL`, and `MURTAUGH_NATIVE_API_KEY`.
+
+> **Note:** the installer does not download or install third-party ACP agents
+> for you; it only records the command in `agents.yaml`. Native agents need no
+> external binary.
 
 #### MCP client setup
 

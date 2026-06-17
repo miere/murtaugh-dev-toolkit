@@ -54,6 +54,15 @@ func writeExecutable(t *testing.T, path, body string) {
 	}
 }
 
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
 func copyFile(t *testing.T, src, dst string, perm os.FileMode) {
 	t.Helper()
 	in, err := os.Open(src)
@@ -203,6 +212,67 @@ func TestInstallerConfiguresAuggieAndBacksUpMCPSettings(t *testing.T) {
 	matches, err := filepath.Glob(settingsPath + ".bak.*")
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("expected one settings backup, got %v err=%v", matches, err)
+	}
+}
+
+func TestInstallerConfiguresNativeAgent(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("installer is macOS-only")
+	}
+	home := t.TempDir()
+	binDir := filepath.Join(home, "bin")
+	releaseJSON := writeReleaseFixture(t, t.TempDir())
+
+	out, err := runInstaller(t, []string{
+		"HOME=" + home,
+		"PATH=" + binDir + ":/usr/bin:/bin:/usr/sbin:/sbin",
+		"MURTAUGH_RELEASE_JSON_PATH=" + releaseJSON,
+		"MURTAUGH_INSTALL_ARCH=arm64",
+		"MURTAUGH_SLACK_APP_TOKEN=xapp-test-token",
+		"MURTAUGH_SLACK_BOT_TOKEN=xoxb-test-token",
+		"MURTAUGH_ADMIN_USER=@admin",
+		"MURTAUGH_CHAT_AGENT=native",
+		"MURTAUGH_NATIVE_PROVIDER=gemini",
+		"MURTAUGH_NATIVE_MODEL=gemini-2.5-pro",
+		"MURTAUGH_NATIVE_API_KEY=test-gemini-key-123",
+		"MURTAUGH_ENABLE_LAUNCH_AGENT=no",
+		"MURTAUGH_MCP_CLIENT=skip",
+	})
+	if err != nil {
+		t.Fatalf("installer failed: %v\n%s", err, out)
+	}
+
+	configDir := filepath.Join(home, ".config", "murtaugh")
+
+	agentsText := readFileString(t, filepath.Join(configDir, "agents.yaml"))
+	for _, want := range []string{"kind: native", "provider: gemini", "model: gemini-2.5-pro", "api_key_env: GEMINI_API_KEY"} {
+		if !strings.Contains(agentsText, want) {
+			t.Fatalf("agents.yaml missing %q:\n%s", want, agentsText)
+		}
+	}
+	if strings.Contains(agentsText, "command:") {
+		t.Fatalf("native agents.yaml must not carry a command:\n%s", agentsText)
+	}
+
+	// The API key must land in .env, never in YAML.
+	envText := readFileString(t, filepath.Join(configDir, ".env"))
+	if !strings.Contains(envText, "GEMINI_API_KEY=test-gemini-key-123") {
+		t.Fatalf(".env missing the provider key:\n%s", envText)
+	}
+	slackText := readFileString(t, filepath.Join(configDir, "slack.yaml"))
+	if strings.Contains(slackText, "test-gemini-key-123") || strings.Contains(slackText, "xapp-test-token") {
+		t.Fatalf("a secret leaked into slack.yaml:\n%s", slackText)
+	}
+	if !strings.Contains(slackText, "default_agent: default") {
+		t.Fatalf("slack.yaml missing default_agent:\n%s", slackText)
+	}
+	// Slack tokens also went to .env.
+	if !strings.Contains(envText, "SLACK_APP_TOKEN=xapp-test-token") {
+		t.Fatalf(".env missing Slack token:\n%s", envText)
+	}
+	// The key must not be echoed in installer output.
+	if strings.Contains(out, "test-gemini-key-123") {
+		t.Fatalf("installer output leaked the API key:\n%s", out)
 	}
 }
 

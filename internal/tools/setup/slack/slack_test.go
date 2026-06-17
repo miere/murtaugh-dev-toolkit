@@ -72,8 +72,26 @@ func TestInvoke_FirstWriteCreatesFile(t *testing.T) {
 		t.Fatalf("BackupPath = %q, want empty on fresh write", r.BackupPath)
 	}
 	cfg := loadSlack(t, path)
-	if cfg.OAuth.AppToken != "xapp-1-test" || cfg.OAuth.BotToken != "xoxb-test" {
-		t.Fatalf("oauth = %+v, want app/bot tokens persisted", cfg.OAuth)
+	// slack.yaml must reference the tokens, not embed them.
+	if cfg.OAuth.AppToken != "${SLACK_APP_TOKEN}" || cfg.OAuth.BotToken != "${SLACK_BOT_TOKEN}" {
+		t.Fatalf("oauth = %+v, want ${VAR} references, not literal tokens", cfg.OAuth)
+	}
+	// The actual tokens must land in the .env sibling.
+	if r.EnvPath == "" {
+		t.Fatal("Result.EnvPath empty; tokens were not routed to .env")
+	}
+	envData, err := os.ReadFile(r.EnvPath)
+	if err != nil {
+		t.Fatalf("read .env: %v", err)
+	}
+	if !strings.Contains(string(envData), "SLACK_APP_TOKEN=xapp-1-test") ||
+		!strings.Contains(string(envData), "SLACK_BOT_TOKEN=xoxb-test") {
+		t.Fatalf(".env missing tokens:\n%s", envData)
+	}
+	// The yaml itself must NOT contain the raw token values.
+	rawYAML, _ := os.ReadFile(path)
+	if strings.Contains(string(rawYAML), "xapp-1-test") || strings.Contains(string(rawYAML), "xoxb-test") {
+		t.Fatalf("raw token leaked into slack.yaml:\n%s", rawYAML)
 	}
 	if cfg.Configuration.AdminUser != "@admin" {
 		t.Fatalf("admin_user = %q, want @admin", cfg.Configuration.AdminUser)

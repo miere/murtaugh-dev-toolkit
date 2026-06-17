@@ -80,7 +80,7 @@ func TestEveryCommandDocumented(t *testing.T) {
 		"slack send-msg", "slack fetch-msgs", "slack fetch-reactions", "slack update-msg",
 		"slack gateway",
 		"mcp",
-		"setup bootstrap", "setup slack", "setup agents",
+		"setup bootstrap", "setup slack", "setup agents", "setup env",
 		"setup mcp-register", "setup launchd", "setup update",
 		"version", "help",
 	}

@@ -75,7 +75,7 @@ func TestUsageLine_ListsFlatToolsNamespacesAndModes(t *testing.T) {
 	for _, want := range []string{
 		"ping",
 		"jobs <define|run>",
-		"setup <agents|bootstrap|launchd|mcp-register|slack|update>",
+		"setup <agents|bootstrap|env|launchd|mcp-register|slack|update>",
 		"slack <fetch-msgs|fetch-reactions|gateway|send-msg|update-msg>",
 		"mcp",
 	} {

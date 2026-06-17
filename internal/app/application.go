@@ -32,6 +32,7 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/restart"
 	setupagents "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/agents"
 	setupbootstrap "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/bootstrap"
+	setupenv "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/env"
 	setuplaunchd "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/launchd"
 	setupmcpregister "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/mcpregister"
 	setupslack "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/slack"
@@ -355,6 +356,13 @@ func buildRegistry(cfg config.Config, configPath, version string, recorder journ
 		return ""
 	}
 	reg.Register(setupagents.New(agentsPath))
+	envPath := func() string {
+		if base := baseDirFor(cfg, configPath); base != "" {
+			return filepath.Join(base, ".env")
+		}
+		return ""
+	}
+	reg.Register(setupenv.New(envPath))
 	troubleshootConfigPath := func() string {
 		if base := baseDirFor(cfg, configPath); base != "" {
 			return filepath.Join(base, "troubleshoot.yaml")

@@ -36,8 +36,20 @@ func IfExists(path string) (string, error) {
 		return "", fmt.Errorf("backup target %q is not a regular file", path)
 	}
 
-	suffix := Now().Format("20060102150405")
-	backupPath := path + ".bak." + suffix
+	// Second-precision timestamps collide when two tools back up the same file
+	// within one second (e.g. setup.slack then setup.env both touching .env).
+	// Uniquify with a numeric suffix so the second backup does not fail on the
+	// O_EXCL create. The common (no-collision) case keeps the plain ".bak.<ts>".
+	base := path + ".bak." + Now().Format("20060102150405")
+	backupPath := base
+	for i := 2; ; i++ {
+		if _, err := os.Stat(backupPath); errors.Is(err, fs.ErrNotExist) {
+			break
+		} else if err != nil {
+			return "", fmt.Errorf("stat %q: %w", backupPath, err)
+		}
+		backupPath = fmt.Sprintf("%s-%d", base, i)
+	}
 	if err := copyFile(path, backupPath, info.Mode().Perm()); err != nil {
 		return "", err
 	}

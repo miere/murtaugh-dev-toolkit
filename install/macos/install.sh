@@ -52,7 +52,10 @@ Environment overrides:
   MURTAUGH_SLACK_APP_TOKEN
   MURTAUGH_SLACK_BOT_TOKEN
   MURTAUGH_ADMIN_USER
-  MURTAUGH_CHAT_AGENT             skip|opencode|goose|auggie|custom
+  MURTAUGH_CHAT_AGENT             skip|native|opencode|goose|auggie|custom
+  MURTAUGH_NATIVE_PROVIDER        gemini|anthropic|openai (native agent)
+  MURTAUGH_NATIVE_MODEL           provider model id (native agent)
+  MURTAUGH_NATIVE_API_KEY         provider API key, stored in ~/.config/murtaugh/.env
   MURTAUGH_CUSTOM_AGENT_COMMAND
   MURTAUGH_CUSTOM_AGENT_ARGS      shell-style argument string
   MURTAUGH_ENABLE_LAUNCH_AGENT    yes|no
@@ -404,6 +407,49 @@ binary_supports_setup() {
   "$bin" setup --help >/dev/null 2>&1
 }
 
+# api_key_env_for maps a provider to the .env variable name that holds its key.
+# agents.yaml references the agent's credential by this name (api_key_env), so the
+# key value never lives in YAML.
+api_key_env_for() {
+  case "$1" in
+    gemini) printf 'GEMINI_API_KEY' ;;
+    anthropic) printf 'ANTHROPIC_API_KEY' ;;
+    openai) printf 'OPENAI_API_KEY' ;;
+    *) die "unsupported native provider: $1" ;;
+  esac
+}
+
+# default_model_for offers a sensible starting model per provider; the user can
+# override it at the prompt or via MURTAUGH_NATIVE_MODEL.
+default_model_for() {
+  case "$1" in
+    gemini) printf 'gemini-2.5-pro' ;;
+    anthropic) printf 'claude-sonnet-4-6' ;;
+    openai) printf 'gpt-5' ;;
+    *) printf '' ;;
+  esac
+}
+
+# configure_native_agent probes for the native-agent provider, model, and API
+# key, populating the NATIVE_* globals consumed by write_slack_config. The key is
+# read silently and only ever written to ~/.config/murtaugh/.env.
+configure_native_agent() {
+  NATIVE_PROVIDER=$(prompt_choice MURTAUGH_NATIVE_PROVIDER "Native LLM provider" gemini gemini anthropic openai)
+  NATIVE_API_KEY_ENV=$(api_key_env_for "$NATIVE_PROVIDER")
+  local default_model
+  default_model=$(default_model_for "$NATIVE_PROVIDER")
+  if [[ -n "${MURTAUGH_NATIVE_MODEL:-}" ]]; then
+    NATIVE_MODEL="$MURTAUGH_NATIVE_MODEL"
+  elif [[ $ASSUME_YES -eq 1 ]]; then
+    NATIVE_MODEL="$default_model"
+  else
+    read -r -p "Model (default: ${default_model}): " NATIVE_MODEL
+    NATIVE_MODEL=${NATIVE_MODEL:-$default_model}
+  fi
+  [[ -n "$NATIVE_MODEL" ]] || die "a model is required for the native agent"
+  NATIVE_API_KEY=$(prompt_required MURTAUGH_NATIVE_API_KEY "${NATIVE_PROVIDER} API key (stored in ~/.config/murtaugh/.env)" yes)
+}
+
 resolve_agent_command() {
   local choice=$1
   case "$choice" in
@@ -470,6 +516,16 @@ write_slack_config() {
     setup_args+=(--default-agent default)
   fi
   "$bin" "${setup_args[@]}" >&2
+
+  # Native agent: write the provider key to .env, then a native profile that
+  # references it. No external binary, no ACP.
+  if [[ "$chat_choice" == "native" ]]; then
+    "$bin" setup env --set "${NATIVE_API_KEY_ENV}=${NATIVE_API_KEY}" >&2
+    "$bin" setup agents --provider "$NATIVE_PROVIDER" --model "$NATIVE_MODEL" \
+      --api-key-env "$NATIVE_API_KEY_ENV" \
+      --tools files --tools terminal --tools skills >&2
+    return 0
+  fi
 
   local agents_args=(setup agents)
   if [[ "$chat_choice" != "skip" ]]; then
@@ -579,8 +635,10 @@ main() {
     [[ "$app_token" == xapp-* ]] || die "Slack app token must start with xapp-"
     [[ "$bot_token" == xoxb-* ]] || die "Slack bot token must start with xoxb-"
 
-    chat_choice=$(prompt_choice MURTAUGH_CHAT_AGENT "Slack Chat agent" skip skip opencode goose auggie custom)
-    if [[ "$chat_choice" != "skip" ]]; then
+    chat_choice=$(prompt_choice MURTAUGH_CHAT_AGENT "Slack Chat agent" skip skip native opencode goose auggie custom)
+    if [[ "$chat_choice" == "native" ]]; then
+      configure_native_agent
+    elif [[ "$chat_choice" != "skip" ]]; then
       chat_command=$(resolve_agent_command "$chat_choice")
     fi
     case "$chat_choice" in
