@@ -28,7 +28,7 @@ func (l lookupSessions) Prompt(context.Context, agent.ConversationKey, agent.Ses
 	return nil, nil
 }
 func (l lookupSessions) Lookup(agent.ConversationKey) (string, bool) { return "", l.live }
-func (l lookupSessions) Cancel(context.Context, string) error      { return nil }
+func (l lookupSessions) Cancel(context.Context, string) error        { return nil }
 
 func gateHandler(b threadBackfiller) *ChatHandler {
 	return &ChatHandler{logger: slog.Default(), backfiller: b}

@@ -49,7 +49,7 @@ func (f *fakeChatSessions) promptText() string {
 }
 
 func (f *fakeChatSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
-func (f *fakeChatSessions) Cancel(context.Context, string) error      { return nil }
+func (f *fakeChatSessions) Cancel(context.Context, string) error        { return nil }
 func (f *fakeChatSessionsWithTasks) Lookup(agent.ConversationKey) (string, bool) {
 	return "", false
 }
@@ -113,7 +113,7 @@ func (f *fakeChatSessionsRenamedTask) Prompt(_ context.Context, _ agent.Conversa
 }
 
 func (f *fakeChatSessionsRenamedTask) Lookup(agent.ConversationKey) (string, bool) { return "", false }
-func (f *fakeChatSessionsRenamedTask) Cancel(context.Context, string) error      { return nil }
+func (f *fakeChatSessionsRenamedTask) Cancel(context.Context, string) error        { return nil }
 
 func TestChatHandlerFinalisesRenamedTaskOnSuccess(t *testing.T) {
 	api := &fakeStreamAPI{}
@@ -357,7 +357,7 @@ func (f *cancellableTaskSessions) Prompt(ctx context.Context, _ agent.Conversati
 }
 
 func (f *cancellableTaskSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
-func (f *cancellableTaskSessions) Cancel(context.Context, string) error      { return nil }
+func (f *cancellableTaskSessions) Cancel(context.Context, string) error        { return nil }
 
 func TestChatHandlerDoesNotFailTasksOnInterrupt(t *testing.T) {
 	api := &fakeStreamAPI{}
@@ -464,7 +464,7 @@ func (f *blockingChatSessions) Prompt(_ context.Context, _ agent.ConversationKey
 }
 
 func (f *blockingChatSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
-func (f *blockingChatSessions) Cancel(context.Context, string) error      { return nil }
+func (f *blockingChatSessions) Cancel(context.Context, string) error        { return nil }
 
 func TestChatHandlerRefreshesAssistantStatusWhileEventsPending(t *testing.T) {
 	api := &fakeStreamAPI{}
@@ -536,7 +536,7 @@ func (f *cancellableChatSessions) Prompt(ctx context.Context, _ agent.Conversati
 }
 
 func (f *cancellableChatSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
-func (f *cancellableChatSessions) Cancel(context.Context, string) error      { return nil }
+func (f *cancellableChatSessions) Cancel(context.Context, string) error        { return nil }
 
 func TestChatHandlerInterruptedByCancelReturnsNil(t *testing.T) {
 	api := &fakeStreamAPI{}
@@ -685,7 +685,7 @@ func (f *steadyChatSessions) Prompt(_ context.Context, _ agent.ConversationKey, 
 }
 
 func (f *steadyChatSessions) Lookup(agent.ConversationKey) (string, bool) { return "sess-1", true }
-func (f *steadyChatSessions) Cancel(context.Context, string) error      { f.cancelled++; return nil }
+func (f *steadyChatSessions) Cancel(context.Context, string) error        { f.cancelled++; return nil }
 
 func TestChatHandlerIdleTimerResetsOnActivity(t *testing.T) {
 	api := &fakeStreamAPI{}

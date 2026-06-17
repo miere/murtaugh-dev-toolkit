@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agentbuild"
 	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 	slackclient "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
+	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 	"github.com/miere/murtaugh-dev-toolkit/internal/unfurl"
 	"github.com/miere/murtaugh-dev-toolkit/internal/workflow"
 	"github.com/slack-go/slack"
@@ -126,7 +128,7 @@ type Gateway struct {
 	journalSweepEvery time.Duration
 }
 
-func New(cfg config.Config, logger *slog.Logger, recorder journal.Recorder) *Gateway {
+func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recorder journal.Recorder) *Gateway {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -151,17 +153,16 @@ func New(cfg config.Config, logger *slog.Logger, recorder journal.Recorder) *Gat
 			// config dir, e.g. ~/.config/murtaugh) when it leaves workdir
 			// unset, so agents start where the bundled skills and templates
 			// live and can auto-discover them.
-			workDir := profile.WorkDir
-			if strings.TrimSpace(workDir) == "" {
-				workDir = cfg.BaseDir
-			}
-			client := agent.NewProcessClient(agent.ProcessOptions{
-				Command: profile.Command,
-				Args:    profile.Args,
-				WorkDir: workDir,
-				Env:     profile.EnvOverrides(),
-				Logger:  logger,
+			client, err := agentbuild.Client(profile, agentbuild.Deps{
+				Registry:   registry,
+				MCPServers: cfg.MCPServers,
+				BaseDir:    cfg.BaseDir,
+				Logger:     logger.With("agent", name),
 			})
+			if err != nil {
+				logger.Error("agent disabled: could not build client", "agent", name, "kind", profile.ResolvedKind(), "error", err)
+				continue
+			}
 			sessions[name] = agent.NewSessionManager(
 				client,
 				cfg.ACP.EffectiveSessionIdleTimeout(),
@@ -218,7 +219,8 @@ func New(cfg config.Config, logger *slog.Logger, recorder journal.Recorder) *Gat
 	var unfurlDelegator UnfurlDelegator
 	var workflowDelegator workflow.AgentDelegator
 	if len(cfg.Agents) > 0 {
-		runner := agentdelegate.NewRunner(cfg.Agents, cfg.ACP, cfg.BaseDir, logger)
+		runner := agentdelegate.NewRunner(cfg.Agents, cfg.ACP, cfg.BaseDir, logger).
+			WithBuildContext(registry, cfg.MCPServers)
 		unfurlDelegator = runner
 		workflowDelegator = runner
 	}

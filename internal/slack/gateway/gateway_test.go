@@ -48,7 +48,7 @@ func TestAppNotifiesStartupOnceWhenSocketConnects(t *testing.T) {
 }
 
 func TestNewWithoutAdminUserDoesNotInstallTypedNilStartupNotifier(t *testing.T) {
-	app := New(config.Config{OAuth: config.OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"}}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	app := New(config.Config{OAuth: config.OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"}}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if app.startupNotifier != nil {
 		t.Fatalf("expected no startup notifier without configuration.admin_user, got %#v", app.startupNotifier)
 	}
@@ -103,7 +103,7 @@ func (f *countingChatSessions) Prompt(_ context.Context, _ agent.ConversationKey
 }
 
 func (f *countingChatSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
-func (f *countingChatSessions) Cancel(context.Context, string) error      { return nil }
+func (f *countingChatSessions) Cancel(context.Context, string) error        { return nil }
 
 func (f *countingChatSessions) count() int {
 	f.mu.Lock()
@@ -172,8 +172,8 @@ func (f *nonInterruptibleSessions) Prompt(_ context.Context, _ agent.Conversatio
 }
 
 func (f *nonInterruptibleSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
-func (f *nonInterruptibleSessions) Cancel(context.Context, string) error      { return nil }
-func (f *nonInterruptibleSessions) Interruptible() bool                       { return false }
+func (f *nonInterruptibleSessions) Cancel(context.Context, string) error        { return nil }
+func (f *nonInterruptibleSessions) Interruptible() bool                         { return false }
 func (f *nonInterruptibleSessions) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

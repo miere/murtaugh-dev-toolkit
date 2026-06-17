@@ -123,7 +123,7 @@ func (a *Application) Run(ctx context.Context) error {
 	case ModeMCP:
 		return mcp.New(a.registry).Serve(ctx)
 	case ModeGateway:
-		gw := gateway.New(a.cfg, a.logger, a.recorder)
+		gw := gateway.New(a.cfg, a.registry, a.logger, a.recorder)
 		if rc := a.restart; rc != nil {
 			// Adapt the coordinator's Request method into the gateway's
 			// stringly-typed trigger so the gateway package stays free
@@ -149,7 +149,7 @@ func (a *Application) Run(ctx context.Context) error {
 		// run behaves identically to a manual one (same timeout, workdir, and
 		// exit-code handling). Output streams to the daemon's stdout/stderr,
 		// which launchd captures into the Murtaugh log files.
-		gw = gw.WithScheduledRunner(newScheduledRunner(a.cfg, a.recorder))
+		gw = gw.WithScheduledRunner(newScheduledRunner(a.cfg, a.recorder, a.registry))
 		if a.journalSweep != nil {
 			gw = gw.WithJournalSweeper(a.journalSweep, a.journalSweepEvery)
 		}
@@ -308,7 +308,7 @@ func buildRegistry(cfg config.Config, configPath, version string, recorder journ
 		j, ok := cfg.Jobs[name]
 		return j, ok
 	}
-	reg.Register(run.New(jobsLookup).WithDelegator(newJobDelegator(cfg)).WithRecorder(recorder))
+	reg.Register(run.New(jobsLookup).WithDelegator(newJobDelegator(cfg, reg)).WithRecorder(recorder))
 
 	// Journal read/maintenance tools open the event store on demand from the
 	// configured path; one opener (carrying per-stream retention for prune)
@@ -427,11 +427,12 @@ func effectiveTroubleshootProviders(cfg config.Config) []string {
 // (jobs with `agent`/`prompt` instead of `command`). It returns nil when no
 // agents are configured, leaving such jobs to fail with a clear error; config
 // validation already guarantees a job's agent is defined when one is set.
-func newJobDelegator(cfg config.Config) run.AgentDelegator {
+func newJobDelegator(cfg config.Config, registry *tools.Registry) run.AgentDelegator {
 	if len(cfg.Agents) == 0 {
 		return nil
 	}
-	return agentdelegate.NewRunner(cfg.Agents, cfg.ACP, cfg.BaseDir, slog.Default())
+	return agentdelegate.NewRunner(cfg.Agents, cfg.ACP, cfg.BaseDir, slog.Default()).
+		WithBuildContext(registry, cfg.MCPServers)
 }
 
 // newScheduledRunner builds the executor the gateway scheduler uses to fire
@@ -439,12 +440,12 @@ func newJobDelegator(cfg config.Config) run.AgentDelegator {
 // frontends use (streaming child output to the process stdout/stderr, which
 // launchd captures), and maps a non-zero exit code onto an error so the
 // gateway logs the run as failed.
-func newScheduledRunner(cfg config.Config, recorder journal.Recorder) gateway.ScheduledRunner {
+func newScheduledRunner(cfg config.Config, recorder journal.Recorder, registry *tools.Registry) gateway.ScheduledRunner {
 	lookup := func(name string) (config.JobProfile, bool) {
 		j, ok := cfg.Jobs[name]
 		return j, ok
 	}
-	runTool := run.New(lookup).WithDelegator(newJobDelegator(cfg)).WithRecorder(recorder)
+	runTool := run.New(lookup).WithDelegator(newJobDelegator(cfg, registry)).WithRecorder(recorder)
 	return func(ctx context.Context, name string) error {
 		result, err := runTool.Invoke(ctx, map[string]any{"name": name})
 		if err != nil {

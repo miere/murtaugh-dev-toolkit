@@ -26,7 +26,9 @@ import (
 	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agentbuild"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 )
 
 // ErrNonJSONOutput is returned by RunForJSON when the agent completed its turn
@@ -34,8 +36,8 @@ import (
 // the raw output before returning it, so callers should simply skip rendering.
 var ErrNonJSONOutput = errors.New("delegate-to-agent: agent output was not valid JSON")
 
-// ClientFactory builds a fresh ACP client for a single one-shot session.
-// Production wires agent.NewProcessClient; tests inject a fake.
+// ClientFactory builds a fresh client for a single one-shot session. Production
+// wires the kind-aware agentbuild.Client (ACP or native); tests inject a fake.
 type ClientFactory func(profile config.AgentProfile, logger *slog.Logger) agent.Client
 
 // Runner resolves agent profiles by name and drives isolated one-shot sessions.
@@ -45,6 +47,13 @@ type Runner struct {
 	idleTimeout time.Duration
 	newClient   ClientFactory
 	logger      *slog.Logger
+	// registry and mcpServers are consulted only when building a native agent
+	// (kind: native): the registry backs its `tools:` allowlist and mcpServers
+	// resolves its MCP references. Wired by the composition root via
+	// WithBuildContext; nil leaves a native agent with only its synthesized and
+	// MCP tools (unresolved MCP refs are skipped).
+	registry   *tools.Registry
+	mcpServers map[string]config.MCPServerConfig
 }
 
 // NewRunner builds a Runner over the configured agents. idleTimeout is taken
@@ -66,7 +75,7 @@ func NewRunner(agents map[string]config.AgentProfile, acpCfg config.ACPConfig, b
 	return r
 }
 
-// WithClientFactory overrides how the underlying ACP client is constructed.
+// WithClientFactory overrides how the underlying client is constructed.
 // Intended for tests; a nil factory is ignored. Returns the receiver.
 func (r *Runner) WithClientFactory(f ClientFactory) *Runner {
 	if f != nil {
@@ -75,18 +84,30 @@ func (r *Runner) WithClientFactory(f ClientFactory) *Runner {
 	return r
 }
 
+// WithBuildContext supplies the registry and MCP server definitions a native
+// delegated agent needs (its tool allowlist and MCP references). ACP agents
+// ignore both. Returns the receiver for fluent wiring.
+func (r *Runner) WithBuildContext(registry *tools.Registry, mcpServers map[string]config.MCPServerConfig) *Runner {
+	r.registry = registry
+	r.mcpServers = mcpServers
+	return r
+}
+
+// defaultClient builds the backend for a one-shot delegation, branching on the
+// profile's kind (ACP or native) via agentbuild. A build error is deferred to
+// the client's Initialize (ErrorClient) so the factory keeps its no-error
+// signature and the failure surfaces on the same path as a runtime error.
 func (r *Runner) defaultClient(profile config.AgentProfile, logger *slog.Logger) agent.Client {
-	workDir := profile.WorkDir
-	if strings.TrimSpace(workDir) == "" {
-		workDir = r.baseDir
-	}
-	return agent.NewProcessClient(agent.ProcessOptions{
-		Command: profile.Command,
-		Args:    profile.Args,
-		WorkDir: workDir,
-		Env:     profile.EnvOverrides(),
-		Logger:  logger,
+	client, err := agentbuild.Client(profile, agentbuild.Deps{
+		Registry:   r.registry,
+		MCPServers: r.mcpServers,
+		BaseDir:    r.baseDir,
+		Logger:     logger,
 	})
+	if err != nil {
+		return agentbuild.ErrorClient(err)
+	}
+	return client
 }
 
 // RunForJSON runs a delegation and requires the agent's output to be a single

@@ -30,7 +30,7 @@ func (s scriptedSessions) Prompt(_ context.Context, _ agent.ConversationKey, _ a
 }
 
 func (s scriptedSessions) Lookup(agent.ConversationKey) (string, bool) { return s.id, true }
-func (s scriptedSessions) Cancel(context.Context, string) error      { return nil }
+func (s scriptedSessions) Cancel(context.Context, string) error        { return nil }
 
 func newLoggingHandler(t *testing.T, rec journal.Recorder, blobDir string, sessions ChatSessionManager) *ChatHandler {
 	t.Helper()
