@@ -6,10 +6,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 )
@@ -24,6 +26,10 @@ type Frontend struct {
 	registry *tools.Registry
 	stdout   io.Writer
 	stderr   io.Writer
+	// json toggles JSONL output: when set, results are JSON-marshalled
+	// (one value per line) instead of rendered for humans. Driven by the
+	// global --json flag stripped in main.
+	json bool
 }
 
 // New constructs a CLI Frontend that writes to os.Stdout and os.Stderr.
@@ -34,6 +40,13 @@ func New(reg *tools.Registry) *Frontend {
 // WithOutput overrides the output streams; intended for tests.
 func (f *Frontend) WithOutput(stdout, stderr io.Writer) *Frontend {
 	f.stdout, f.stderr = stdout, stderr
+	return f
+}
+
+// WithJSON enables JSONL output when on is true. Returns the receiver for
+// fluent wiring.
+func (f *Frontend) WithJSON(on bool) *Frontend {
+	f.json = on
 	return f
 }
 
@@ -63,7 +76,42 @@ func (f *Frontend) Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", name, err)
 	}
+	if f.json {
+		return f.renderJSON(result)
+	}
 	if _, err := fmt.Fprintln(f.stdout, Render(result)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// renderJSON writes the tool result as JSONL: a nil result prints nothing; a
+// slice/array (other than []byte) prints one compact JSON value per line; any
+// other value prints as a single compact JSON line. Marshal errors are
+// returned so they surface on stderr with a non-zero exit.
+func (f *Frontend) renderJSON(result any) error {
+	if result == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(result)
+	if rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() != reflect.Uint8 {
+		for i := 0; i < rv.Len(); i++ {
+			if err := f.writeJSONLine(rv.Index(i).Interface()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return f.writeJSONLine(result)
+}
+
+// writeJSONLine marshals v compactly and writes it followed by a newline.
+func (f *Frontend) writeJSONLine(v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(f.stdout, string(b)); err != nil {
 		return err
 	}
 	return nil

@@ -88,6 +88,9 @@ type Application struct {
 	// single writer that may delete). nil disables the sweeper.
 	journalSweep      func(context.Context) error
 	journalSweepEvery time.Duration
+	// jsonOutput requests JSONL output from the CLI frontend (global --json
+	// flag). Irrelevant to MCP/Gateway modes.
+	jsonOutput bool
 }
 
 // New constructs an Application for the given mode. cfg/configPath/logger
@@ -178,7 +181,7 @@ func (a *Application) Run(ctx context.Context) error {
 		a.logger.Info("Slack gateway stopped")
 		return err
 	default:
-		return cli.New(a.registry).Run(ctx, a.args)
+		return cli.New(a.registry).WithJSON(a.jsonOutput).Run(ctx, a.args)
 	}
 }
 
@@ -245,6 +248,14 @@ func (a *Application) SlackUsageLine() string {
 // Registry exposes the underlying registry. Intended for tests so the
 // composition wiring can be inspected without standing up a frontend.
 func (a *Application) Registry() *tools.Registry { return a.registry }
+
+// WithJSONOutput toggles JSONL output for the CLI frontend (driven by the
+// global --json flag). MCP and Gateway modes ignore it. Returns the receiver
+// for fluent wiring.
+func (a *Application) WithJSONOutput(on bool) *Application {
+	a.jsonOutput = on
+	return a
+}
 
 // WithRestartCoordinator attaches a restart coordinator to the application
 // and returns the receiver to support a fluent wiring style at the entry

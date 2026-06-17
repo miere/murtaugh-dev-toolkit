@@ -100,6 +100,109 @@ func TestRun_NestedNamespace_ResolvesDottedTool(t *testing.T) {
 	}
 }
 
+func TestRun_JSON_StructResult_SingleLine(t *testing.T) {
+	type result struct {
+		OK      bool   `json:"ok"`
+		Channel string `json:"channel"`
+	}
+	tl := &fakeTool{name: "send", result: result{OK: true, Channel: "C123"}}
+	reg := tools.NewRegistry()
+	reg.Register(tl)
+	var stdout, stderr bytes.Buffer
+	f := New(reg).WithOutput(&stdout, &stderr).WithJSON(true)
+
+	if err := f.Run(context.Background(), []string{"send"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got, want := stdout.String(), `{"ok":true,"channel":"C123"}`+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRun_JSON_SliceResult_OnePerLine(t *testing.T) {
+	tl := &fakeTool{name: "list", result: []string{"a", "b", "c"}}
+	reg := tools.NewRegistry()
+	reg.Register(tl)
+	var stdout, stderr bytes.Buffer
+	f := New(reg).WithOutput(&stdout, &stderr).WithJSON(true)
+
+	if err := f.Run(context.Background(), []string{"list"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got, want := stdout.String(), "\"a\"\n\"b\"\n\"c\"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestRun_JSON_SliceOfStructs_OnePerLine(t *testing.T) {
+	type item struct {
+		ID int `json:"id"`
+	}
+	tl := &fakeTool{name: "items", result: []item{{ID: 1}, {ID: 2}}}
+	reg := tools.NewRegistry()
+	reg.Register(tl)
+	var stdout, stderr bytes.Buffer
+	f := New(reg).WithOutput(&stdout, &stderr).WithJSON(true)
+
+	if err := f.Run(context.Background(), []string{"items"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got, want := stdout.String(), "{\"id\":1}\n{\"id\":2}\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+// A struct that merely contains a slice must stay a single JSON object on one
+// line, not be flattened into JSONL.
+func TestRun_JSON_StructContainingSlice_SingleLine(t *testing.T) {
+	type result struct {
+		Channel  string   `json:"channel"`
+		Messages []string `json:"messages"`
+	}
+	tl := &fakeTool{name: "fetch", result: result{Channel: "C1", Messages: []string{"x", "y"}}}
+	reg := tools.NewRegistry()
+	reg.Register(tl)
+	var stdout, stderr bytes.Buffer
+	f := New(reg).WithOutput(&stdout, &stderr).WithJSON(true)
+
+	if err := f.Run(context.Background(), []string{"fetch"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got, want := stdout.String(), `{"channel":"C1","messages":["x","y"]}`+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestRun_JSON_NilResult_PrintsNothing(t *testing.T) {
+	tl := &fakeTool{name: "noop", result: nil}
+	reg := tools.NewRegistry()
+	reg.Register(tl)
+	var stdout, stderr bytes.Buffer
+	f := New(reg).WithOutput(&stdout, &stderr).WithJSON(true)
+
+	if err := f.Run(context.Background(), []string{"noop"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+// json mode off leaves the human render path byte-for-byte unchanged.
+func TestRun_JSONOff_HumanPathUnchanged(t *testing.T) {
+	tl := &fakeTool{name: "ping", result: "pong"}
+	f, stdout, _ := newTestFrontend(t, tl)
+	if err := f.Run(context.Background(), []string{"ping"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got := stdout.String(); got != "pong\n" {
+		t.Fatalf("stdout = %q, want %q", got, "pong\n")
+	}
+}
+
 func TestRun_PassesParsedArgs_ToTool(t *testing.T) {
 	tl := &fakeTool{
 		name: "echo",

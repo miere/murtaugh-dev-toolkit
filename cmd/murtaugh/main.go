@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -50,6 +51,14 @@ func run(rawArgs []string) error {
 	}
 
 	configPath, args, err := extractConfigFlag(rawArgs, defaultPath)
+	if err != nil {
+		return err
+	}
+	// --json is a global, opt-in boolean stripped before help/mode selection
+	// and tool dispatch. The tool flag parser requires every --flag to carry a
+	// value, so a bare --json must not reach it; stripping here lets both
+	// `murtaugh --json ping` and `murtaugh ping --json` work.
+	jsonOutput, args, err := extractJSONFlag(args)
 	if err != nil {
 		return err
 	}
@@ -90,7 +99,8 @@ func run(rawArgs []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	application := app.New(mode, rest, cfg, configPath, version, logger, recorder)
+	application := app.New(mode, rest, cfg, configPath, version, logger, recorder).
+		WithJSONOutput(jsonOutput)
 	// The Slack gateway is the only long-running mode that needs a
 	// user-triggered restart path. stop is reused as the cancel hook so
 	// the coordinator's shutdown looks identical to a SIGTERM from the
@@ -174,6 +184,34 @@ func parseConfigToken(a string) (string, string, bool) {
 		hasValue = true
 	}
 	return name, value, hasValue
+}
+
+// extractJSONFlag pulls the global --json boolean out of args and returns
+// whether it was set along with the remaining tokens. A bare `--json` enables
+// it; the `--json=true` / `--json=false` form is also honoured. It is stripped
+// before help/mode selection and tool dispatch because the tool flag parser
+// rejects value-less flags. Single-dash `-json` is accepted to match the
+// config flag's leniency.
+func extractJSONFlag(args []string) (bool, []string, error) {
+	out := make([]string, 0, len(args))
+	enabled := false
+	for _, a := range args {
+		name, value, hasValue := parseConfigToken(a)
+		if name != "json" {
+			out = append(out, a)
+			continue
+		}
+		if !hasValue {
+			enabled = true
+			continue
+		}
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return false, nil, fmt.Errorf("--json: expected boolean, got %q", value)
+		}
+		enabled = b
+	}
+	return enabled, out, nil
 }
 
 // helpRequest reports whether args asks for help and, if so, returns the
