@@ -1,3 +1,8 @@
+---
+name: murtaugh-unfurl
+description: Configures Murtaugh to replace bare URLs posted in Slack with rich Block Kit previews, matching `link_shared` events against `unfurl-rules` entries and rendering via a `template`, a `run` command, or a `delegate-to-agent` action. Use when a task involves turning links (PRs, tickets, dashboards) into inline Slack previews, writing or editing `unfurl-rules` match conditions (domain/url_pattern/channels) and rule ordering, authoring an unfurl `template`/`run`/`delegate-to-agent` action, or registering App Unfurl Domains so `link_shared` events arrive. References live in this skill's `reference/configuring.md`, `reference/actions.md`, and `examples/`.
+---
+
 # Skill: Murtaugh Link Unfurling
 
 Murtaugh can replace a bare URL posted in Slack with a **rich Block Kit

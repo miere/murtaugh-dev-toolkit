@@ -1,0 +1,8 @@
+# Dev/test-only dependencies for running Murtaugh customisation BDD tests.
+# Install in a SEPARATE virtualenv — never on the deployed runtime import path
+# (automations stay stdlib-only / launchd-safe, Python 3.9).
+#
+#   python3 -m venv .venv-test && . .venv-test/bin/activate
+#   pip install -r requirements-dev.txt
+#   behave automations/<routine>/tests/features
+behave>=1.2.6

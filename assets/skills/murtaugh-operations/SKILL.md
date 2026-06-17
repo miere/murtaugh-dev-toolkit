@@ -1,3 +1,8 @@
+---
+name: murtaugh-operations
+description: Operator guide for running and diagnosing the long-lived `murtaugh slack gateway` Socket Mode daemon that handles all Slack events (slash commands, button clicks, mentions, DMs, link previews) and runs scheduled jobs. Use when debugging or operating a running gateway — inspecting its launchd stdout/stderr logs at `~/Library/Logs/murtaugh/slack.out.log` and `slack.err.log`, tracing startup/warmup/scheduler lifecycle, applying config changes or doing a graceful restart (`/murtaugh restart`), or troubleshooting auth issues like the bot ignoring users (`admin_user`/`allowed_users` fail-closed authorization). Concerns the `murtaugh --config PATH slack gateway` command and its `reference/lifecycle.md`, `reference/config-and-restart.md`, and `reference/auth-and-troubleshooting.md` files; for installing the daemon use murtaugh-setup instead.
+---
+
 # Skill: Murtaugh Gateway Operations
 
 Running and debugging the `slack gateway` daemon — the long-lived Socket Mode

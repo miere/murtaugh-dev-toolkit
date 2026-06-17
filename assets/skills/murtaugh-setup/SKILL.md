@@ -1,3 +1,8 @@
+---
+name: murtaugh-setup
+description: Operator-facing guide for installing and configuring Murtaugh from scratch using the idempotent `setup_*` tools (CLI `murtaugh setup <tool>` / MCP `setup_<tool>`). Covers getting the binary on PATH, seeding the config dir (`~/.config/murtaugh`) with `setup_bootstrap`, writing `slack.yaml` via `setup_slack` and `agents.yaml` via `setup_agents`, installing the macOS LaunchAgent daemon with `setup_launchd`, registering an MCP client with `setup_mcp-register`, and self-updating with `setup_update`. Use when installing or bootstrapping Murtaugh, editing its config/secret files, troubleshooting setup tool flags (e.g. `--load true`, `--binary-path`, `--app-token`), or determining the correct install order; for running and debugging the daemon afterward, use the murtaugh-operations skill instead.
+---
+
 # Skill: Murtaugh Setup & Install
 
 How to install and configure Murtaugh from scratch using the `setup_*` tools.

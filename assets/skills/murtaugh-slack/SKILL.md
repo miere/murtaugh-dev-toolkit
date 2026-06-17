@@ -1,3 +1,8 @@
+---
+name: murtaugh-slack
+description: End-to-end guide for building reactive Slack experiences on Murtaugh, where an agent posts a Block Kit message, a user interacts with it, and Murtaugh's server handles the block_actions click and renders a response via slack.yaml workflow-rules. Covers the inbound/reactive surface — matching workflow-rules by block_id/action_id, firing reply-to-slack, run, and delegate-to-agent triggers, designing message buttons (modals/view_submission are unsupported), and scheduled clock-tick automations. Use when wiring what happens on a Slack button click, defining or reusing action_ids and match rules in slack.yaml, building approval forms, PR action cards, status mirrors, or unfurl/ping-style interactive handlers. For actively posting, updating, or reading messages from a script, see murtaugh-slack-tools instead.
+---
+
 # Skill: Murtaugh Slack Workflows
 
 End-to-end guide for building Slack experiences on Murtaugh: an agent **posts** a
