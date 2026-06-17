@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/slack-go/slack"
 )
@@ -39,8 +39,8 @@ const idleTimeoutNotice = "\n\n:hourglass_flowing_sand: _The agent went quiet fo
 // side-effect-free: callers must treat (_, false) as "no live session,
 // skip the ACP cancel call" rather than implicitly opening one.
 type ChatSessionManager interface {
-	Prompt(context.Context, acp.ConversationKey, acp.SessionMetadata, acp.PromptRequest) (<-chan acp.Event, error)
-	Lookup(acp.ConversationKey) (string, bool)
+	Prompt(context.Context, agent.ConversationKey, agent.SessionMetadata, agent.PromptRequest) (<-chan agent.Event, error)
+	Lookup(agent.ConversationKey) (string, bool)
 	Cancel(context.Context, string) error
 }
 
@@ -206,7 +206,7 @@ func (h *ChatHandler) Warm(ctx context.Context) error {
 // excluded so it is not duplicated ahead of the user's own prompt text. A fetch
 // failure is logged and degraded to "" — the agent proceeds without backstory
 // rather than the turn failing.
-func (h *ChatHandler) backfillHistory(ctx context.Context, req ChatRequest, sessions ChatSessionManager, key acp.ConversationKey) string {
+func (h *ChatHandler) backfillHistory(ctx context.Context, req ChatRequest, sessions ChatSessionManager, key agent.ConversationKey) string {
 	if h.backfiller == nil || req.ThreadTS == "" {
 		return ""
 	}
@@ -241,7 +241,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 		return fmt.Errorf("chat prompt is empty")
 	}
 	key := conversationKey(req)
-	metadata := acp.SessionMetadata{TeamID: req.TeamID, ChannelID: req.ChannelID, ThreadTS: key.ThreadTS, UserID: req.UserID, Source: req.Source}
+	metadata := agent.SessionMetadata{TeamID: req.TeamID, ChannelID: req.ChannelID, ThreadTS: key.ThreadTS, UserID: req.UserID, Source: req.Source}
 	history := h.backfillHistory(ctx, req, sessions, key)
 	streamThreadTS := streamThreadTS(req)
 	if streamThreadTS == "" {
@@ -359,7 +359,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 	// parent rather than tripping the interrupt path.
 	promptCtx, cancelPrompt := context.WithCancel(ctx)
 	defer cancelPrompt()
-	events, err := sessions.Prompt(promptCtx, key, metadata, acp.PromptRequest{Text: prompt, History: history})
+	events, err := sessions.Prompt(promptCtx, key, metadata, agent.PromptRequest{Text: prompt, History: history})
 	if err != nil {
 		turnErr = err
 		return writer.Fail(ctx, err)
@@ -370,7 +370,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 	}
 	firstChunkLogged := false
 	streamStarted := false
-	runningTasks := make(map[string]acp.TaskStatus)
+	runningTasks := make(map[string]agent.TaskStatus)
 	// Idle watchdog: a turn is bounded by inactivity, not total wall-clock. Every
 	// event resets the timer; only an agent that goes silent for the whole window
 	// trips it. A long turn that keeps emitting tool calls never times out.
@@ -405,7 +405,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 			}
 			resetIdleTimer(idle, h.effectiveIdleTimeout())
 			switch event.Type {
-			case acp.EventText, acp.EventStatus:
+			case agent.EventText, agent.EventStatus:
 				if event.Text != "" {
 					chunkSeen++
 					byteSeen += len(event.Text)
@@ -426,7 +426,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 						return err
 					}
 				}
-			case acp.EventTask:
+			case agent.EventTask:
 				if event.Task == nil {
 					continue
 				}
@@ -445,7 +445,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 				} else {
 					runningTasks[event.Task.ID] = event.Task.Status
 				}
-			case acp.EventError:
+			case agent.EventError:
 				// A caller interrupt (new message / /stop) surfaces here as a
 				// context cancellation, not an agent failure. Never paint a
 				// still-running task red for being cut short — leave the cards in
@@ -461,7 +461,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 				turnErr = event.Error
 				h.finalizeTasks(ctx, taskWriter, runningTasks, slack.TaskCardStatusError)
 				return writer.Fail(ctx, event.Error)
-			case acp.EventComplete:
+			case agent.EventComplete:
 				// The agent finished successfully: any task still marked running
 				// never received an explicit terminal update (common with parallel
 				// tool calls). Complete them rather than abandoning them
@@ -476,7 +476,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 // finishStream resolves a successful turn: it completes any task cards the agent
 // left open, makes sure a Slack message exists, stops the stream, and logs. It
 // is shared by the explicit EventComplete and the channel-closed-cleanly paths.
-func (h *ChatHandler) finishStream(ctx context.Context, writer *StreamWriter, taskWriter progressRenderer, runningTasks map[string]acp.TaskStatus, streamStarted *bool, req ChatRequest, startedAt time.Time, chunks, bytes int, stopReason string) error {
+func (h *ChatHandler) finishStream(ctx context.Context, writer *StreamWriter, taskWriter progressRenderer, runningTasks map[string]agent.TaskStatus, streamStarted *bool, req ChatRequest, startedAt time.Time, chunks, bytes int, stopReason string) error {
 	h.finalizeTasks(ctx, taskWriter, runningTasks, slack.TaskCardStatusComplete)
 	if !*streamStarted {
 		if err := writer.Start(ctx); err != nil {
@@ -516,7 +516,7 @@ func emptyReplyNote(stopReason string) string {
 // an honest "asked it to stop" notice on the still-live parent context, then
 // finalises the stream. It deliberately does NOT touch task cards — the agent
 // did not fail, so their last reported status stands rather than turning red.
-func (h *ChatHandler) handleIdleTimeout(ctx context.Context, sessions ChatSessionManager, key acp.ConversationKey, writer *StreamWriter, streamStarted bool) error {
+func (h *ChatHandler) handleIdleTimeout(ctx context.Context, sessions ChatSessionManager, key agent.ConversationKey, writer *StreamWriter, streamStarted bool) error {
 	idle := h.effectiveIdleTimeout()
 	h.logger.Warn("ACP turn idle; asking agent to stop", "idle_timeout", idle)
 	// Tell the agent to stop. Best-effort, on a fresh context: the parent ctx is
@@ -545,7 +545,7 @@ func (h *ChatHandler) handleIdleTimeout(ctx context.Context, sessions ChatSessio
 // tasks the agent left open, so a card is never stranded in a spinner or
 // painted with a status that contradicts what actually happened. Errors are
 // logged, not propagated: finalisation is best-effort cleanup.
-func (h *ChatHandler) finalizeTasks(ctx context.Context, taskWriter progressRenderer, running map[string]acp.TaskStatus, status slack.TaskCardStatus) {
+func (h *ChatHandler) finalizeTasks(ctx context.Context, taskWriter progressRenderer, running map[string]agent.TaskStatus, status slack.TaskCardStatus) {
 	for id := range running {
 		var err error
 		switch status {
@@ -625,24 +625,24 @@ func (h *ChatHandler) renderInterrupted(writer *StreamWriter) {
 	}
 }
 
-func conversationKey(req ChatRequest) acp.ConversationKey {
+func conversationKey(req ChatRequest) agent.ConversationKey {
 	if req.DM {
-		return acp.ConversationKey{TeamID: req.TeamID, ChannelID: req.ChannelID, DM: true}
+		return agent.ConversationKey{TeamID: req.TeamID, ChannelID: req.ChannelID, DM: true}
 	}
 	threadTS := req.ThreadTS
 	if threadTS == "" {
 		threadTS = req.MessageTS
 	}
-	return acp.ConversationKey{TeamID: req.TeamID, ChannelID: req.ChannelID, ThreadTS: threadTS}
+	return agent.ConversationKey{TeamID: req.TeamID, ChannelID: req.ChannelID, ThreadTS: threadTS}
 }
 
 // isTerminalTaskStatus reports whether an ACP task status is a final outcome.
 // A task in any other state — pending, in_progress, or an update that omitted
 // its status — is still running and must stay tracked so it is finalised
 // rather than abandoned mid-flight.
-func isTerminalTaskStatus(status acp.TaskStatus) bool {
+func isTerminalTaskStatus(status agent.TaskStatus) bool {
 	switch status {
-	case acp.TaskStatusComplete, acp.TaskStatusFailed, acp.TaskStatusCancelled:
+	case agent.TaskStatusComplete, agent.TaskStatusFailed, agent.TaskStatusCancelled:
 		return true
 	default:
 		return false

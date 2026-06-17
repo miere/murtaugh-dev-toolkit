@@ -9,7 +9,7 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 )
 
 // progressRenderer is the surface ChatHandler uses to turn ACP task events into
@@ -24,7 +24,7 @@ import (
 // unconditionally, so a renderer that owns a side-channel message can tear it
 // down regardless of how the turn ended.
 type progressRenderer interface {
-	UpdateFromEvent(ctx context.Context, event *acp.TaskEvent) error
+	UpdateFromEvent(ctx context.Context, event *agent.TaskEvent) error
 	Complete(ctx context.Context, taskID, title string) error
 	Fail(ctx context.Context, taskID, title string) error
 	Finish(ctx context.Context) error
@@ -88,7 +88,7 @@ func NewStatusLineWriter(messenger statusMessenger, channelID, threadTS string, 
 // event's title (or the last one seen, or a default) becomes the line's text.
 // Updates are throttled so a rapidly-iterating agent does not hammer Slack; the
 // latest title is always remembered so the next write reflects it.
-func (w *StatusLineWriter) UpdateFromEvent(ctx context.Context, event *acp.TaskEvent) error {
+func (w *StatusLineWriter) UpdateFromEvent(ctx context.Context, event *agent.TaskEvent) error {
 	if event == nil {
 		return nil
 	}

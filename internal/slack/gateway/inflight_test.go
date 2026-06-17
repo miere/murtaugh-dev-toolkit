@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 )
 
 func TestInFlightRegistryRegisterUnregister(t *testing.T) {
 	r := NewInFlightRegistry()
-	key := acp.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
+	key := agent.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
 	_, cancel := context.WithCancel(context.Background())
 	token, prev := r.Register(key, cancel, "default")
 	if prev != nil {
@@ -26,7 +26,7 @@ func TestInFlightRegistryRegisterUnregister(t *testing.T) {
 
 func TestInFlightRegistryActive(t *testing.T) {
 	r := NewInFlightRegistry()
-	key := acp.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
+	key := agent.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
 	if r.Active(key) {
 		t.Fatal("expected no active chat before Register")
 	}
@@ -35,7 +35,7 @@ func TestInFlightRegistryActive(t *testing.T) {
 	if !r.Active(key) {
 		t.Fatal("expected active chat after Register")
 	}
-	if r.Active(acp.ConversationKey{ChannelID: "C2"}) {
+	if r.Active(agent.ConversationKey{ChannelID: "C2"}) {
 		t.Fatal("a different conversation must not report active")
 	}
 	r.Unregister(key, token)
@@ -50,7 +50,7 @@ func TestInFlightRegistryActive(t *testing.T) {
 
 func TestInFlightRegistryRegisterReturnsPreviousCancel(t *testing.T) {
 	r := NewInFlightRegistry()
-	key := acp.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
+	key := agent.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
 	called := false
 	first := func() { called = true }
 	_, prev := r.Register(key, first, "default")
@@ -70,7 +70,7 @@ func TestInFlightRegistryRegisterReturnsPreviousCancel(t *testing.T) {
 
 func TestInFlightRegistryCancelInvokesAndRemoves(t *testing.T) {
 	r := NewInFlightRegistry()
-	key := acp.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
+	key := agent.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
 	called := false
 	r.Register(key, func() { called = true }, "default")
 	if !r.Cancel(key) {
@@ -86,7 +86,7 @@ func TestInFlightRegistryCancelInvokesAndRemoves(t *testing.T) {
 
 func TestInFlightRegistryCancelOnEmptyReturnsFalse(t *testing.T) {
 	r := NewInFlightRegistry()
-	key := acp.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
+	key := agent.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
 	if r.Cancel(key) {
 		t.Fatalf("Cancel on empty registry must return false")
 	}
@@ -94,7 +94,7 @@ func TestInFlightRegistryCancelOnEmptyReturnsFalse(t *testing.T) {
 
 func TestInFlightRegistryUnregisterIgnoresStaleToken(t *testing.T) {
 	r := NewInFlightRegistry()
-	key := acp.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
+	key := agent.ConversationKey{ChannelID: "C1", ThreadTS: "1.0"}
 	staleToken, _ := r.Register(key, func() {}, "default")
 	// Second Register replaces the first (without going through
 	// Cancel, simulating a follow-up that arrives before the
@@ -114,14 +114,14 @@ func TestInFlightRegistryUnregisterIgnoresStaleToken(t *testing.T) {
 
 func TestInFlightRegistryNilSafe(t *testing.T) {
 	var r *InFlightRegistry
-	if r.Cancel(acp.ConversationKey{}) {
+	if r.Cancel(agent.ConversationKey{}) {
 		t.Fatalf("nil registry Cancel must return false")
 	}
-	r.Unregister(acp.ConversationKey{}, 0)
+	r.Unregister(agent.ConversationKey{}, 0)
 	if r.Len() != 0 {
 		t.Fatalf("nil registry Len must return 0")
 	}
-	token, prev := r.Register(acp.ConversationKey{}, func() {}, "")
+	token, prev := r.Register(agent.ConversationKey{}, func() {}, "")
 	if token != 0 || prev != nil {
 		t.Fatalf("nil registry Register must be a no-op")
 	}

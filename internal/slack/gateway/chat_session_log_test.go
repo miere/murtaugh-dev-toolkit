@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 )
 
@@ -17,11 +17,11 @@ import (
 // from Lookup, so a turn record can assert the session id and transcript.
 type scriptedSessions struct {
 	id     string
-	events []acp.Event
+	events []agent.Event
 }
 
-func (s scriptedSessions) Prompt(_ context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
-	ch := make(chan acp.Event, len(s.events))
+func (s scriptedSessions) Prompt(_ context.Context, _ agent.ConversationKey, _ agent.SessionMetadata, _ agent.PromptRequest) (<-chan agent.Event, error) {
+	ch := make(chan agent.Event, len(s.events))
 	for _, e := range s.events {
 		ch <- e
 	}
@@ -29,7 +29,7 @@ func (s scriptedSessions) Prompt(_ context.Context, _ acp.ConversationKey, _ acp
 	return ch, nil
 }
 
-func (s scriptedSessions) Lookup(acp.ConversationKey) (string, bool) { return s.id, true }
+func (s scriptedSessions) Lookup(agent.ConversationKey) (string, bool) { return s.id, true }
 func (s scriptedSessions) Cancel(context.Context, string) error      { return nil }
 
 func newLoggingHandler(t *testing.T, rec journal.Recorder, blobDir string, sessions ChatSessionManager) *ChatHandler {
@@ -42,10 +42,10 @@ func newLoggingHandler(t *testing.T, rec journal.Recorder, blobDir string, sessi
 func TestChatHandlerRecordsCompletedTurn(t *testing.T) {
 	blobDir := t.TempDir()
 	rec := &journalSpy{}
-	sessions := scriptedSessions{id: "sess-xyz", events: []acp.Event{
-		{Type: acp.EventText, Text: "hello "},
-		{Type: acp.EventText, Text: "world"},
-		{Type: acp.EventComplete},
+	sessions := scriptedSessions{id: "sess-xyz", events: []agent.Event{
+		{Type: agent.EventText, Text: "hello "},
+		{Type: agent.EventText, Text: "world"},
+		{Type: agent.EventComplete},
 	}}
 	handler := newLoggingHandler(t, rec, blobDir, sessions)
 
@@ -87,9 +87,9 @@ func TestChatHandlerRecordsCompletedTurn(t *testing.T) {
 func TestChatHandlerRecordsErroredTurn(t *testing.T) {
 	blobDir := t.TempDir()
 	rec := &journalSpy{}
-	sessions := scriptedSessions{id: "sess-err", events: []acp.Event{
-		{Type: acp.EventText, Text: "partial"},
-		{Type: acp.EventError, Error: errors.New("boom")},
+	sessions := scriptedSessions{id: "sess-err", events: []agent.Event{
+		{Type: agent.EventText, Text: "partial"},
+		{Type: agent.EventError, Error: errors.New("boom")},
 	}}
 	handler := newLoggingHandler(t, rec, blobDir, sessions)
 
@@ -110,8 +110,8 @@ func TestChatHandlerSurfacesEmptyReplyWithStopReason(t *testing.T) {
 	rec := &journalSpy{}
 	// A turn that streams no text and completes with a non-end_turn stop reason
 	// (the goose "investigated but produced no reply" case).
-	sessions := scriptedSessions{id: "sess-empty", events: []acp.Event{
-		{Type: acp.EventComplete, StopReason: "max_tokens"},
+	sessions := scriptedSessions{id: "sess-empty", events: []agent.Event{
+		{Type: agent.EventComplete, StopReason: "max_tokens"},
 	}}
 	api := &fakeStreamAPI{}
 	handler := NewChatHandler(api, map[string]ChatSessionManager{"default": sessions},
@@ -147,7 +147,7 @@ func TestChatHandlerSurfacesEmptyReplyWithStopReason(t *testing.T) {
 
 func TestChatHandlerNoSessionLogIsNoop(t *testing.T) {
 	// Without a session logger, Handle must work and record nothing.
-	sessions := scriptedSessions{id: "s", events: []acp.Event{{Type: acp.EventText, Text: "hi"}, {Type: acp.EventComplete}}}
+	sessions := scriptedSessions{id: "s", events: []agent.Event{{Type: agent.EventText, Text: "hi"}, {Type: agent.EventComplete}}}
 	handler := NewChatHandler(&fakeStreamAPI{}, map[string]ChatSessionManager{"default": sessions},
 		func(ChatRequest) string { return "default" }, time.Hour, 1, discardLogger())
 	if err := handler.Handle(context.Background(), ChatRequest{ChannelID: "C1", MessageTS: "1.1", Text: "hi", Source: "test"}); err != nil {

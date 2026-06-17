@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
@@ -142,7 +142,7 @@ func New(cfg config.Config, logger *slog.Logger, recorder journal.Recorder) *Gat
 	var chat *ChatHandler
 	var sessions map[string]ChatSessionManager
 	if !cfg.ACP.Enabled {
-		logger.Warn("ACP chat disabled: set acp.enabled: true in agents.yaml to enable DM and app_mention replies")
+		logger.Warn("ACP chat disabled: set agent.enabled: true in agents.yaml to enable DM and app_mention replies")
 	}
 	if cfg.ACP.Enabled {
 		sessions = make(map[string]ChatSessionManager)
@@ -155,14 +155,14 @@ func New(cfg config.Config, logger *slog.Logger, recorder journal.Recorder) *Gat
 			if strings.TrimSpace(workDir) == "" {
 				workDir = cfg.BaseDir
 			}
-			client := acp.NewProcessClient(acp.ProcessOptions{
+			client := agent.NewProcessClient(agent.ProcessOptions{
 				Command: profile.Command,
 				Args:    profile.Args,
 				WorkDir: workDir,
 				Env:     profile.EnvOverrides(),
 				Logger:  logger,
 			})
-			sessions[name] = acp.NewSessionManager(
+			sessions[name] = agent.NewSessionManager(
 				client,
 				cfg.ACP.EffectiveSessionIdleTimeout(),
 				cfg.ACP.EffectiveMaxSessions(),
@@ -672,7 +672,7 @@ func (a *Gateway) handleChatSlashCommand(ctx context.Context, event socketmode.E
 		return
 	}
 	if a.chat == nil {
-		a.ack(event, ephemeralText("ACP chat is not enabled. Configure `acp.enabled: true` first."))
+		a.ack(event, ephemeralText("ACP chat is not enabled. Configure `agent.enabled: true` first."))
 		return
 	}
 	a.ack(event, ephemeralText("Murtaugh is answering in the channel."))
@@ -780,7 +780,7 @@ func troubleshootComment(command slack.SlashCommand, note string, warnings []str
 // Authorisation: the outer handleSlashCommand has already enforced
 // IsAllowedUser, so no extra admin gate is required here.
 func (a *Gateway) handleStopSlashCommand(event socketmode.Event, command slack.SlashCommand, threadTS string) {
-	key := acp.ConversationKey{TeamID: command.TeamID, ChannelID: command.ChannelID, ThreadTS: threadTS}
+	key := agent.ConversationKey{TeamID: command.TeamID, ChannelID: command.ChannelID, ThreadTS: threadTS}
 	if threadTS == "" && strings.HasPrefix(command.ChannelID, "D") {
 		key.DM = true
 	}
@@ -982,7 +982,7 @@ func (a *Gateway) startChat(parent context.Context, req ChatRequest) {
 // Resolution of agent name → session manager uses chatSessions, which
 // the Gateway captured at construction time. When ACP is disabled the
 // closure degenerates to a plain cancelCtx call.
-func (a *Gateway) buildInterruptCancel(key acp.ConversationKey, agent string, cancelCtx context.CancelFunc) context.CancelFunc {
+func (a *Gateway) buildInterruptCancel(key agent.ConversationKey, agent string, cancelCtx context.CancelFunc) context.CancelFunc {
 	return func() {
 		go func() {
 			if a.chatSessions != nil {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 )
 
 // fakeStatusMessenger records the post/update/delete calls StatusLineWriter
@@ -74,13 +74,13 @@ func TestStatusLineWriterPostsThenUpdatesSameMessage(t *testing.T) {
 	writer := NewStatusLineWriter(msg, "C1", "thread-1", time.Nanosecond, nil)
 	ctx := context.Background()
 
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "task-1", Title: "Reading"}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "task-1", Title: "Reading"}); err != nil {
 		t.Fatalf("first update: %v", err)
 	}
 	time.Sleep(time.Millisecond)
 	// A second event with a different ACP task id must edit the same message in
 	// place — one line, last-write-wins — not post a new one.
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "task-2", Title: "Writing"}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "task-2", Title: "Writing"}); err != nil {
 		t.Fatalf("second update: %v", err)
 	}
 	if msg.posts != 1 || msg.updates != 1 {
@@ -106,7 +106,7 @@ func TestStatusLineWriterThrottles(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "t", Title: "tick"}); err != nil {
+		if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "t", Title: "tick"}); err != nil {
 			t.Fatalf("update %d: %v", i, err)
 		}
 	}
@@ -120,7 +120,7 @@ func TestStatusLineWriterFinishResolvesOnce(t *testing.T) {
 	writer := NewStatusLineWriter(msg, "C1", "", time.Hour, nil)
 	ctx := context.Background()
 
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "t", Title: "Reading"}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "t", Title: "Reading"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if err := writer.Finish(ctx); err != nil {
@@ -155,7 +155,7 @@ func TestStatusLineWriterSuppressesUpdatesAfterFinish(t *testing.T) {
 	writer := NewStatusLineWriter(msg, "C1", "", time.Nanosecond, nil)
 	ctx := context.Background()
 
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "t", Title: "Reading"}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "t", Title: "Reading"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if err := writer.Finish(ctx); err != nil {
@@ -163,7 +163,7 @@ func TestStatusLineWriterSuppressesUpdatesAfterFinish(t *testing.T) {
 	}
 	time.Sleep(time.Millisecond)
 	// A late event after the message has resolved must not overwrite the done line.
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "t", Title: "Late"}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "t", Title: "Late"}); err != nil {
 		t.Fatalf("late update: %v", err)
 	}
 	if msg.posts != 1 || msg.updates != 1 {
@@ -177,7 +177,7 @@ func TestStatusLineWriterSuppressesUpdatesAfterFinish(t *testing.T) {
 func TestStatusLineWriterDefaultsBlankTitle(t *testing.T) {
 	msg := &fakeStatusMessenger{}
 	writer := NewStatusLineWriter(msg, "C1", "", time.Hour, nil)
-	if err := writer.UpdateFromEvent(context.Background(), &acp.TaskEvent{ID: "t"}); err != nil {
+	if err := writer.UpdateFromEvent(context.Background(), &agent.TaskEvent{ID: "t"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if got := optionValue(msg.postOptions, "text"); got != defaultStatusLineTitle {
@@ -188,7 +188,7 @@ func TestStatusLineWriterDefaultsBlankTitle(t *testing.T) {
 func TestStatusLineWriterNilMessengerNoOp(t *testing.T) {
 	writer := NewStatusLineWriter(nil, "C1", "", time.Hour, nil)
 	ctx := context.Background()
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "t", Title: "x"}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "t", Title: "x"}); err != nil {
 		t.Fatalf("update with nil messenger should be a no-op, got %v", err)
 	}
 	if err := writer.Finish(ctx); err != nil {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
@@ -118,7 +118,7 @@ func TestHandleStopSlashCommandCancelsRegisteredChat(t *testing.T) {
 		inFlight: NewInFlightRegistry(),
 		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	key := acp.ConversationKey{TeamID: "T1", ChannelID: "C1", ThreadTS: "1700000000.000100"}
+	key := agent.ConversationKey{TeamID: "T1", ChannelID: "C1", ThreadTS: "1700000000.000100"}
 	cancelled := false
 	app.inFlight.Register(key, func() { cancelled = true }, "default")
 	// event.Request left nil so a.ack short-circuits (we exercise the
@@ -150,7 +150,7 @@ func TestHandleStopSlashCommandUsesDMKeyForDMChannels(t *testing.T) {
 		inFlight: NewInFlightRegistry(),
 		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	dmKey := acp.ConversationKey{TeamID: "T1", ChannelID: "D1", DM: true}
+	dmKey := agent.ConversationKey{TeamID: "T1", ChannelID: "D1", DM: true}
 	cancelled := false
 	app.inFlight.Register(dmKey, func() { cancelled = true }, "default")
 	// No thread_ts, channel starts with "D" → DM key.

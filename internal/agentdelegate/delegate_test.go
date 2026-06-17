@@ -8,18 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 )
 
-// fakeClient is a scripted acp.Client. It replays a fixed sequence of events on
+// fakeClient is a scripted agent.Client. It replays a fixed sequence of events on
 // Prompt, or — when block is set — returns a channel that stays open until the
 // prompt context is cancelled (to exercise the idle watchdog).
 type fakeClient struct {
 	initErr    error
 	newSessErr error
 	promptErr  error
-	events     []acp.Event
+	events     []agent.Event
 	block      bool
 
 	initialized bool
@@ -28,15 +28,15 @@ type fakeClient struct {
 
 func (f *fakeClient) Initialize(context.Context) error { f.initialized = true; return f.initErr }
 
-func (f *fakeClient) NewSession(context.Context, acp.SessionMetadata) (acp.Session, error) {
-	return acp.Session{ID: "session-1"}, f.newSessErr
+func (f *fakeClient) NewSession(context.Context, agent.SessionMetadata) (agent.Session, error) {
+	return agent.Session{ID: "session-1"}, f.newSessErr
 }
 
-func (f *fakeClient) Prompt(ctx context.Context, _ string, _ acp.PromptRequest) (<-chan acp.Event, error) {
+func (f *fakeClient) Prompt(ctx context.Context, _ string, _ agent.PromptRequest) (<-chan agent.Event, error) {
 	if f.promptErr != nil {
 		return nil, f.promptErr
 	}
-	ch := make(chan acp.Event)
+	ch := make(chan agent.Event)
 	if f.block {
 		go func() {
 			<-ctx.Done()
@@ -61,7 +61,7 @@ func newTestRunner(t *testing.T, client *fakeClient, requestTimeout string) *Run
 	t.Helper()
 	agents := map[string]config.AgentProfile{"default": {Command: "/bin/true"}}
 	r := NewRunner(agents, config.ACPConfig{RequestTimeout: requestTimeout}, "", slog.New(slog.NewTextHandler(nopWriter{}, nil)))
-	r.WithClientFactory(func(config.AgentProfile, *slog.Logger) acp.Client { return client })
+	r.WithClientFactory(func(config.AgentProfile, *slog.Logger) agent.Client { return client })
 	return r
 }
 
@@ -69,13 +69,13 @@ type nopWriter struct{}
 
 func (nopWriter) Write(p []byte) (int, error) { return len(p), nil }
 
-func textEvent(s string) acp.Event { return acp.Event{Type: acp.EventText, Text: s} }
+func textEvent(s string) agent.Event { return agent.Event{Type: agent.EventText, Text: s} }
 
 func TestRunAccumulatesTextUntilComplete(t *testing.T) {
-	client := &fakeClient{events: []acp.Event{
+	client := &fakeClient{events: []agent.Event{
 		textEvent("Hello, "),
 		textEvent("world"),
-		{Type: acp.EventComplete},
+		{Type: agent.EventComplete},
 	}}
 	r := newTestRunner(t, client, "1m")
 
@@ -92,7 +92,7 @@ func TestRunAccumulatesTextUntilComplete(t *testing.T) {
 }
 
 func TestRunReturnsOnChannelClose(t *testing.T) {
-	client := &fakeClient{events: []acp.Event{textEvent("partial")}}
+	client := &fakeClient{events: []agent.Event{textEvent("partial")}}
 	r := newTestRunner(t, client, "1m")
 
 	out, err := r.Run(context.Background(), "default", "hi")
@@ -106,9 +106,9 @@ func TestRunReturnsOnChannelClose(t *testing.T) {
 
 func TestRunSurfacesAgentError(t *testing.T) {
 	boom := errors.New("boom")
-	client := &fakeClient{events: []acp.Event{
+	client := &fakeClient{events: []agent.Event{
 		textEvent("starting"),
-		{Type: acp.EventError, Error: boom},
+		{Type: agent.EventError, Error: boom},
 	}}
 	r := newTestRunner(t, client, "1m")
 
@@ -150,12 +150,12 @@ type heartbeatClient struct {
 
 func (c *heartbeatClient) Initialize(context.Context) error { return nil }
 
-func (c *heartbeatClient) NewSession(context.Context, acp.SessionMetadata) (acp.Session, error) {
-	return acp.Session{ID: "session-1"}, nil
+func (c *heartbeatClient) NewSession(context.Context, agent.SessionMetadata) (agent.Session, error) {
+	return agent.Session{ID: "session-1"}, nil
 }
 
-func (c *heartbeatClient) Prompt(ctx context.Context, _ string, _ acp.PromptRequest) (<-chan acp.Event, error) {
-	ch := make(chan acp.Event)
+func (c *heartbeatClient) Prompt(ctx context.Context, _ string, _ agent.PromptRequest) (<-chan agent.Event, error) {
+	ch := make(chan agent.Event)
 	go func() {
 		defer close(ch)
 		ticker := time.NewTicker(c.interval)
@@ -173,7 +173,7 @@ func (c *heartbeatClient) Prompt(ctx context.Context, _ string, _ acp.PromptRequ
 			}
 		}
 		select {
-		case ch <- acp.Event{Type: acp.EventComplete}:
+		case ch <- agent.Event{Type: agent.EventComplete}:
 		case <-ctx.Done():
 		}
 	}()
@@ -194,7 +194,7 @@ func TestRunProductiveTurnOutlivesIdleWindow(t *testing.T) {
 	client := &heartbeatClient{interval: 20 * time.Millisecond, beats: beats}
 	agents := map[string]config.AgentProfile{"default": {Command: "/bin/true"}}
 	r := NewRunner(agents, config.ACPConfig{RequestTimeout: "200ms"}, "", slog.New(slog.NewTextHandler(nopWriter{}, nil)))
-	r.WithClientFactory(func(config.AgentProfile, *slog.Logger) acp.Client { return client })
+	r.WithClientFactory(func(config.AgentProfile, *slog.Logger) agent.Client { return client })
 
 	out, err := r.Run(context.Background(), "default", "hi")
 	if err != nil {
@@ -209,9 +209,9 @@ func TestRunProductiveTurnOutlivesIdleWindow(t *testing.T) {
 }
 
 func TestRunForJSONValid(t *testing.T) {
-	client := &fakeClient{events: []acp.Event{
+	client := &fakeClient{events: []agent.Event{
 		textEvent(`{"text":"hi"}`),
-		{Type: acp.EventComplete},
+		{Type: agent.EventComplete},
 	}}
 	r := newTestRunner(t, client, "1m")
 
@@ -225,9 +225,9 @@ func TestRunForJSONValid(t *testing.T) {
 }
 
 func TestRunForJSONNonJSON(t *testing.T) {
-	client := &fakeClient{events: []acp.Event{
+	client := &fakeClient{events: []agent.Event{
 		textEvent("just some prose, not json"),
-		{Type: acp.EventComplete},
+		{Type: agent.EventComplete},
 	}}
 	r := newTestRunner(t, client, "1m")
 
@@ -238,9 +238,9 @@ func TestRunForJSONNonJSON(t *testing.T) {
 }
 
 func TestRunAndForgetDiscardsOutput(t *testing.T) {
-	client := &fakeClient{events: []acp.Event{
+	client := &fakeClient{events: []agent.Event{
 		textEvent("side-effects only"),
-		{Type: acp.EventComplete},
+		{Type: agent.EventComplete},
 	}}
 	r := newTestRunner(t, client, "1m")
 

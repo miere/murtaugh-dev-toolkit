@@ -9,7 +9,7 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 )
 
@@ -24,18 +24,18 @@ type fakeChatSessions struct {
 	// Tests that call ChatHandler.Handle synchronously may read the fields
 	// directly — the happens-before is established by the sequential call.
 	mu     sync.Mutex
-	key    acp.ConversationKey
+	key    agent.ConversationKey
 	prompt string
 }
 
-func (f *fakeChatSessions) Prompt(_ context.Context, key acp.ConversationKey, _ acp.SessionMetadata, req acp.PromptRequest) (<-chan acp.Event, error) {
+func (f *fakeChatSessions) Prompt(_ context.Context, key agent.ConversationKey, _ agent.SessionMetadata, req agent.PromptRequest) (<-chan agent.Event, error) {
 	f.mu.Lock()
 	f.key = key
 	f.prompt = req.Text
 	f.mu.Unlock()
-	ch := make(chan acp.Event, 2)
-	ch <- acp.Event{Type: acp.EventText, Text: "hello from agent"}
-	ch <- acp.Event{Type: acp.EventComplete}
+	ch := make(chan agent.Event, 2)
+	ch <- agent.Event{Type: agent.EventText, Text: "hello from agent"}
+	ch <- agent.Event{Type: agent.EventComplete}
 	close(ch)
 	return ch, nil
 }
@@ -48,13 +48,13 @@ func (f *fakeChatSessions) promptText() string {
 	return f.prompt
 }
 
-func (f *fakeChatSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *fakeChatSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
 func (f *fakeChatSessions) Cancel(context.Context, string) error      { return nil }
-func (f *fakeChatSessionsWithTasks) Lookup(acp.ConversationKey) (string, bool) {
+func (f *fakeChatSessionsWithTasks) Lookup(agent.ConversationKey) (string, bool) {
 	return "", false
 }
 func (f *fakeChatSessionsWithTasks) Cancel(context.Context, string) error { return nil }
-func (f *fakeChatSessionsWithCompletedTaskThenText) Lookup(acp.ConversationKey) (string, bool) {
+func (f *fakeChatSessionsWithCompletedTaskThenText) Lookup(agent.ConversationKey) (string, bool) {
 	return "", false
 }
 func (f *fakeChatSessionsWithCompletedTaskThenText) Cancel(context.Context, string) error {
@@ -62,35 +62,35 @@ func (f *fakeChatSessionsWithCompletedTaskThenText) Cancel(context.Context, stri
 }
 
 type fakeChatSessionsWithTasks struct {
-	key    acp.ConversationKey
+	key    agent.ConversationKey
 	prompt string
 }
 
-func (f *fakeChatSessionsWithTasks) Prompt(_ context.Context, key acp.ConversationKey, _ acp.SessionMetadata, req acp.PromptRequest) (<-chan acp.Event, error) {
+func (f *fakeChatSessionsWithTasks) Prompt(_ context.Context, key agent.ConversationKey, _ agent.SessionMetadata, req agent.PromptRequest) (<-chan agent.Event, error) {
 	f.key = key
 	f.prompt = req.Text
-	ch := make(chan acp.Event, 4)
-	ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "task-1", Title: "Searching", Status: acp.TaskStatusInProgress}}
-	ch <- acp.Event{Type: acp.EventText, Text: "found it"}
-	ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "task-1", Title: "Searching", Status: acp.TaskStatusComplete}}
-	ch <- acp.Event{Type: acp.EventComplete}
+	ch := make(chan agent.Event, 4)
+	ch <- agent.Event{Type: agent.EventTask, Task: &agent.TaskEvent{ID: "task-1", Title: "Searching", Status: agent.TaskStatusInProgress}}
+	ch <- agent.Event{Type: agent.EventText, Text: "found it"}
+	ch <- agent.Event{Type: agent.EventTask, Task: &agent.TaskEvent{ID: "task-1", Title: "Searching", Status: agent.TaskStatusComplete}}
+	ch <- agent.Event{Type: agent.EventComplete}
 	close(ch)
 	return ch, nil
 }
 
 type fakeChatSessionsWithCompletedTaskThenText struct {
-	key    acp.ConversationKey
+	key    agent.ConversationKey
 	prompt string
 }
 
-func (f *fakeChatSessionsWithCompletedTaskThenText) Prompt(_ context.Context, key acp.ConversationKey, _ acp.SessionMetadata, req acp.PromptRequest) (<-chan acp.Event, error) {
+func (f *fakeChatSessionsWithCompletedTaskThenText) Prompt(_ context.Context, key agent.ConversationKey, _ agent.SessionMetadata, req agent.PromptRequest) (<-chan agent.Event, error) {
 	f.key = key
 	f.prompt = req.Text
-	ch := make(chan acp.Event, 4)
-	ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "task-1", Title: "Searching", Status: acp.TaskStatusInProgress}}
-	ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "task-1", Title: "Searching", Status: acp.TaskStatusComplete}}
-	ch <- acp.Event{Type: acp.EventText, Text: "final answer"}
-	ch <- acp.Event{Type: acp.EventComplete}
+	ch := make(chan agent.Event, 4)
+	ch <- agent.Event{Type: agent.EventTask, Task: &agent.TaskEvent{ID: "task-1", Title: "Searching", Status: agent.TaskStatusInProgress}}
+	ch <- agent.Event{Type: agent.EventTask, Task: &agent.TaskEvent{ID: "task-1", Title: "Searching", Status: agent.TaskStatusComplete}}
+	ch <- agent.Event{Type: agent.EventText, Text: "final answer"}
+	ch <- agent.Event{Type: agent.EventComplete}
 	close(ch)
 	return ch, nil
 }
@@ -103,16 +103,16 @@ func (f *fakeChatSessionsWithCompletedTaskThenText) Prompt(_ context.Context, ke
 // warning once the plan closes).
 type fakeChatSessionsRenamedTask struct{}
 
-func (f *fakeChatSessionsRenamedTask) Prompt(_ context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
-	ch := make(chan acp.Event, 4)
-	ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "task-1", Title: "edit - /tmp/x.py", Status: acp.TaskStatusInProgress}}
-	ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "task-1", Title: "editing python command"}}
-	ch <- acp.Event{Type: acp.EventComplete}
+func (f *fakeChatSessionsRenamedTask) Prompt(_ context.Context, _ agent.ConversationKey, _ agent.SessionMetadata, _ agent.PromptRequest) (<-chan agent.Event, error) {
+	ch := make(chan agent.Event, 4)
+	ch <- agent.Event{Type: agent.EventTask, Task: &agent.TaskEvent{ID: "task-1", Title: "edit - /tmp/x.py", Status: agent.TaskStatusInProgress}}
+	ch <- agent.Event{Type: agent.EventTask, Task: &agent.TaskEvent{ID: "task-1", Title: "editing python command"}}
+	ch <- agent.Event{Type: agent.EventComplete}
 	close(ch)
 	return ch, nil
 }
 
-func (f *fakeChatSessionsRenamedTask) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *fakeChatSessionsRenamedTask) Lookup(agent.ConversationKey) (string, bool) { return "", false }
 func (f *fakeChatSessionsRenamedTask) Cancel(context.Context, string) error      { return nil }
 
 func TestChatHandlerFinalisesRenamedTaskOnSuccess(t *testing.T) {
@@ -278,16 +278,16 @@ func TestChatHandlerAppendsFinalTextAfterTaskCompletes(t *testing.T) {
 // parallel-task case where the agent finishes without closing every card.
 type fakeChatSessionsRunningTaskThenComplete struct{}
 
-func (f *fakeChatSessionsRunningTaskThenComplete) Prompt(_ context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
-	ch := make(chan acp.Event, 4)
-	ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "task-1", Title: "Searching", Status: acp.TaskStatusInProgress}}
-	ch <- acp.Event{Type: acp.EventText, Text: "done"}
-	ch <- acp.Event{Type: acp.EventComplete}
+func (f *fakeChatSessionsRunningTaskThenComplete) Prompt(_ context.Context, _ agent.ConversationKey, _ agent.SessionMetadata, _ agent.PromptRequest) (<-chan agent.Event, error) {
+	ch := make(chan agent.Event, 4)
+	ch <- agent.Event{Type: agent.EventTask, Task: &agent.TaskEvent{ID: "task-1", Title: "Searching", Status: agent.TaskStatusInProgress}}
+	ch <- agent.Event{Type: agent.EventText, Text: "done"}
+	ch <- agent.Event{Type: agent.EventComplete}
 	close(ch)
 	return ch, nil
 }
 
-func (f *fakeChatSessionsRunningTaskThenComplete) Lookup(acp.ConversationKey) (string, bool) {
+func (f *fakeChatSessionsRunningTaskThenComplete) Lookup(agent.ConversationKey) (string, bool) {
 	return "", false
 }
 func (f *fakeChatSessionsRunningTaskThenComplete) Cancel(context.Context, string) error { return nil }
@@ -335,12 +335,12 @@ type cancellableTaskSessions struct {
 	taskSent chan struct{}
 }
 
-func (f *cancellableTaskSessions) Prompt(ctx context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
-	ch := make(chan acp.Event)
+func (f *cancellableTaskSessions) Prompt(ctx context.Context, _ agent.ConversationKey, _ agent.SessionMetadata, _ agent.PromptRequest) (<-chan agent.Event, error) {
+	ch := make(chan agent.Event)
 	go func() {
 		defer close(ch)
 		select {
-		case ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "t1", Title: "Working", Status: acp.TaskStatusInProgress}}:
+		case ch <- agent.Event{Type: agent.EventTask, Task: &agent.TaskEvent{ID: "t1", Title: "Working", Status: agent.TaskStatusInProgress}}:
 		case <-ctx.Done():
 			return
 		}
@@ -349,14 +349,14 @@ func (f *cancellableTaskSessions) Prompt(ctx context.Context, _ acp.Conversation
 		}
 		<-ctx.Done()
 		select {
-		case ch <- acp.Event{Type: acp.EventError, Error: ctx.Err()}:
+		case ch <- agent.Event{Type: agent.EventError, Error: ctx.Err()}:
 		case <-time.After(time.Second):
 		}
 	}()
 	return ch, nil
 }
 
-func (f *cancellableTaskSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *cancellableTaskSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
 func (f *cancellableTaskSessions) Cancel(context.Context, string) error      { return nil }
 
 func TestChatHandlerDoesNotFailTasksOnInterrupt(t *testing.T) {
@@ -452,18 +452,18 @@ type blockingChatSessions struct {
 	release chan struct{}
 }
 
-func (f *blockingChatSessions) Prompt(_ context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
-	ch := make(chan acp.Event, 2)
+func (f *blockingChatSessions) Prompt(_ context.Context, _ agent.ConversationKey, _ agent.SessionMetadata, _ agent.PromptRequest) (<-chan agent.Event, error) {
+	ch := make(chan agent.Event, 2)
 	go func() {
 		<-f.release
-		ch <- acp.Event{Type: acp.EventText, Text: "hi"}
-		ch <- acp.Event{Type: acp.EventComplete}
+		ch <- agent.Event{Type: agent.EventText, Text: "hi"}
+		ch <- agent.Event{Type: agent.EventComplete}
 		close(ch)
 	}()
 	return ch, nil
 }
 
-func (f *blockingChatSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *blockingChatSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
 func (f *blockingChatSessions) Cancel(context.Context, string) error      { return nil }
 
 func TestChatHandlerRefreshesAssistantStatusWhileEventsPending(t *testing.T) {
@@ -518,12 +518,12 @@ type cancellableChatSessions struct {
 	firstChunkSent chan struct{}
 }
 
-func (f *cancellableChatSessions) Prompt(ctx context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
-	ch := make(chan acp.Event)
+func (f *cancellableChatSessions) Prompt(ctx context.Context, _ agent.ConversationKey, _ agent.SessionMetadata, _ agent.PromptRequest) (<-chan agent.Event, error) {
+	ch := make(chan agent.Event)
 	go func() {
 		defer close(ch)
 		select {
-		case ch <- acp.Event{Type: acp.EventText, Text: "partial reply"}:
+		case ch <- agent.Event{Type: agent.EventText, Text: "partial reply"}:
 		case <-ctx.Done():
 			return
 		}
@@ -535,7 +535,7 @@ func (f *cancellableChatSessions) Prompt(ctx context.Context, _ acp.Conversation
 	return ch, nil
 }
 
-func (f *cancellableChatSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *cancellableChatSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
 func (f *cancellableChatSessions) Cancel(context.Context, string) error      { return nil }
 
 func TestChatHandlerInterruptedByCancelReturnsNil(t *testing.T) {
@@ -595,17 +595,17 @@ type stallingChatSessions struct {
 	cancelled []string
 }
 
-func (f *stallingChatSessions) Prompt(ctx context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
-	ch := make(chan acp.Event)
+func (f *stallingChatSessions) Prompt(ctx context.Context, _ agent.ConversationKey, _ agent.SessionMetadata, _ agent.PromptRequest) (<-chan agent.Event, error) {
+	ch := make(chan agent.Event)
 	go func() {
 		defer close(ch)
 		select {
-		case ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "task-1", Title: "Working", Status: acp.TaskStatusInProgress}}:
+		case ch <- agent.Event{Type: agent.EventTask, Task: &agent.TaskEvent{ID: "task-1", Title: "Working", Status: agent.TaskStatusInProgress}}:
 		case <-ctx.Done():
 			return
 		}
 		select {
-		case ch <- acp.Event{Type: acp.EventText, Text: "partial reply"}:
+		case ch <- agent.Event{Type: agent.EventText, Text: "partial reply"}:
 		case <-ctx.Done():
 			return
 		}
@@ -614,7 +614,7 @@ func (f *stallingChatSessions) Prompt(ctx context.Context, _ acp.ConversationKey
 	return ch, nil
 }
 
-func (f *stallingChatSessions) Lookup(acp.ConversationKey) (string, bool) { return f.sessionID, true }
+func (f *stallingChatSessions) Lookup(agent.ConversationKey) (string, bool) { return f.sessionID, true }
 func (f *stallingChatSessions) Cancel(_ context.Context, sessionID string) error {
 	f.cancelled = append(f.cancelled, sessionID)
 	return nil
@@ -670,21 +670,21 @@ type steadyChatSessions struct {
 	cancelled int
 }
 
-func (f *steadyChatSessions) Prompt(_ context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
-	ch := make(chan acp.Event)
+func (f *steadyChatSessions) Prompt(_ context.Context, _ agent.ConversationKey, _ agent.SessionMetadata, _ agent.PromptRequest) (<-chan agent.Event, error) {
+	ch := make(chan agent.Event)
 	go func() {
 		defer close(ch)
 		for i := 0; i < f.events; i++ {
 			time.Sleep(f.gap)
-			ch <- acp.Event{Type: acp.EventTask, Task: &acp.TaskEvent{ID: "task-1", Title: "Working", Status: acp.TaskStatusInProgress}}
+			ch <- agent.Event{Type: agent.EventTask, Task: &agent.TaskEvent{ID: "task-1", Title: "Working", Status: agent.TaskStatusInProgress}}
 		}
-		ch <- acp.Event{Type: acp.EventText, Text: "done"}
-		ch <- acp.Event{Type: acp.EventComplete}
+		ch <- agent.Event{Type: agent.EventText, Text: "done"}
+		ch <- agent.Event{Type: agent.EventComplete}
 	}()
 	return ch, nil
 }
 
-func (f *steadyChatSessions) Lookup(acp.ConversationKey) (string, bool) { return "sess-1", true }
+func (f *steadyChatSessions) Lookup(agent.ConversationKey) (string, bool) { return "sess-1", true }
 func (f *steadyChatSessions) Cancel(context.Context, string) error      { f.cancelled++; return nil }
 
 func TestChatHandlerIdleTimerResetsOnActivity(t *testing.T) {

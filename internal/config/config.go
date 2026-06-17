@@ -25,6 +25,7 @@ type Config struct {
 	Chat          ChatConfig                    `yaml:"chat"`
 	ACP           ACPConfig                     `yaml:"-"`
 	Agents        map[string]AgentProfile       `yaml:"-"`
+	MCPServers    map[string]MCPServerConfig    `yaml:"-"`
 	Jobs          map[string]JobProfile         `yaml:"-"`
 	Journal       JournalConfig                 `yaml:"-"`
 	Troubleshoot  TroubleshootConfig            `yaml:"-"`
@@ -96,10 +97,57 @@ const (
 	ProgressDisplayTasks ProgressDisplay = "tasks"
 )
 
+// AgentKind selects which backend drives an agent profile.
+type AgentKind string
+
+const (
+	// AgentKindNative is the in-process LLM agent loop (the default). It talks
+	// to a provider directly via internal/llm and owns the conversation array.
+	AgentKindNative AgentKind = "native"
+	// AgentKindACP is the legacy external-process backend driven over ACP
+	// (kind: acp). Requires Command.
+	AgentKindACP AgentKind = "acp"
+)
+
 type AgentProfile struct {
+	// Kind selects the backend. Empty resolves via ResolvedKind: a profile with
+	// a Command (and no explicit kind) is treated as acp for back-compat;
+	// otherwise it defaults to native.
+	Kind AgentKind `yaml:"kind"`
+
+	// --- ACP backend (kind: acp) ---
 	Command string   `yaml:"command"`
 	Args    []string `yaml:"args"`
 	WorkDir string   `yaml:"workdir"`
+
+	// --- Native backend (kind: native) ---
+	// Provider selects the litellm provider family: "gemini", "anthropic"
+	// (Anthropic-compatible, incl. base_url overrides), or "openai"
+	// (OpenAI-compatible, incl. GLM/DeepSeek/Kimi via base_url).
+	Provider string `yaml:"provider"`
+	// Model is the provider model id (e.g. "gemini-2.5-pro", "glm-4.6").
+	Model string `yaml:"model"`
+	// BaseURL overrides the provider endpoint for compatible third parties
+	// (Z.ai, DeepSeek, Kimi, self-hosted). Empty uses the provider default.
+	BaseURL string `yaml:"base_url"`
+	// APIKeyEnv names the environment variable (loaded from ~/.config/murtaugh/.env)
+	// holding the provider credential. The key value itself never lives in YAML.
+	APIKeyEnv string `yaml:"api_key_env"`
+	// SystemPrompt is the inline system prompt. Mutually exclusive with
+	// SystemPromptFile; when both are empty the loop uses a built-in default.
+	SystemPrompt string `yaml:"system_prompt"`
+	// SystemPromptFile is a path (resolved against the config dir) to a file
+	// holding the system prompt. Mutually exclusive with SystemPrompt.
+	SystemPromptFile string `yaml:"system_prompt_file"`
+	// Tools is the allowlist of registry/native tool groups exposed to this
+	// agent (e.g. "files", "terminal", "skills", "slack", "jobs"). Empty means
+	// no tools beyond the always-on set the toolset resolver decides.
+	Tools []string `yaml:"tools"`
+	// MCPServers lists names from the top-level mcp_servers block to attach to
+	// this agent. Each contributes its remote tools to the agent's toolset.
+	MCPServers []string `yaml:"mcp_servers"`
+	// MaxTurns bounds tool-call iterations in a single prompt. 0 uses a default.
+	MaxTurns int `yaml:"max_turns"`
 	// Interruptible overrides auto-detection of session/cancel support. When
 	// nil (the default) Murtaugh probes the agent at warmup; set it explicitly
 	// to skip the probe or to correct a wrong verdict.
@@ -328,14 +376,23 @@ func Load(path string) (Config, error) {
 	agentsData, err := os.ReadFile(agentsPath)
 	if err == nil {
 		var agents struct {
-			ACP    ACPConfig               `yaml:"acp"`
-			Agents map[string]AgentProfile `yaml:"agents"`
+			ACP        ACPConfig                  `yaml:"acp"`
+			Agent      *ACPConfig                 `yaml:"agent"`
+			Agents     map[string]AgentProfile    `yaml:"agents"`
+			MCPServers map[string]MCPServerConfig `yaml:"mcp_servers"`
 		}
 		if err := yaml.Unmarshal(agentsData, &agents); err != nil {
 			return Config{}, fmt.Errorf("parse agents config %q: %w", agentsPath, err)
 		}
+		// `agent:` is the new spelling of the kind-agnostic runtime block; `acp:`
+		// stays accepted as an alias so existing configs keep working. When both
+		// are present the new `agent:` key wins.
 		cfg.ACP = agents.ACP
+		if agents.Agent != nil {
+			cfg.ACP = *agents.Agent
+		}
 		cfg.Agents = agents.Agents
+		cfg.MCPServers = agents.MCPServers
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Config{}, fmt.Errorf("read agents config %q: %w", agentsPath, err)
 	}
@@ -604,10 +661,38 @@ func (c ACPConfig) Validate() error {
 }
 
 func (p AgentProfile) Validate() error {
-	if strings.TrimSpace(p.Command) == "" {
+	if p.ResolvedKind() == AgentKindACP && strings.TrimSpace(p.Command) == "" {
 		return errors.New("agent profile command is required")
 	}
 	return nil
+}
+
+// ResolvedKind reports the effective backend for the profile. An explicit Kind
+// wins; otherwise a profile carrying a Command resolves to acp (back-compat for
+// pre-native configs) and everything else defaults to native.
+func (p AgentProfile) ResolvedKind() AgentKind {
+	switch AgentKind(strings.ToLower(strings.TrimSpace(string(p.Kind)))) {
+	case AgentKindACP:
+		return AgentKindACP
+	case AgentKindNative:
+		return AgentKindNative
+	default:
+		if strings.TrimSpace(p.Command) != "" {
+			return AgentKindACP
+		}
+		return AgentKindNative
+	}
+}
+
+// MCPServerConfig describes one external MCP server the native agent can attach
+// to. Exactly one transport is used: a stdio child process (Command/Args/Env)
+// or a remote endpoint (URL). The full wiring + validation lands in T5/T6; this
+// is the config contract Wave-1 tasks share.
+type MCPServerConfig struct {
+	Command string            `yaml:"command"`
+	Args    []string          `yaml:"args"`
+	Env     map[string]string `yaml:"env"`
+	URL     string            `yaml:"url"`
 }
 
 // EffectiveProgressDisplay resolves how the given agent's progress renders:

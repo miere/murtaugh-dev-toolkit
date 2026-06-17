@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 )
 
 // InFlightRegistry tracks the chat goroutines currently streaming a
@@ -22,7 +22,7 @@ import (
 type InFlightRegistry struct {
 	mu      sync.Mutex
 	nextID  atomic.Uint64
-	entries map[acp.ConversationKey]*inFlightChat
+	entries map[agent.ConversationKey]*inFlightChat
 }
 
 type inFlightChat struct {
@@ -38,7 +38,7 @@ type inFlightChat struct {
 type Token uint64
 
 func NewInFlightRegistry() *InFlightRegistry {
-	return &InFlightRegistry{entries: make(map[acp.ConversationKey]*inFlightChat)}
+	return &InFlightRegistry{entries: make(map[agent.ConversationKey]*inFlightChat)}
 }
 
 // Register records a new in-flight chat for the conversation. If a
@@ -46,7 +46,7 @@ func NewInFlightRegistry() *InFlightRegistry {
 // cancel func is returned to the caller — the caller is expected to
 // invoke it (the interrupt path). Cancellation happens outside the
 // mutex so a slow ACP `session/cancel` does not block other callers.
-func (r *InFlightRegistry) Register(key acp.ConversationKey, cancel context.CancelFunc, agent string) (Token, context.CancelFunc) {
+func (r *InFlightRegistry) Register(key agent.ConversationKey, cancel context.CancelFunc, agent string) (Token, context.CancelFunc) {
 	if r == nil {
 		return 0, nil
 	}
@@ -65,7 +65,7 @@ func (r *InFlightRegistry) Register(key acp.ConversationKey, cancel context.Canc
 // token matches the supplied one. The token guard prevents a
 // slow-finishing goroutine from clearing the entry of a follow-up
 // chat that has already replaced it.
-func (r *InFlightRegistry) Unregister(key acp.ConversationKey, token Token) {
+func (r *InFlightRegistry) Unregister(key agent.ConversationKey, token Token) {
 	if r == nil {
 		return
 	}
@@ -83,7 +83,7 @@ func (r *InFlightRegistry) Unregister(key acp.ConversationKey, token Token) {
 // Cancel cancels the entry for the conversation, if any. Returns
 // true when an entry was found and cancelled, false when there was
 // nothing to stop. The cancel closure is invoked outside the mutex.
-func (r *InFlightRegistry) Cancel(key acp.ConversationKey) bool {
+func (r *InFlightRegistry) Cancel(key agent.ConversationKey) bool {
 	if r == nil {
 		return false
 	}
@@ -103,7 +103,7 @@ func (r *InFlightRegistry) Cancel(key acp.ConversationKey) bool {
 // Active reports whether a chat is currently in flight for the conversation.
 // It races with concurrent Register/Cancel by nature, so callers must treat
 // the answer as a best-effort snapshot, not a lock.
-func (r *InFlightRegistry) Active(key acp.ConversationKey) bool {
+func (r *InFlightRegistry) Active(key agent.ConversationKey) bool {
 	if r == nil {
 		return false
 	}

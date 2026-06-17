@@ -7,7 +7,7 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 )
 
 func TestTaskCardWriterSendsTaskUpdateChunk(t *testing.T) {
@@ -117,15 +117,15 @@ func TestTaskCardWriterDifferentTasksNotRateLimited(t *testing.T) {
 
 func TestTaskCardWriterMapStatus(t *testing.T) {
 	tests := []struct {
-		acpStatus acp.TaskStatus
+		acpStatus agent.TaskStatus
 		wantSlack slack.TaskCardStatus
 	}{
-		{acp.TaskStatusPending, slack.TaskCardStatusPending},
-		{acp.TaskStatusInProgress, slack.TaskCardStatusInProgress},
-		{acp.TaskStatusComplete, slack.TaskCardStatusComplete},
-		{acp.TaskStatusFailed, slack.TaskCardStatusError},
-		{acp.TaskStatusCancelled, slack.TaskCardStatusError},
-		{acp.TaskStatus("unknown"), slack.TaskCardStatusInProgress},
+		{agent.TaskStatusPending, slack.TaskCardStatusPending},
+		{agent.TaskStatusInProgress, slack.TaskCardStatusInProgress},
+		{agent.TaskStatusComplete, slack.TaskCardStatusComplete},
+		{agent.TaskStatusFailed, slack.TaskCardStatusError},
+		{agent.TaskStatusCancelled, slack.TaskCardStatusError},
+		{agent.TaskStatus("unknown"), slack.TaskCardStatusInProgress},
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.acpStatus), func(t *testing.T) {
@@ -171,14 +171,14 @@ func TestTaskCardWriterPreservesStatusOnTitleOnlyUpdate(t *testing.T) {
 	ctx := context.Background()
 
 	// A tool starts running...
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "call-1", Title: "edit - /tmp/x.py", Status: acp.TaskStatusInProgress}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "call-1", Title: "edit - /tmp/x.py", Status: agent.TaskStatusInProgress}); err != nil {
 		t.Fatalf("UpdateFromEvent returned error: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
 	// ...then the agent refines only the title, sending no status (goose does
 	// this for tool_call_update notifications). The card must keep its
 	// in_progress status rather than being defaulted back to a fresh spinner.
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "call-1", Title: "editing python command"}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "call-1", Title: "editing python command"}); err != nil {
 		t.Fatalf("UpdateFromEvent returned error: %v", err)
 	}
 	chunks, err := extractChunksFromOptions(api.appendOptions[0]...)
@@ -197,12 +197,12 @@ func TestTaskCardWriterTitleUpdateDoesNotRegressCompletedCard(t *testing.T) {
 	writer := NewTaskCardWriter(api, streamer, time.Millisecond, nil)
 	ctx := context.Background()
 
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "call-1", Title: "Read file", Status: acp.TaskStatusComplete}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "call-1", Title: "Read file", Status: agent.TaskStatusComplete}); err != nil {
 		t.Fatalf("UpdateFromEvent returned error: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
 	// A late status-less update must not knock a completed card back to a spinner.
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "call-1", Title: "read /tmp/x.py"}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "call-1", Title: "read /tmp/x.py"}); err != nil {
 		t.Fatalf("UpdateFromEvent returned error: %v", err)
 	}
 	chunks, err := extractChunksFromOptions(api.appendOptions[0]...)
@@ -221,10 +221,10 @@ func TestTaskCardWriterReusesTitleForCompletionUpdate(t *testing.T) {
 	writer := NewTaskCardWriter(api, streamer, time.Millisecond, nil)
 	ctx := context.Background()
 
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "call-1", Title: "List files", Status: acp.TaskStatusInProgress}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "call-1", Title: "List files", Status: agent.TaskStatusInProgress}); err != nil {
 		t.Fatalf("UpdateFromEvent returned error: %v", err)
 	}
-	if err := writer.UpdateFromEvent(ctx, &acp.TaskEvent{ID: "call-1", Status: acp.TaskStatusComplete}); err != nil {
+	if err := writer.UpdateFromEvent(ctx, &agent.TaskEvent{ID: "call-1", Status: agent.TaskStatusComplete}); err != nil {
 		t.Fatalf("UpdateFromEvent returned error: %v", err)
 	}
 	chunks, err := extractChunksFromOptions(api.appendOptions[0]...)

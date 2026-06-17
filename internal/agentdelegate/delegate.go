@@ -2,7 +2,7 @@
 // up a fresh agent process, sends a single prompt, waits for the turn to
 // finish, and (optionally) collects the agent's full text output.
 //
-// Unlike the long-lived chat sessions managed by acp.SessionManager, each
+// Unlike the long-lived chat sessions managed by agent.SessionManager, each
 // delegation gets its own process and session with no shared conversation
 // memory. That isolation is exactly what the config-driven surfaces want: a
 // job, a workflow trigger, or an unfurl that just needs an agent to do one
@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 )
 
@@ -35,8 +35,8 @@ import (
 var ErrNonJSONOutput = errors.New("delegate-to-agent: agent output was not valid JSON")
 
 // ClientFactory builds a fresh ACP client for a single one-shot session.
-// Production wires acp.NewProcessClient; tests inject a fake.
-type ClientFactory func(profile config.AgentProfile, logger *slog.Logger) acp.Client
+// Production wires agent.NewProcessClient; tests inject a fake.
+type ClientFactory func(profile config.AgentProfile, logger *slog.Logger) agent.Client
 
 // Runner resolves agent profiles by name and drives isolated one-shot sessions.
 type Runner struct {
@@ -75,12 +75,12 @@ func (r *Runner) WithClientFactory(f ClientFactory) *Runner {
 	return r
 }
 
-func (r *Runner) defaultClient(profile config.AgentProfile, logger *slog.Logger) acp.Client {
+func (r *Runner) defaultClient(profile config.AgentProfile, logger *slog.Logger) agent.Client {
 	workDir := profile.WorkDir
 	if strings.TrimSpace(workDir) == "" {
 		workDir = r.baseDir
 	}
-	return acp.NewProcessClient(acp.ProcessOptions{
+	return agent.NewProcessClient(agent.ProcessOptions{
 		Command: profile.Command,
 		Args:    profile.Args,
 		WorkDir: workDir,
@@ -144,7 +144,7 @@ func (r *Runner) Run(ctx context.Context, agentName, prompt string) (string, err
 	if err := client.Initialize(ctx); err != nil {
 		return "", fmt.Errorf("delegate-to-agent: initialize agent %q: %w", agentName, err)
 	}
-	session, err := client.NewSession(ctx, acp.SessionMetadata{Source: "delegate"})
+	session, err := client.NewSession(ctx, agent.SessionMetadata{Source: "delegate"})
 	if err != nil {
 		return "", fmt.Errorf("delegate-to-agent: create session for agent %q: %w", agentName, err)
 	}
@@ -153,7 +153,7 @@ func (r *Runner) Run(ctx context.Context, agentName, prompt string) (string, err
 	// idle watchdog can unblock the in-flight request without disturbing ctx.
 	promptCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	events, err := client.Prompt(promptCtx, session.ID, acp.PromptRequest{Text: prompt})
+	events, err := client.Prompt(promptCtx, session.ID, agent.PromptRequest{Text: prompt})
 	if err != nil {
 		return "", fmt.Errorf("delegate-to-agent: prompt agent %q: %w", agentName, err)
 	}
@@ -178,11 +178,11 @@ func (r *Runner) Run(ctx context.Context, agentName, prompt string) (string, err
 			}
 			resetIdleTimer(idle, r.idleTimeout)
 			switch event.Type {
-			case acp.EventText, acp.EventStatus:
+			case agent.EventText, agent.EventStatus:
 				buf.WriteString(event.Text)
-			case acp.EventError:
+			case agent.EventError:
 				return buf.String(), fmt.Errorf("delegate-to-agent: agent %q failed: %w", agentName, event.Error)
-			case acp.EventComplete:
+			case agent.EventComplete:
 				return buf.String(), nil
 			}
 		}

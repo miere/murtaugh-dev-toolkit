@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/unfurl"
@@ -91,18 +91,18 @@ type countingChatSessions struct {
 	prompts int
 }
 
-func (f *countingChatSessions) Prompt(_ context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
+func (f *countingChatSessions) Prompt(_ context.Context, _ agent.ConversationKey, _ agent.SessionMetadata, _ agent.PromptRequest) (<-chan agent.Event, error) {
 	f.mu.Lock()
 	f.prompts++
 	f.mu.Unlock()
-	ch := make(chan acp.Event, 2)
-	ch <- acp.Event{Type: acp.EventText, Text: "ok"}
-	ch <- acp.Event{Type: acp.EventComplete}
+	ch := make(chan agent.Event, 2)
+	ch <- agent.Event{Type: agent.EventText, Text: "ok"}
+	ch <- agent.Event{Type: agent.EventComplete}
 	close(ch)
 	return ch, nil
 }
 
-func (f *countingChatSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *countingChatSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
 func (f *countingChatSessions) Cancel(context.Context, string) error      { return nil }
 
 func (f *countingChatSessions) count() int {
@@ -157,21 +157,21 @@ type nonInterruptibleSessions struct {
 	release chan struct{}
 }
 
-func (f *nonInterruptibleSessions) Prompt(_ context.Context, _ acp.ConversationKey, _ acp.SessionMetadata, _ acp.PromptRequest) (<-chan acp.Event, error) {
+func (f *nonInterruptibleSessions) Prompt(_ context.Context, _ agent.ConversationKey, _ agent.SessionMetadata, _ agent.PromptRequest) (<-chan agent.Event, error) {
 	f.mu.Lock()
 	f.prompts++
 	f.mu.Unlock()
-	ch := make(chan acp.Event)
+	ch := make(chan agent.Event)
 	go func() {
 		<-f.release
-		ch <- acp.Event{Type: acp.EventText, Text: "done"}
-		ch <- acp.Event{Type: acp.EventComplete}
+		ch <- agent.Event{Type: agent.EventText, Text: "done"}
+		ch <- agent.Event{Type: agent.EventComplete}
 		close(ch)
 	}()
 	return ch, nil
 }
 
-func (f *nonInterruptibleSessions) Lookup(acp.ConversationKey) (string, bool) { return "", false }
+func (f *nonInterruptibleSessions) Lookup(agent.ConversationKey) (string, bool) { return "", false }
 func (f *nonInterruptibleSessions) Cancel(context.Context, string) error      { return nil }
 func (f *nonInterruptibleSessions) Interruptible() bool                       { return false }
 func (f *nonInterruptibleSessions) count() int {

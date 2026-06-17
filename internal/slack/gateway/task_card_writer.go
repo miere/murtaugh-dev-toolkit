@@ -9,7 +9,7 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/acp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 )
 
 const defaultTaskUpdateInterval = 1 * time.Second
@@ -146,7 +146,7 @@ func (w *TaskCardWriter) resolveTitle(taskID, title string) string {
 func (w *TaskCardWriter) Finish(context.Context) error { return nil }
 
 // UpdateFromEvent maps an ACP task event to a Slack task update and sends it.
-func (w *TaskCardWriter) UpdateFromEvent(ctx context.Context, event *acp.TaskEvent) error {
+func (w *TaskCardWriter) UpdateFromEvent(ctx context.Context, event *agent.TaskEvent) error {
 	if event == nil {
 		return nil
 	}
@@ -168,7 +168,7 @@ func (w *TaskCardWriter) UpdateFromEvent(ctx context.Context, event *acp.TaskEve
 // in_progress and silently flip a card that had already completed back to a
 // spinner. Instead we reuse the last status seen for the task, falling back to
 // in_progress only for the very first update.
-func (w *TaskCardWriter) resolveStatus(taskID string, status acp.TaskStatus) slack.TaskCardStatus {
+func (w *TaskCardWriter) resolveStatus(taskID string, status agent.TaskStatus) slack.TaskCardStatus {
 	if mapped, ok := knownTaskStatus(status); ok {
 		return mapped
 	}
@@ -215,7 +215,7 @@ func (w *TaskCardWriter) recordFlush(taskID string, t time.Time) {
 	w.lastFlush[taskID] = t
 }
 
-func mapTaskStatus(status acp.TaskStatus) slack.TaskCardStatus {
+func mapTaskStatus(status agent.TaskStatus) slack.TaskCardStatus {
 	if mapped, ok := knownTaskStatus(status); ok {
 		return mapped
 	}
@@ -226,17 +226,17 @@ func mapTaskStatus(status acp.TaskStatus) slack.TaskCardStatus {
 // equivalents. The boolean distinguishes "the agent reported this status" from
 // "fell through to a default" — an empty or unrecognised status returns false
 // so callers can preserve a card's previous state instead of overwriting it.
-func knownTaskStatus(status acp.TaskStatus) (slack.TaskCardStatus, bool) {
+func knownTaskStatus(status agent.TaskStatus) (slack.TaskCardStatus, bool) {
 	switch status {
-	case acp.TaskStatusPending:
+	case agent.TaskStatusPending:
 		return slack.TaskCardStatusPending, true
-	case acp.TaskStatusInProgress:
+	case agent.TaskStatusInProgress:
 		return slack.TaskCardStatusInProgress, true
-	case acp.TaskStatusComplete:
+	case agent.TaskStatusComplete:
 		return slack.TaskCardStatusComplete, true
-	case acp.TaskStatusFailed:
+	case agent.TaskStatusFailed:
 		return slack.TaskCardStatusError, true
-	case acp.TaskStatusCancelled:
+	case agent.TaskStatusCancelled:
 		return slack.TaskCardStatusError, true
 	default:
 		return "", false
