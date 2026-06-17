@@ -53,6 +53,52 @@ func readZip(t *testing.T, path string) map[string][]byte {
 	return out
 }
 
+// TestResolveSources_NeverIncludesDotEnv guards the secrets boundary: the
+// bundler collects a FIXED list of YAML config siblings and must never reach
+// for .env, where every credential now lives. If someone later switches
+// collectConfigs to glob the config dir, this fails loudly.
+func TestResolveSources_NeverIncludesDotEnv(t *testing.T) {
+	src := ResolveSources("/x/journal.db", "/x/blobs", "/x/config", "v1")
+	for _, p := range src.ConfigFiles {
+		if strings.EqualFold(filepath.Base(p), ".env") || strings.HasSuffix(p, ".env") {
+			t.Fatalf("ResolveSources included a .env path %q — credentials must never enter a bundle", p)
+		}
+	}
+}
+
+// TestBuild_DoesNotCaptureDotEnv proves that even when a .env sits in the config
+// dir alongside the collected YAML, it does not end up in the bundle.
+func TestBuild_DoesNotCaptureDotEnv(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "config")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	slackYAML := filepath.Join(cfgDir, "slack.yaml")
+	if err := os.WriteFile(slackYAML, []byte("oauth:\n  bot_token: ${SLACK_BOT_TOKEN}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(cfgDir, ".env")
+	if err := os.WriteFile(envFile, []byte("SLACK_BOT_TOKEN=xoxb-realsecretvalue\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "bundle.zip")
+	// Use the real resolver so this exercises the production file list.
+	src := ResolveSources("", "", cfgDir, "v1")
+	if _, err := Build(context.Background(), Options{OutPath: out}, src); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	files := readZip(t, out)
+	for name, content := range files {
+		if strings.Contains(name, ".env") {
+			t.Fatalf("bundle captured a .env entry %q", name)
+		}
+		if strings.Contains(string(content), "realsecretvalue") {
+			t.Fatalf("a real secret leaked into bundle entry %q", name)
+		}
+	}
+}
+
 func TestBuild_AssemblesRedactedBundle(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, "config")

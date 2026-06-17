@@ -579,6 +579,11 @@ func TestParseDelegateRejectsUnknownAgent(t *testing.T) {
 // as a unit. It catches indentation slips and dangling delegate-to-agent agent
 // references before they reach a fresh install.
 func TestEmbeddedExampleConfigValidates(t *testing.T) {
+	// Credentials live in .env / the environment now; the shipped slack.yaml
+	// references them as ${SLACK_APP_TOKEN}/${SLACK_BOT_TOKEN}. Provide them as a
+	// real .env would so the bundled config validates as a unit.
+	t.Setenv("SLACK_APP_TOKEN", "xapp-test")
+	t.Setenv("SLACK_BOT_TOKEN", "xoxb-test")
 	baseDir := t.TempDir()
 	for _, name := range []string{"slack.yaml", "agents.yaml", "jobs.yaml"} {
 		data, err := assets.FS.ReadFile(name)

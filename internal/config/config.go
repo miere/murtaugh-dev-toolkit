@@ -372,6 +372,18 @@ func Load(path string) (Config, error) {
 	}
 	cfg.BaseDir = filepath.Dir(path)
 
+	// Load <config-dir>/.env before expanding any ${VAR} references so that
+	// credentials live only in the dotenv file (or the ambient environment),
+	// never in the YAML the troubleshoot bundler ships. A missing .env is fine.
+	if err := LoadDotEnv(cfg.BaseDir); err != nil {
+		return Config{}, err
+	}
+	// Slack tokens are referenced from slack.yaml as ${VAR}; expand them against
+	// the now-loaded environment. A literal token (no $) expands to itself, so
+	// pre-.env configs keep working.
+	cfg.OAuth.AppToken = os.ExpandEnv(cfg.OAuth.AppToken)
+	cfg.OAuth.BotToken = os.ExpandEnv(cfg.OAuth.BotToken)
+
 	agentsPath := filepath.Join(cfg.BaseDir, "agents.yaml")
 	agentsData, err := os.ReadFile(agentsPath)
 	if err == nil {
@@ -485,6 +497,15 @@ func (c Config) Validate() error {
 			if strings.ContainsRune(key, '=') {
 				errs = append(errs, fmt.Errorf("agents[%s].env key %q must not contain '='", name, key))
 			}
+		}
+		if profile.ResolvedKind() == AgentKindNative {
+			errs = append(errs, validateNativeAgent(name, profile, c.MCPServers)...)
+		}
+	}
+
+	for name, server := range c.MCPServers {
+		if err := validateMCPServer(name, server); err != nil {
+			errs = append(errs, err)
 		}
 	}
 
@@ -837,6 +858,55 @@ func validateDelegate(d *DelegateToAgentConfig, agents map[string]AgentProfile) 
 	}
 	if _, ok := agents[d.Agent]; !ok {
 		return fmt.Errorf("delegate-to-agent references unknown agent %q", d.Agent)
+	}
+	return nil
+}
+
+// nativeProviders is the set of litellm provider families a native agent may
+// select. Compatible third parties (Z.ai/GLM, DeepSeek, Kimi) ride the
+// anthropic or openai families via a base_url override.
+var nativeProviders = map[string]struct{}{"gemini": {}, "anthropic": {}, "openai": {}}
+
+// validateNativeAgent checks a kind:native profile: it needs a known provider,
+// a model, and an api_key_env; system_prompt and system_prompt_file are mutually
+// exclusive; and every referenced MCP server must be defined.
+func validateNativeAgent(name string, p AgentProfile, servers map[string]MCPServerConfig) []error {
+	var errs []error
+	provider := strings.ToLower(strings.TrimSpace(p.Provider))
+	if provider == "" {
+		errs = append(errs, fmt.Errorf("agents[%s].provider is required for a native agent", name))
+	} else if _, ok := nativeProviders[provider]; !ok {
+		errs = append(errs, fmt.Errorf("agents[%s].provider %q must be one of gemini, anthropic, openai", name, p.Provider))
+	}
+	if strings.TrimSpace(p.Model) == "" {
+		errs = append(errs, fmt.Errorf("agents[%s].model is required for a native agent", name))
+	}
+	if strings.TrimSpace(p.APIKeyEnv) == "" {
+		errs = append(errs, fmt.Errorf("agents[%s].api_key_env is required for a native agent (the .env variable holding the credential)", name))
+	}
+	if strings.TrimSpace(p.SystemPrompt) != "" && strings.TrimSpace(p.SystemPromptFile) != "" {
+		errs = append(errs, fmt.Errorf("agents[%s] sets both system_prompt and system_prompt_file; use exactly one", name))
+	}
+	for _, ref := range p.MCPServers {
+		if _, ok := servers[ref]; !ok {
+			errs = append(errs, fmt.Errorf("agents[%s].mcp_servers references unknown server %q (define it under mcp_servers)", name, ref))
+		}
+	}
+	return errs
+}
+
+// validateMCPServer requires exactly one transport: a stdio child process
+// (command) or a remote endpoint (url).
+func validateMCPServer(name string, s MCPServerConfig) error {
+	hasCommand := strings.TrimSpace(s.Command) != ""
+	hasURL := strings.TrimSpace(s.URL) != ""
+	if hasCommand == hasURL {
+		return fmt.Errorf("mcp_servers[%s] requires exactly one of command or url", name)
+	}
+	for key := range s.Env {
+		if strings.ContainsRune(key, '=') {
+			return fmt.Errorf("mcp_servers[%s].env key %q must not contain '='", name, key)
+		}
 	}
 	return nil
 }

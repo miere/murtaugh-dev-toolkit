@@ -1,6 +1,10 @@
+# Credentials are NOT stored here. They live in ~/.config/murtaugh/.env (a
+# template .env is seeded on first run) and are referenced below as ${VAR}.
+# Keeping secrets out of YAML is what lets `murtaugh troubleshoot` ship the
+# config files safely — the bundler collects the .yaml siblings, never .env.
 oauth:
-  app_token: xapp-fake-socket-mode-token
-  bot_token: xoxb-fake-bot-token
+  app_token: ${SLACK_APP_TOKEN}
+  bot_token: ${SLACK_BOT_TOKEN}
 
 configuration:
   admin_user: murtaugh-admin

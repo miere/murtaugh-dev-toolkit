@@ -10,5 +10,5 @@ import "embed"
 // troubleshoot/ (the diagnostics-bundle instructions surfaced by
 // `troubleshoot.bundle`).
 //
-//go:embed slack.yaml agents.yaml jobs.yaml journal.yaml cli-help.md templates skills troubleshoot
+//go:embed slack.yaml agents.yaml jobs.yaml journal.yaml env.example cli-help.md templates skills troubleshoot
 var FS embed.FS
