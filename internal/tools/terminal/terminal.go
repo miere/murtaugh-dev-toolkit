@@ -125,6 +125,13 @@ func (t *Tool) Invoke(ctx context.Context, args map[string]any) (any, error) {
 
 	cmd := exec.CommandContext(runCtx, "sh", "-c", command)
 	cmd.Dir = dir
+	// Kill the whole process group on timeout, not just the shell: a shell that
+	// leaves a child holding the output pipe (a backgrounded process, or dash on
+	// Linux forking the command rather than exec-ing it) would otherwise keep Run
+	// blocked until that child exits on its own. WaitDelay is a backstop in case a
+	// descendant still lingers after the group kill.
+	configureProcessGroup(cmd)
+	cmd.WaitDelay = 2 * time.Second
 
 	var buf cappedBuffer
 	buf.limit = MaxOutputBytes

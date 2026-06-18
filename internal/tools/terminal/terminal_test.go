@@ -91,6 +91,23 @@ func TestInvoke_Timeout(t *testing.T) {
 	}
 }
 
+func TestInvoke_TimeoutKillsBackgroundedChild(t *testing.T) {
+	tool := New(t.TempDir())
+	start := time.Now()
+	// The shell backgrounds a long sleep and exits immediately, but the child
+	// inherits and holds the output pipe. Without killing the whole process group
+	// (and the WaitDelay backstop), cmd.Run would block until the child finishes,
+	// defeating the timeout. This reproduces the Linux grandchild case on every
+	// platform.
+	res := invoke(t, tool, map[string]any{"command": "sleep 30 &", "timeout": "200ms"})
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("Invoke took %v; the timeout did not reap the backgrounded child", elapsed)
+	}
+	if !res.TimedOut {
+		t.Fatal("TimedOut = false, want true")
+	}
+}
+
 func TestInvoke_TimeoutCappedAtMax(t *testing.T) {
 	tool := New(t.TempDir())
 	// A huge requested timeout is capped; the command itself finishes fast so
