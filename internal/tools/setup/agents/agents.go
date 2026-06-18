@@ -62,6 +62,7 @@ func (t *Tool) InputSchema() *jsonschema.Schema {
 			"system_prompt_file": {Type: "string", Description: "Native: path (relative to config dir) to the system prompt file."},
 			"context_limit":      {Type: "integer", Description: "Native: token budget for compaction. 0 uses a per-family default."},
 			"compaction":         {Type: "string", Description: "Native: \"truncate\" (default) or \"summarize\"."},
+			"cache_retention":    {Type: "string", Description: "Native: prompt-cache TTL — \"5m\" (default), \"1h\", or \"off\"."},
 		},
 	}
 }
@@ -139,6 +140,7 @@ type profileBlock struct {
 	SystemPromptFile string   `yaml:"system_prompt_file,omitempty"`
 	ContextLimit     int      `yaml:"context_limit,omitempty"`
 	Compaction       string   `yaml:"compaction,omitempty"`
+	CacheRetention   string   `yaml:"cache_retention,omitempty"`
 }
 
 // Invoke validates arguments and writes the agents.yaml document.
@@ -259,6 +261,12 @@ func buildNative(args map[string]any, provider string) (profileBlock, error) {
 	default:
 		return profileBlock{}, fmt.Errorf("compaction %q must be truncate or summarize", compaction)
 	}
+	cacheRetention := strings.ToLower(strings.TrimSpace(stringArg(args, "cache_retention")))
+	switch cacheRetention {
+	case "", "off", "none", "5m", "short", "1h", "long":
+	default:
+		return profileBlock{}, fmt.Errorf("cache_retention %q must be one of 5m, 1h, or off", cacheRetention)
+	}
 	return profileBlock{
 		Kind:             "native",
 		Provider:         provider,
@@ -270,6 +278,7 @@ func buildNative(args map[string]any, provider string) (profileBlock, error) {
 		SystemPromptFile: strings.TrimSpace(stringArg(args, "system_prompt_file")),
 		ContextLimit:     contextLimit,
 		Compaction:       compaction,
+		CacheRetention:   cacheRetention,
 	}, nil
 }
 

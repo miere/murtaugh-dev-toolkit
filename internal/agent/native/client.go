@@ -25,10 +25,26 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/toolset"
 )
 
-// defaultCacheRetention is the prompt-cache TTL native agents request. "5m"
-// (ephemeral) matches the providers' short cache window and has no behavioural
-// effect — it only lets the static system+tools prefix be reused across turns.
+// defaultCacheRetention is the prompt-cache TTL native agents request when the
+// profile does not set one. "5m" (ephemeral) matches the providers' short cache
+// window and has no behavioural effect — it only lets the static system+tools
+// prefix be reused across turns.
 const defaultCacheRetention = "5m"
+
+// resolveCacheRetention maps an agent profile's cache_retention to the value the
+// provider layer applies: empty ⇒ the default; "off"/"none" ⇒ "" (disabled);
+// otherwise the configured value (e.g. "5m"/"1h"). Config validation has already
+// restricted the input to the accepted set.
+func resolveCacheRetention(configured string) string {
+	switch strings.ToLower(strings.TrimSpace(configured)) {
+	case "":
+		return defaultCacheRetention
+	case "off", "none":
+		return ""
+	default:
+		return strings.TrimSpace(configured)
+	}
+}
 
 // Client is the native LLM-backed agent.Client. It holds the static
 // configuration resolved from an AgentProfile; the MCP servers are opened and
@@ -38,6 +54,7 @@ type Client struct {
 	provider       llm.Provider
 	model          string
 	systemPrompt   string
+	agentsDoc      string
 	skillsIndex    string
 	maxTurns       int
 	workDir        string
@@ -148,6 +165,7 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 		provider:       provider,
 		model:          profile.Model,
 		systemPrompt:   systemPrompt,
+		agentsDoc:      readAgentsDoc(workDir),
 		skillsIndex:    skillsIndex,
 		maxTurns:       profile.MaxTurns,
 		workDir:        workDir,
@@ -157,7 +175,7 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 		serverCfgs:     serverCfgs,
 		contextLimit:   contextLimit,
 		compaction:     parseCompaction(profile.Compaction),
-		cacheRetention: defaultCacheRetention,
+		cacheRetention: resolveCacheRetention(profile.CacheRetention),
 		logger:         logger,
 		now:            time.Now,
 		sessions:       make(map[string]*nativeSession),
@@ -206,10 +224,10 @@ func (c *Client) NewSession(_ context.Context, _ agent.SessionMetadata) (agent.S
 
 // Prompt appends the user's turn to the session conversation and runs the loop,
 // streaming agent.Event values on the returned channel until the turn completes.
-// The system prompt stays static (base + skills index) so the provider caches
-// it; the volatile per-turn context (time, cwd, Slack location) and a
-// cold-session History backfill are folded into the SAME user message, so the
-// array never gains a second consecutive message.
+// The system prompt stays static (base + AGENTS.md guidelines + skills index) so
+// the provider caches it; the volatile per-turn context (time, cwd, Slack
+// location) and a cold-session History backfill are folded into the SAME user
+// message, so the array never gains a second consecutive message.
 func (c *Client) Prompt(ctx context.Context, sessionID string, req agent.PromptRequest) (<-chan agent.Event, error) {
 	c.mu.Lock()
 	sess, ok := c.sessions[sessionID]
@@ -233,7 +251,7 @@ func (c *Client) Prompt(ctx context.Context, sessionID string, req agent.PromptR
 	// (time, cwd, Slack location) and the cold-start history backfill are folded
 	// into THIS user message — never a standalone message, so the MOIM-safety
 	// invariant holds. See the native-context-caching decision.
-	system := BuildSystemPrompt(c.systemPrompt, c.skillsIndex)
+	system := BuildSystemPrompt(c.systemPrompt, c.agentsDoc, c.skillsIndex)
 
 	var parts []string
 	if ctxBlock := RenderTurnContext(VolatileContextFromRequest(req, c.now(), c.workDir)); ctxBlock != "" {
@@ -322,6 +340,25 @@ func resolveSystemPrompt(profile config.AgentProfile, baseDir string) (string, e
 		return "", fmt.Errorf("native: read system_prompt_file %q: %w", file, err)
 	}
 	return string(data), nil
+}
+
+// agentsDocFile is the conventional per-agent guidelines file auto-loaded from
+// the agent's working directory into the (static) system prompt.
+const agentsDocFile = "AGENTS.md"
+
+// readAgentsDoc loads <workDir>/AGENTS.md when present, for injection into the
+// static system prompt as project guidelines. Best-effort: a missing or
+// unreadable file yields "" (no guidelines), never an error — like a coding
+// agent that simply finds no AGENTS.md in its cwd.
+func readAgentsDoc(workDir string) string {
+	if strings.TrimSpace(workDir) == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(workDir, agentsDocFile))
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // renderSkillsIndex builds the compact "- name: description" listing of the

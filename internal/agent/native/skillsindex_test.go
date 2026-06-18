@@ -57,6 +57,51 @@ func TestRenderSkillsIndex_EmptyWhenNoSkills(t *testing.T) {
 	}
 }
 
+func TestBuild_AutoLoadsAgentsDoc(t *testing.T) {
+	t.Setenv("TEST_AGENTS_KEY", "x")
+	base := t.TempDir()
+	work := filepath.Join(base, "work")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "AGENTS.md"), []byte("# Emily\nAlways greet warmly."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Build(config.AgentProfile{
+		Provider:  "gemini",
+		Model:     "gemini-2.5-pro",
+		APIKeyEnv: "TEST_AGENTS_KEY",
+		WorkDir:   work,
+	}, BuildDeps{BaseDir: base})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(c.agentsDoc, "Always greet warmly.") {
+		t.Errorf("AGENTS.md not loaded from workdir: %q", c.agentsDoc)
+	}
+	system := BuildSystemPrompt(c.systemPrompt, c.agentsDoc, c.skillsIndex)
+	if !strings.Contains(system, "<project-guidelines>") || !strings.Contains(system, "Always greet warmly.") {
+		t.Errorf("AGENTS.md not injected into the system prompt:\n%s", system)
+	}
+}
+
+func TestBuild_NoAgentsDocWhenAbsent(t *testing.T) {
+	t.Setenv("TEST_AGENTS_KEY2", "x")
+	base := t.TempDir() // no AGENTS.md here
+	c, err := Build(config.AgentProfile{
+		Provider:  "gemini",
+		Model:     "gemini-2.5-pro",
+		APIKeyEnv: "TEST_AGENTS_KEY2",
+		WorkDir:   base,
+	}, BuildDeps{BaseDir: base})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if c.agentsDoc != "" {
+		t.Errorf("expected no AGENTS.md, got %q", c.agentsDoc)
+	}
+}
+
 func TestBuild_SkillsIndexGatedByAllowlist(t *testing.T) {
 	t.Setenv("TEST_SKILLS_KEY", "x")
 	base := t.TempDir()
@@ -87,7 +132,7 @@ func TestBuild_SkillsIndexGatedByAllowlist(t *testing.T) {
 	if !strings.Contains(cYes.skillsIndex, "- alpha: Do alpha things") {
 		t.Errorf("skills index not populated: %q", cYes.skillsIndex)
 	}
-	system := BuildSystemPrompt(cYes.systemPrompt, cYes.skillsIndex)
+	system := BuildSystemPrompt(cYes.systemPrompt, cYes.agentsDoc, cYes.skillsIndex)
 	if !strings.Contains(system, "<skills>") || !strings.Contains(system, "alpha") {
 		t.Errorf("skills index not folded into the system prompt:\n%s", system)
 	}

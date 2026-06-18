@@ -21,16 +21,17 @@ type loaded struct {
 		StreamFinalFeedback  bool   `yaml:"stream_final_feedback"`
 	} `yaml:"acp"`
 	Agents map[string]struct {
-		Kind         string   `yaml:"kind"`
-		Command      string   `yaml:"command"`
-		Args         []string `yaml:"args"`
-		Provider     string   `yaml:"provider"`
-		Model        string   `yaml:"model"`
-		APIKeyEnv    string   `yaml:"api_key_env"`
-		Tools        []string `yaml:"tools"`
-		MCPServers   []string `yaml:"mcp_servers"`
-		ContextLimit int      `yaml:"context_limit"`
-		Compaction   string   `yaml:"compaction"`
+		Kind           string   `yaml:"kind"`
+		Command        string   `yaml:"command"`
+		Args           []string `yaml:"args"`
+		Provider       string   `yaml:"provider"`
+		Model          string   `yaml:"model"`
+		APIKeyEnv      string   `yaml:"api_key_env"`
+		Tools          []string `yaml:"tools"`
+		MCPServers     []string `yaml:"mcp_servers"`
+		ContextLimit   int      `yaml:"context_limit"`
+		Compaction     string   `yaml:"compaction"`
+		CacheRetention string   `yaml:"cache_retention"`
 	} `yaml:"agents"`
 }
 
@@ -158,14 +159,15 @@ func TestInvoke_NativeAgent(t *testing.T) {
 	tl := New(func() string { return path })
 
 	res, err := tl.Invoke(context.Background(), map[string]any{
-		"agent_name":    "emily",
-		"provider":      "gemini",
-		"model":         "gemini-2.5-pro",
-		"api_key_env":   "GEMINI_API_KEY",
-		"tools":         []any{"files", "terminal", "skills"},
-		"mcp_servers":   []any{"vaultre"},
-		"context_limit": "200000",
-		"compaction":    "summarize",
+		"agent_name":      "emily",
+		"provider":        "gemini",
+		"model":           "gemini-2.5-pro",
+		"api_key_env":     "GEMINI_API_KEY",
+		"tools":           []any{"files", "terminal", "skills"},
+		"mcp_servers":     []any{"vaultre"},
+		"context_limit":   "200000",
+		"compaction":      "summarize",
+		"cache_retention": "1h",
 	})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
@@ -188,8 +190,8 @@ func TestInvoke_NativeAgent(t *testing.T) {
 	if a.Command != "" {
 		t.Errorf("native profile must not carry a command, got %q", a.Command)
 	}
-	if a.ContextLimit != 200000 || a.Compaction != "summarize" {
-		t.Errorf("context_limit/compaction wrong: %+v", a)
+	if a.ContextLimit != 200000 || a.Compaction != "summarize" || a.CacheRetention != "1h" {
+		t.Errorf("context_limit/compaction/cache_retention wrong: %+v", a)
 	}
 	if len(a.Tools) != 3 || len(a.MCPServers) != 1 {
 		t.Errorf("tools/mcp_servers wrong: %+v", a)
@@ -199,11 +201,12 @@ func TestInvoke_NativeAgent(t *testing.T) {
 func TestInvoke_NativeValidation(t *testing.T) {
 	tl := New(func() string { return filepath.Join(t.TempDir(), "agents.yaml") })
 	cases := []map[string]any{
-		{"provider": "gemini", "model": "m"},                                             // missing api_key_env
-		{"provider": "gemini", "api_key_env": "K"},                                       // missing model
-		{"kind": "native", "model": "m", "api_key_env": "K"},                             // missing provider
-		{"provider": "cohere", "model": "m", "api_key_env": "K"},                         // bad provider
-		{"provider": "gemini", "model": "m", "api_key_env": "K", "compaction": "shrink"}, // bad compaction
+		{"provider": "gemini", "model": "m"},                                              // missing api_key_env
+		{"provider": "gemini", "api_key_env": "K"},                                        // missing model
+		{"kind": "native", "model": "m", "api_key_env": "K"},                              // missing provider
+		{"provider": "cohere", "model": "m", "api_key_env": "K"},                          // bad provider
+		{"provider": "gemini", "model": "m", "api_key_env": "K", "compaction": "shrink"},  // bad compaction
+		{"provider": "gemini", "model": "m", "api_key_env": "K", "cache_retention": "2h"}, // bad cache_retention
 	}
 	for i, args := range cases {
 		if _, err := tl.Invoke(context.Background(), args); err == nil {

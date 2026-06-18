@@ -364,6 +364,7 @@ records `--api-key-env` (the `.env` variable name); set the value with
 | `--system-prompt-file` | no       | string          | Native: path (relative to config dir) to the system prompt.       |
 | `--context-limit`      | no       | integer         | Native: token budget for compaction. 0 = per-family default.      |
 | `--compaction`         | no       | enum            | Native: `truncate` (default) or `summarize`.                      |
+| `--cache-retention`    | no       | enum            | Native: prompt-cache TTL — `5m` (default), `1h`, or `off`.        |
 
 - For ACP, supplying `--args` without `--command` is an error.
 

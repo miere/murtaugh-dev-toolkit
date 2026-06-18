@@ -8,27 +8,38 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 )
 
-func TestBuildSystemPrompt_StaticBaseAndSkills(t *testing.T) {
-	out := BuildSystemPrompt("You are Emily.", "- skill-a\n- skill-b")
+func TestBuildSystemPrompt_StaticBaseGuidelinesAndSkills(t *testing.T) {
+	out := BuildSystemPrompt("You are Emily.", "Always be terse.", "- skill-a\n- skill-b")
 	if !strings.HasPrefix(out, "You are Emily.") {
 		t.Fatalf("base prompt missing or not first:\n%s", out)
 	}
-	for _, want := range []string{"<skills>", "skill-a", "skill-b", "</skills>"} {
+	for _, want := range []string{
+		"<project-guidelines>", "Always be terse.", "</project-guidelines>",
+		"<skills>", "skill-a", "skill-b", "</skills>",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("system prompt missing %q\n---\n%s", want, out)
 		}
 	}
-	// The system prompt must carry NOTHING volatile — that's the whole point of
-	// the caching relocation.
+	// Order: base, then guidelines, then skills.
+	if !(strings.Index(out, "You are Emily.") < strings.Index(out, "<project-guidelines>") &&
+		strings.Index(out, "<project-guidelines>") < strings.Index(out, "<skills>")) {
+		t.Errorf("sections out of order:\n%s", out)
+	}
+	// The system prompt must carry NOTHING volatile — the point of the caching relocation.
 	if strings.Contains(out, "It is currently") || strings.Contains(out, "Working directory") || strings.Contains(out, "Slack channel") {
 		t.Fatalf("volatile context leaked into the static system prompt:\n%s", out)
 	}
 }
 
-func TestBuildSystemPrompt_NoSkillsReturnsBaseUnchanged(t *testing.T) {
+func TestBuildSystemPrompt_EmptySectionsOmitted(t *testing.T) {
 	base := "You are Emily."
-	if got := BuildSystemPrompt(base, ""); got != base {
-		t.Fatalf("empty skills index should return base unchanged, got %q", got)
+	if got := BuildSystemPrompt(base, "", ""); got != base {
+		t.Fatalf("empty guidelines+skills should return base unchanged, got %q", got)
+	}
+	// Guidelines-only, no base, no skills.
+	if got := BuildSystemPrompt("", "Be kind.", ""); !strings.Contains(got, "<project-guidelines>") || strings.Contains(got, "<skills>") {
+		t.Fatalf("unexpected render for guidelines-only: %q", got)
 	}
 }
 

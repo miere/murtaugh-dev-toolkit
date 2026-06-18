@@ -147,6 +147,15 @@ func TestNativeAgentValidation(t *testing.T) {
 			name:    "valid summarize compaction",
 			profile: AgentProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", Compaction: "summarize", ContextLimit: 200000},
 		},
+		{
+			name:    "bad cache_retention",
+			profile: AgentProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", CacheRetention: "2h"},
+			wantErr: "cache_retention must be",
+		},
+		{
+			name:    "valid cache_retention off",
+			profile: AgentProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", CacheRetention: "off"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

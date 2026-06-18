@@ -123,6 +123,22 @@ func TestClient_HistoryFoldsIntoSingleUserMessage(t *testing.T) {
 	}
 }
 
+func TestResolveCacheRetention(t *testing.T) {
+	cases := map[string]string{
+		"":     defaultCacheRetention,
+		"off":  "",
+		"none": "",
+		"5m":   "5m",
+		"1h":   "1h",
+		"long": "long",
+	}
+	for in, want := range cases {
+		if got := resolveCacheRetention(in); got != want {
+			t.Errorf("resolveCacheRetention(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestClient_SupportsCancel(t *testing.T) {
 	c := newTestClient(&fakeProvider{})
 	if !c.SupportsCancel(context.Background()) {

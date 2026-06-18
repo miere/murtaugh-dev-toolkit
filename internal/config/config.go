@@ -156,6 +156,10 @@ type AgentProfile struct {
 	// "truncate" (default — drop oldest turn-groups) or "summarize" (LLM-compress
 	// the oldest groups, with truncation as the fallback). Empty means truncate.
 	Compaction string `yaml:"compaction"`
+	// CacheRetention overrides the prompt-cache TTL: "5m" (default) or "1h";
+	// "off"/"none" disables caching. Empty uses the default. Applied for
+	// Anthropic/OpenAI; Gemini caches a static prefix implicitly regardless.
+	CacheRetention string `yaml:"cache_retention"`
 	// Interruptible overrides auto-detection of session/cancel support. When
 	// nil (the default) Murtaugh probes the agent at warmup; set it explicitly
 	// to skip the probe or to correct a wrong verdict.
@@ -902,6 +906,11 @@ func validateNativeAgent(name string, p AgentProfile, servers map[string]MCPServ
 	case "", "truncate", "summarize":
 	default:
 		errs = append(errs, fmt.Errorf("agents[%s].compaction must be %q or %q", name, "truncate", "summarize"))
+	}
+	switch strings.ToLower(strings.TrimSpace(p.CacheRetention)) {
+	case "", "off", "none", "5m", "short", "1h", "long":
+	default:
+		errs = append(errs, fmt.Errorf("agents[%s].cache_retention must be one of 5m, 1h, or off (got %q)", name, p.CacheRetention))
 	}
 	for _, ref := range p.MCPServers {
 		if _, ok := servers[ref]; !ok {

@@ -55,19 +55,29 @@ func RenderTurnContext(vc VolatileContext) string {
 	return "<context>\n" + strings.Join(lines, "\n") + "\n</context>"
 }
 
-// BuildSystemPrompt returns the STATIC system prompt: the agent's base prompt
-// followed by an optional, stable skills index. Nothing volatile lives here, so
-// the result is identical across turns and conversations — the cacheable prefix.
-// When there is no skills index the base prompt is returned unchanged.
-func BuildSystemPrompt(base, skillsIndex string) string {
-	base = strings.TrimRight(base, "\n")
-	idx := strings.TrimSpace(skillsIndex)
-	if idx == "" {
-		return base
+// BuildSystemPrompt returns the STATIC system prompt, assembled from up to three
+// stable sections: the agent's base prompt, the auto-loaded AGENTS.md project
+// guidelines, and the skills index. Nothing volatile lives here, so the result
+// is identical across turns and conversations — the cacheable prefix. Empty
+// sections are omitted; sections are joined with a blank line.
+func BuildSystemPrompt(base, agentsDoc, skillsIndex string) string {
+	var b strings.Builder
+	add := func(s string) {
+		s = strings.TrimRight(s, "\n")
+		if s == "" {
+			return
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(s)
 	}
-	block := "<skills>\n" + idx + "\n</skills>"
-	if base == "" {
-		return block
+	add(base)
+	if a := strings.TrimSpace(agentsDoc); a != "" {
+		add("<project-guidelines>\n" + a + "\n</project-guidelines>")
 	}
-	return base + "\n\n" + block
+	if idx := strings.TrimSpace(skillsIndex); idx != "" {
+		add("<skills>\n" + idx + "\n</skills>")
+	}
+	return b.String()
 }

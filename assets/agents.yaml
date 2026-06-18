@@ -53,6 +53,11 @@ agents:
   #   #             (LLM-compress the oldest turns, truncation as the fallback).
   #   context_limit: 1000000
   #   compaction: truncate
+  #   # Prompt-cache TTL: "5m" (default) or "1h"; "off" disables. Applied for
+  #   # Anthropic/OpenAI; Gemini caches the static system prefix implicitly.
+  #   cache_retention: 5m
+  #   # A workspace AGENTS.md (in the agent's workdir) is auto-loaded into the
+  #   # system prompt as project guidelines — no config needed.
 
   # --- ACP agent (kind: acp — external process over ACP) ---------------------
   default:
