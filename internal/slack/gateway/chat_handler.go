@@ -163,14 +163,22 @@ func (h *ChatHandler) resolveProgressDisplay(agent string) config.ProgressDispla
 	return config.ProgressDisplaySimplified
 }
 
-// newProgressRenderer builds the per-turn progress renderer for the resolved
-// mode: the full task-card plan woven into the answer stream, or the simplified
-// single context-block line in its own thread message.
-func (h *ChatHandler) newProgressRenderer(mode config.ProgressDisplay, writer *StreamWriter, channelID, threadTS string) progressRenderer {
+// newChatRenderer builds the per-turn renderer for the resolved progress mode:
+// the woven task-card view (tasks mode — cards + reply in one answer stream) or
+// the alternating section view (simplified mode, the default — tool blocks and
+// reply messages as a separate, ordered sequence).
+func (h *ChatHandler) newChatRenderer(mode config.ProgressDisplay, channelID, threadTS string, opts StreamWriterOptions) chatRenderer {
 	if mode == config.ProgressDisplayTasks {
-		return NewTaskCardWriter(h.api, writer, 0, h.logger)
+		writer := NewStreamWriter(h.api, channelID, opts)
+		return newWovenRenderer(writer, NewTaskCardWriter(h.api, writer, 0, h.logger), h.logger)
 	}
-	return NewStatusLineWriter(h.statusMessenger, channelID, threadTS, 0, h.logger)
+	return newSectionRenderer(
+		func() *StreamWriter { return NewStreamWriter(h.api, channelID, opts) },
+		func() *StatusLineWriter {
+			return NewStatusLineWriter(h.statusMessenger, channelID, threadTS, 0, h.logger)
+		},
+		h.logger,
+	)
 }
 
 // resetIdleTimer restarts t for another idle window, draining an already-fired
@@ -289,36 +297,31 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 		teamID, userID = "", ""
 	}
 	progressMode := h.resolveProgressDisplay(agentName)
-	writer := NewStreamWriter(h.api, req.ChannelID, StreamWriterOptions{ThreadTS: streamThreadTS, TeamID: teamID, UserID: userID, Interval: h.interval, MinChars: h.minChars, Logger: h.logger})
-	// Safety net: guarantee the Slack stream is finalised on every exit path.
-	// Declared first so it runs last (after the interrupt handler below). The
-	// happy path and interrupt path stop the stream themselves, making this a
-	// no-op; it only bites when the handler returns early on a writer error,
-	// which would otherwise leave the message stuck in the "generating" state.
-	defer h.ensureStreamStopped(writer)
-	// Interrupt path: when the caller cancels ctx (gateway's interrupt
-	// closure or the /stop slash command), render a "_interrupted_"
-	// marker on the partial stream instead of bubbling the cancellation
-	// up as an error. Timeout-driven cancellations (DeadlineExceeded)
-	// still surface as errors so operators notice stalled agents.
+	streamOpts := StreamWriterOptions{ThreadTS: streamThreadTS, TeamID: teamID, UserID: userID, Interval: h.interval, MinChars: h.minChars, Logger: h.logger}
+	renderer := h.newChatRenderer(progressMode, req.ChannelID, streamThreadTS, streamOpts)
+	// Safety net: finalise every Slack message (text sections and tool blocks) on
+	// any exit path. Declared first so it runs last (after the interrupt handler
+	// below); the happy/error/idle paths finalise themselves, making this a no-op
+	// except on an early return. Fresh context: the request ctx may already be
+	// cancelled.
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		renderer.EnsureStopped(sctx)
+	}()
+	// Interrupt path: when the caller cancels ctx (gateway's interrupt closure or
+	// the /stop slash command), render an "_interrupted_" marker instead of
+	// bubbling the cancellation up as an error. Timeout-driven cancellations
+	// (DeadlineExceeded) still surface as errors so operators notice stalls. Fresh
+	// context, since the request ctx is cancelled on this path.
 	defer func() {
 		if !errors.Is(context.Cause(ctx), context.Canceled) {
 			return
 		}
-		h.renderInterrupted(writer)
-		retErr = nil
-	}()
-	taskWriter := h.newProgressRenderer(progressMode, writer, req.ChannelID, streamThreadTS)
-	// Tear down any side-channel progress message (the simplified line) on every
-	// exit path — success, error, idle, or interrupt — on a fresh context since
-	// the request ctx may already be cancelled. TaskCardWriter's Finish is a
-	// no-op. Declared here so it runs before the stream-stop defers below.
-	defer func() {
-		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ictx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := taskWriter.Finish(finishCtx); err != nil {
-			h.logger.Debug("progress renderer finish failed", "error", err)
-		}
+		renderer.Interrupted(ictx)
+		retErr = nil
 	}()
 	if err := h.api.SetAssistantThreadsStatusContext(ctx, slack.AssistantThreadsSetStatusParameters{
 		ChannelID: req.ChannelID,
@@ -362,15 +365,28 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 	events, err := sessions.Prompt(promptCtx, key, metadata, agent.PromptRequest{Text: prompt, History: history})
 	if err != nil {
 		turnErr = err
-		return writer.Fail(ctx, err)
+		return renderer.Fail(ctx, err)
 	}
 	// The session now exists; capture its id for the turn record.
 	if id, ok := sessions.Lookup(key); ok {
 		sessionID = id
 	}
 	firstChunkLogged := false
-	streamStarted := false
-	runningTasks := make(map[string]agent.TaskStatus)
+	// finish resolves a successful turn: it finalises every open section and, when
+	// the turn produced no reply text, surfaces an empty-reply note so silence is
+	// legible. Shared by the explicit EventComplete and channel-closed paths.
+	finish := func() error {
+		emptyNote := ""
+		if byteSeen == 0 {
+			emptyNote = emptyReplyNote(stopReason)
+			h.logger.Warn("agent turn completed with no agent text", "source", req.Source, "channel", req.ChannelID, "stop_reason", stopReason)
+		}
+		if err := renderer.Finish(ctx, emptyNote); err != nil {
+			return err
+		}
+		h.logger.Info("completed agent chat response", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "chunks", chunkSeen, "bytes", byteSeen, "stop_reason", stopReason)
+		return nil
+	}
 	// Idle watchdog: a turn is bounded by inactivity, not total wall-clock. Every
 	// event resets the timer; only an agent that goes silent for the whole window
 	// trips it. A long turn that keeps emitting tool calls never times out.
@@ -379,29 +395,35 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 	for {
 		select {
 		case <-idle.C:
-			// The agent went silent for the whole idle window. Ask it to stop,
-			// post an honest notice (the parent ctx is still alive — we never
-			// cancelled it), then unblock the in-flight request and drain so the
-			// stream tears down cleanly. Task cards keep their last reported
-			// status: the agent did not fail, we stopped waiting, so we never
-			// repaint them red.
+			// The agent went silent for the whole idle window. Ask it to stop, post
+			// an honest notice (the parent ctx is still alive — we never cancelled
+			// it), finalise the open section, then unblock the in-flight request and
+			// drain so the stream tears down cleanly. Tool blocks keep their last
+			// reported state: the agent did not fail, we stopped waiting.
 			timedOut = true
-			if err := h.handleIdleTimeout(ctx, sessions, key, writer, streamStarted); err != nil {
-				h.logger.Warn("failed to finalise stream on idle timeout", "error", err)
+			if sid, ok := sessions.Lookup(key); ok {
+				cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if cerr := sessions.Cancel(cancelCtx, sid); cerr != nil {
+					h.logger.Warn("agent session cancel on idle timeout failed", "error", cerr, "session_id", sid)
+				}
+				cancel()
 			}
+			if nerr := renderer.Note(ctx, fmt.Sprintf(idleTimeoutNotice, h.effectiveIdleTimeout().Round(time.Second))); nerr != nil {
+				h.logger.Warn("failed to post idle-timeout notice", "error", nerr)
+			}
+			renderer.EnsureStopped(ctx)
 			cancelPrompt()
-			// Drain until the ACP layer closes the channel. The prompt goroutine
+			// Drain until the agent layer closes the channel. The prompt goroutine
 			// and the shared readLoop block on their sends; abandoning the channel
 			// here would stall event delivery for every other conversation.
 			for range events {
 			}
-			h.logger.Warn("ACP chat timed out on inactivity", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "idle_timeout", h.effectiveIdleTimeout())
+			h.logger.Warn("agent chat timed out on inactivity", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "idle_timeout", h.effectiveIdleTimeout())
 			return nil
 		case event, ok := <-events:
 			if !ok {
-				// Channel closed without an explicit EventComplete/EventError. No
-				// error surfaced, so treat leftover running tasks as completed.
-				return h.finishStream(ctx, writer, taskWriter, runningTasks, &streamStarted, req, startedAt, chunkSeen, byteSeen, stopReason)
+				// Channel closed without an explicit EventComplete/EventError.
+				return finish()
 			}
 			resetIdleTimer(idle, h.effectiveIdleTimeout())
 			switch event.Type {
@@ -415,23 +437,13 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 						h.logger.Info("received first agent text chunk", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "bytes", len(event.Text))
 					}
 				}
-				if !streamStarted && event.Text != "" {
-					if err := writer.Start(ctx); err != nil {
-						return err
-					}
-					streamStarted = true
-				}
-				if streamStarted {
-					if err := writer.Append(ctx, event.Text); err != nil {
-						return err
-					}
+				if err := renderer.Text(ctx, event.Text); err != nil {
+					return err
 				}
 			case agent.EventStatus:
-				// Progress/meta only (e.g. compaction, empty-reply retry) — NOT
-				// part of the answer. It must never start or append to the answer
-				// message; doing so would mix activity into the reply and push the
-				// thinking/status surface below it. The idle timer was already reset
-				// above. (ACP never emits EventStatus; this is native meta.)
+				// Progress/meta only (e.g. compaction, empty-reply retry) — never
+				// part of the reply. The idle timer was already reset above. (ACP
+				// never emits EventStatus; this is native meta.)
 				if event.Text != "" {
 					h.logger.Debug("agent status", "source", req.Source, "channel", req.ChannelID, "status", event.Text)
 				}
@@ -439,75 +451,25 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 				if event.Task == nil {
 					continue
 				}
-				if err := taskWriter.UpdateFromEvent(ctx, event.Task); err != nil {
-					h.logger.Warn("failed to send task update", "error", err, "task_id", event.Task.ID)
-				}
-				// Only an explicit terminal status retires a task from the running
-				// set. An update that merely refines the title or content carries
-				// no status (empty/unknown); treating that as "done" used to drop
-				// the task from runningTasks, so finalizeTasks never resolved it
-				// and the card was stranded mid-spinner — which Slack paints with a
-				// warning once the plan closes. Keep tracking it until a real
-				// terminal status arrives or the agent completes.
-				if isTerminalTaskStatus(event.Task.Status) {
-					delete(runningTasks, event.Task.ID)
-				} else {
-					runningTasks[event.Task.ID] = event.Task.Status
+				if err := renderer.Task(ctx, event.Task); err != nil {
+					return err
 				}
 			case agent.EventError:
-				// A caller interrupt (new message / /stop) surfaces here as a
-				// context cancellation, not an agent failure. Never paint a
-				// still-running task red for being cut short — leave the cards in
-				// their last real state and let the deferred interrupt handler
-				// render the "_interrupted_" marker. Real agent errors still fail
-				// the in-flight tasks below.
+				// A caller interrupt (new message / /stop) surfaces here as a context
+				// cancellation, not an agent failure: return it and let the deferred
+				// interrupt handler render the "_interrupted_" marker without painting
+				// a tool red. Real agent errors are surfaced on the reply surface.
 				if errors.Is(event.Error, context.Canceled) || errors.Is(context.Cause(ctx), context.Canceled) {
 					return event.Error
 				}
-				// Only the still-running tasks were genuinely cut short by the
-				// error; tasks that already reported a terminal status have been
-				// removed from runningTasks and keep their real outcome.
 				turnErr = event.Error
-				h.finalizeTasks(ctx, taskWriter, runningTasks, slack.TaskCardStatusError)
-				return writer.Fail(ctx, event.Error)
+				return renderer.Fail(ctx, event.Error)
 			case agent.EventComplete:
-				// The agent finished successfully: any task still marked running
-				// never received an explicit terminal update (common with parallel
-				// tool calls). Complete them rather than abandoning them
-				// mid-spinner or — worse — painting them red.
 				stopReason = event.StopReason
-				return h.finishStream(ctx, writer, taskWriter, runningTasks, &streamStarted, req, startedAt, chunkSeen, byteSeen, stopReason)
+				return finish()
 			}
 		}
 	}
-}
-
-// finishStream resolves a successful turn: it completes any task cards the agent
-// left open, makes sure a Slack message exists, stops the stream, and logs. It
-// is shared by the explicit EventComplete and the channel-closed-cleanly paths.
-func (h *ChatHandler) finishStream(ctx context.Context, writer *StreamWriter, taskWriter progressRenderer, runningTasks map[string]agent.TaskStatus, streamStarted *bool, req ChatRequest, startedAt time.Time, chunks, bytes int, stopReason string) error {
-	h.finalizeTasks(ctx, taskWriter, runningTasks, slack.TaskCardStatusComplete)
-	if !*streamStarted {
-		if err := writer.Start(ctx); err != nil {
-			return err
-		}
-		*streamStarted = true
-	}
-	// A turn that completed but streamed no agent text would otherwise leave the
-	// user staring at silence (or just task cards). Surface a short note — with
-	// the agent's stop reason when it explains the emptiness — so an empty reply
-	// is legible rather than mistaken for a dead bot.
-	if bytes == 0 {
-		if err := writer.Append(ctx, emptyReplyNote(stopReason)); err != nil {
-			return err
-		}
-		h.logger.Warn("ACP turn completed with no agent text", "source", req.Source, "channel", req.ChannelID, "stop_reason", stopReason)
-	}
-	if err := writer.Stop(ctx); err != nil {
-		return err
-	}
-	h.logger.Info("completed ACP chat response", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "chunks", chunks, "bytes", bytes, "stop_reason", stopReason)
-	return nil
 }
 
 // emptyReplyNote builds the message shown when a turn produced no agent text.
@@ -518,71 +480,6 @@ func emptyReplyNote(stopReason string) string {
 		return fmt.Sprintf(":warning: _The agent ended the turn without a reply (stop reason: `%s`). Try rephrasing or asking again._", stopReason)
 	}
 	return ":warning: _The agent finished without a text reply — it may have only run tools. Nudge it with another message to continue._"
-}
-
-// handleIdleTimeout reacts to a stalled turn: it asks the agent to stop (so it
-// does not keep burning work whose output can no longer be delivered) and posts
-// an honest "asked it to stop" notice on the still-live parent context, then
-// finalises the stream. It deliberately does NOT touch task cards — the agent
-// did not fail, so their last reported status stands rather than turning red.
-func (h *ChatHandler) handleIdleTimeout(ctx context.Context, sessions ChatSessionManager, key agent.ConversationKey, writer *StreamWriter, streamStarted bool) error {
-	idle := h.effectiveIdleTimeout()
-	h.logger.Warn("ACP turn idle; asking agent to stop", "idle_timeout", idle)
-	// Tell the agent to stop. Best-effort, on a fresh context: the parent ctx is
-	// still alive (we never cancelled it) but session/cancel is cleanup that must
-	// run regardless of the turn's deadline.
-	if sessionID, ok := sessions.Lookup(key); ok {
-		cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := sessions.Cancel(cancelCtx, sessionID); err != nil {
-			h.logger.Warn("ACP session cancel on idle timeout failed", "error", err, "session_id", sessionID)
-		}
-		cancel()
-	}
-	if !streamStarted {
-		if err := writer.Start(ctx); err != nil {
-			return err
-		}
-	}
-	if err := writer.Append(ctx, fmt.Sprintf(idleTimeoutNotice, idle.Round(time.Second))); err != nil {
-		return err
-	}
-	return writer.Stop(ctx)
-}
-
-// finalizeTasks brings every still-running task to a terminal status and
-// removes it from running. It is the single place that resolves the outcome of
-// tasks the agent left open, so a card is never stranded in a spinner or
-// painted with a status that contradicts what actually happened. Errors are
-// logged, not propagated: finalisation is best-effort cleanup.
-func (h *ChatHandler) finalizeTasks(ctx context.Context, taskWriter progressRenderer, running map[string]agent.TaskStatus, status slack.TaskCardStatus) {
-	for id := range running {
-		var err error
-		switch status {
-		case slack.TaskCardStatusComplete:
-			err = taskWriter.Complete(ctx, id, "")
-		default:
-			err = taskWriter.Fail(ctx, id, "")
-		}
-		if err != nil {
-			h.logger.Warn("failed to finalize task", "error", err, "task_id", id, "status", status)
-		}
-		delete(running, id)
-	}
-}
-
-// ensureStreamStopped finalises the Slack stream if it was started but never
-// stopped — the early-return-on-writer-error paths would otherwise leave the
-// message stuck showing the "generating" indicator. It runs on a fresh
-// background context because the request ctx may already be cancelled.
-func (h *ChatHandler) ensureStreamStopped(writer *StreamWriter) {
-	if writer == nil || !writer.Started() || writer.Stopped() {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := writer.Stop(ctx); err != nil {
-		h.logger.Warn("failed to stop stream on cleanup", "error", err)
-	}
 }
 
 func (h *ChatHandler) refreshAssistantStatus(ctx context.Context, channelID, threadTS, status string, done chan<- struct{}) {
@@ -606,31 +503,6 @@ func (h *ChatHandler) refreshAssistantStatus(ctx context.Context, channelID, thr
 				h.logger.Debug("failed to refresh assistant status", "error", err)
 			}
 		}
-	}
-}
-
-// renderInterrupted writes the trailing "_interrupted_" marker onto a
-// partial stream and stops it. The chat goroutine's context is by
-// definition cancelled at this point, so we operate on a fresh bounded
-// background context — Slack still needs to be told the stream is
-// finalised, otherwise the assistant status lingers and the message
-// stays in the in-progress state for up to two minutes. Errors are
-// logged but never propagated; the interrupt path is best-effort.
-func (h *ChatHandler) renderInterrupted(writer *StreamWriter) {
-	if writer == nil {
-		return
-	}
-	if !writer.Started() || writer.Stopped() {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := writer.Append(ctx, "\n\n_interrupted_"); err != nil {
-		h.logger.Warn("failed to append interrupted marker", "error", err)
-		return
-	}
-	if err := writer.Stop(ctx); err != nil {
-		h.logger.Warn("failed to stop stream after interrupt", "error", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,11 +108,17 @@ func (w *StatusLineWriter) Complete(context.Context, string, string) error { ret
 // on the answer stream, not the progress line.
 func (w *StatusLineWriter) Fail(context.Context, string, string) error { return nil }
 
-// Finish resolves the status message to "✓ Done thinking". It runs once; a turn
-// that never posted a line (no task events) is a no-op — there is nothing to
-// resolve, and an unsolicited "done" line would be noise. Errors are logged,
-// not returned, since teardown is best-effort cleanup.
+// Finish resolves the status message to the default "✓ Done thinking" line.
 func (w *StatusLineWriter) Finish(ctx context.Context) error {
+	return w.FinishWith(ctx, statusLineDoneText)
+}
+
+// FinishWith resolves the status message to doneText (e.g. a compact summary of
+// the tools that ran in this block). It runs once; a block that never posted a
+// line (no task events) is a no-op — there is nothing to resolve, and an
+// unsolicited line would be noise. Errors are logged, not returned, since
+// teardown is best-effort cleanup.
+func (w *StatusLineWriter) FinishWith(ctx context.Context, doneText string) error {
 	w.mu.Lock()
 	if w.done || w.messenger == nil || w.postTS == "" {
 		w.done = true
@@ -121,7 +128,10 @@ func (w *StatusLineWriter) Finish(ctx context.Context) error {
 	w.done = true
 	channel, ts := w.postChan, w.postTS
 	w.mu.Unlock()
-	if _, _, _, err := w.messenger.UpdateMessageContext(ctx, channel, ts, statusMsgOptions(statusLineDoneText)...); err != nil {
+	if strings.TrimSpace(doneText) == "" {
+		doneText = statusLineDoneText
+	}
+	if _, _, _, err := w.messenger.UpdateMessageContext(ctx, channel, ts, statusMsgOptions(doneText)...); err != nil {
 		w.logger.Debug("resolve status line failed", "channel", channel, "ts", ts, "error", err)
 		return err
 	}
