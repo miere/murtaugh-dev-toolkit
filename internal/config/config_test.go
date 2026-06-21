@@ -800,6 +800,47 @@ func TestAgentEnvOverridesNilWhenEmpty(t *testing.T) {
 	}
 }
 
+// channelAgentsValidationConfig builds a minimal ACP-enabled config whose only
+// variable is the channel_agents map, so a test can exercise the glob/agent
+// validation in isolation.
+func channelAgentsValidationConfig(channelAgents map[string]string) Config {
+	return Config{
+		OAuth: OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"},
+		ACP:   ACPConfig{Enabled: true},
+		Agents: map[string]AgentProfile{
+			"coding": {Command: "/bin/agent"},
+		},
+		Chat: ChatConfig{DefaultAgent: "coding", ChannelAgents: channelAgents},
+	}
+}
+
+func TestValidateAcceptsChannelNameGlobs(t *testing.T) {
+	cfg := channelAgentsValidationConfig(map[string]string{
+		"C12345":    "coding",
+		"feature-*": "coding",
+		"*-prod":    "coding",
+	})
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid channel-name globs to pass, got: %v", err)
+	}
+}
+
+func TestValidateRejectsMalformedChannelGlob(t *testing.T) {
+	cfg := channelAgentsValidationConfig(map[string]string{"feature-[a-*": "coding"})
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "not a valid channel-name glob") {
+		t.Fatalf("expected malformed glob validation error, got: %v", err)
+	}
+}
+
+func TestValidateRejectsUnknownAgentInChannelGlob(t *testing.T) {
+	cfg := channelAgentsValidationConfig(map[string]string{"feature-*": "nope"})
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "references unknown agent") {
+		t.Fatalf("expected unknown-agent validation error, got: %v", err)
+	}
+}
+
 func TestValidateRejectsEnvKeyWithEquals(t *testing.T) {
 	cfg, err := Parse(testConfig(""))
 	if err != nil {

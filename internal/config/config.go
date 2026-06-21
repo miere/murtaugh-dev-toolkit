@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -54,6 +55,12 @@ type ConfigurationConfig struct {
 }
 
 type ChatConfig struct {
+	// ChannelAgents routes a channel to a specific agent. Each key is either an
+	// exact Slack channel ID (C…/G…, for back-compat) or a channel-NAME glob
+	// that may contain `*` (e.g. "feature-*", "*-prod"), matched against the
+	// channel's name. The value is the agent name. Precedence on a match is
+	// exact-ID, then exact-name, then longest-literal-prefix glob (see
+	// gateway.matchChannelAgent).
 	ChannelAgents map[string]string `yaml:"channel_agents"`
 	DMAgent       string            `yaml:"dm_agent"`
 	DefaultAgent  string            `yaml:"default_agent"`
@@ -538,6 +545,15 @@ func (c Config) Validate() error {
 		for channel, agent := range c.Chat.ChannelAgents {
 			if _, ok := c.Agents[agent]; !ok {
 				errs = append(errs, fmt.Errorf("chat.channel_agents[%s] references unknown agent %q", channel, agent))
+			}
+			// Keys may be exact channel IDs (C…/G…) or channel-NAME globs that
+			// contain `*` (e.g. "feature-*"). A glob is matched via path.Match at
+			// runtime, so reject a malformed pattern here rather than letting it
+			// silently never match.
+			if strings.ContainsRune(channel, '*') {
+				if _, err := path.Match(channel, "probe"); err != nil {
+					errs = append(errs, fmt.Errorf("chat.channel_agents[%s] is not a valid channel-name glob: %w", channel, err))
+				}
 			}
 		}
 	}
