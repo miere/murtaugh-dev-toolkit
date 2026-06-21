@@ -53,10 +53,29 @@ func (c *Conversation) Messages() []llm.Message {
 // Len reports how many messages the conversation holds.
 func (c *Conversation) Len() int { return len(c.messages) }
 
+// interruptedTurnNote closes a turn whose tail is a dangling tool-result — the
+// loop hit max_turns, errored, or was cancelled after running tools but before
+// the model produced its closing text. It is inserted as a synthetic assistant
+// message so the next user turn does not land immediately after a tool-result.
+const interruptedTurnNote = "(The previous turn ended before I produced a final reply.)"
+
 // AppendUser appends a genuine user turn (the human's Slack message). This is
 // the ONLY way a RoleUser message enters the array — per-turn system context is
 // never appended here; it belongs in the system prompt.
+//
+// If the conversation tail is a dangling tool-result (a prior turn ended on
+// max_turns, a hard error, or a cancellation after tools ran but before the
+// model replied), appending the user turn directly onto it would form the
+// tool-result → user shape that IS the Goose MOIM consecutive-user bug. To keep
+// the invariant true by construction regardless of how the previous turn ended,
+// the dangling turn is first closed with a synthetic assistant message.
 func (c *Conversation) AppendUser(text string) {
+	if n := len(c.messages); n > 0 && effectiveRole(c.messages[n-1]) == llm.RoleTool {
+		c.messages = append(c.messages, llm.Message{
+			Role: llm.RoleAssistant,
+			Text: interruptedTurnNote,
+		})
+	}
 	c.messages = append(c.messages, llm.Message{
 		Role: llm.RoleUser,
 		Text: text,

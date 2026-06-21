@@ -244,6 +244,55 @@ func TestRun_NeverEmitsConsecutiveUserAfterTool(t *testing.T) {
 	}
 }
 
+// --- (2b) a turn that ends on max_turns must not wedge the next user turn ----
+
+// TestRun_DanglingToolResultThenNextUserTurn reproduces the production
+// regression: a turn that exhausts max_turns leaves the conversation tail as a
+// tool-result (the loop returns without a closing assistant message). The NEXT
+// user message in the same session must NOT land immediately after that
+// tool-result — otherwise the no-consecutive-user guard fires and every
+// subsequent message in the session errors until the process restarts.
+func TestRun_DanglingToolResultThenNextUserTurn(t *testing.T) {
+	// Run 1: every turn asks for a tool, so a small maxTurns is exhausted and the
+	// conversation tail is a tool-result.
+	prov := &fakeProvider{}
+	for i := 0; i < 100; i++ {
+		prov.turns = append(prov.turns, scriptedTurn{
+			toolCalls: []llm.ToolCall{{ID: "z", Name: "alpha", Arguments: rawArgs(t, map[string]any{})}},
+		})
+	}
+	alpha := &fakeTool{name: "alpha", result: "r"}
+	loop := NewLoop(prov, "m", []tools.Tool{alpha}, 3)
+
+	conv := NewConversation()
+	conv.AppendUser("first question")
+	emit, _ := newCollector()
+	stop, err := loop.Run(context.Background(), conv, "SYS", emit)
+	if err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	if stop != "max_turns" {
+		t.Fatalf("run 1 stop = %q, want max_turns (precondition: dangling tool-result tail)", stop)
+	}
+	if last := conv.Messages()[conv.Len()-1]; effectiveRole(last) != llm.RoleTool {
+		t.Fatalf("precondition not met: tail role = %q, want a dangling tool-result", effectiveRole(last))
+	}
+
+	// The next Slack message arrives in the SAME session. Before the fix this
+	// produced tool-result → user and the very next Run errored immediately.
+	conv.AppendUser("can you tweak max_turns?")
+	if err := assertNoConsecutiveUserAfterTool(conv.Messages()); err != nil {
+		t.Fatalf("AppendUser left a malformed array after a max_turns turn: %v", err)
+	}
+
+	// Let the model now reply cleanly and verify run 2 completes without error.
+	prov.turns = append(prov.turns, scriptedTurn{text: "sure", stopReason: "end_turn"})
+	if _, err := loop.Run(context.Background(), conv, "SYS", emit); err != nil {
+		t.Fatalf("run 2 must not be wedged by the prior max_turns turn: %v", err)
+	}
+	assertAllRequestsClean(t, prov)
+}
+
 // --- (3) empty completion triggers bounded recovery -------------------------
 
 func TestRun_EmptyCompletionRecovers(t *testing.T) {

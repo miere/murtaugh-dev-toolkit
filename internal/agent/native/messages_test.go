@@ -31,6 +31,41 @@ func TestConversation_AppendHelpersBuildAlternatingArray(t *testing.T) {
 	}
 }
 
+func TestConversation_AppendUserHealsDanglingToolResult(t *testing.T) {
+	// Tail is a tool-result (a prior turn ended on max_turns / error / cancel).
+	c := NewConversation()
+	c.AppendUser("q1")
+	c.AppendAssistant("on it", []llm.ToolCall{{ID: "1", Name: "t"}})
+	c.AppendToolResult("1", "t", "result") // <- dangling: no closing assistant turn
+
+	c.AppendUser("q2")
+
+	msgs := c.Messages()
+	// A synthetic assistant message must have been inserted between the
+	// tool-result and the new user turn.
+	if msgs[len(msgs)-2].Role != llm.RoleAssistant {
+		t.Fatalf("expected a synthetic assistant turn before the user message, got %#v", msgs[len(msgs)-2])
+	}
+	if msgs[len(msgs)-1].Role != llm.RoleUser || msgs[len(msgs)-1].Text != "q2" {
+		t.Fatalf("expected the user turn last, got %#v", msgs[len(msgs)-1])
+	}
+	if err := assertNoConsecutiveUserAfterTool(msgs); err != nil {
+		t.Fatalf("heal failed, array still malformed: %v", err)
+	}
+}
+
+func TestConversation_AppendUserNoHealAfterAssistant(t *testing.T) {
+	// When the tail is already an assistant turn, no synthetic message is added.
+	c := NewConversation()
+	c.AppendUser("q1")
+	c.AppendAssistant("answer", nil)
+	before := c.Len()
+	c.AppendUser("q2")
+	if c.Len() != before+1 {
+		t.Fatalf("expected exactly one message appended, len %d -> %d", before, c.Len())
+	}
+}
+
 func TestConversation_MessagesReturnsCopy(t *testing.T) {
 	c := NewConversation()
 	c.AppendUser("hi")
