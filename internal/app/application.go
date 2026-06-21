@@ -392,7 +392,9 @@ func buildRegistry(cfg config.Config, configPath, version string, recorder journ
 	// slack.yaml). The client is built lazily on first Invoke, so an
 	// unconfigured token only surfaces when a tool is actually called.
 	botToken := cfg.OAuth.BotToken
-	reg.Register(slacksendmsg.New(botToken))
+	// send-msg can additionally post "as admin" via the admin's user token
+	// (oauth.user_token); empty disables that path.
+	reg.Register(slacksendmsg.New(botToken, cfg.OAuth.UserToken))
 	reg.Register(slackcreatechannel.New(botToken))
 	reg.Register(slackfetchmsgs.New(botToken))
 	reg.Register(slackfetchreactions.New(botToken))

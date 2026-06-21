@@ -46,6 +46,11 @@ type TroubleshootConfig struct {
 type OAuthConfig struct {
 	AppToken string `yaml:"app_token"`
 	BotToken string `yaml:"bot_token"`
+	// UserToken is the admin's Slack user token (xoxp-…) carrying the
+	// user-scope chat:write. It is optional; when set it enables posting
+	// "as admin" so a message shows the admin's real identity instead of
+	// the app/bot.
+	UserToken string `yaml:"user_token"`
 }
 
 type ConfigurationConfig struct {
@@ -402,6 +407,7 @@ func Load(path string) (Config, error) {
 	// pre-.env configs keep working.
 	cfg.OAuth.AppToken = os.ExpandEnv(cfg.OAuth.AppToken)
 	cfg.OAuth.BotToken = os.ExpandEnv(cfg.OAuth.BotToken)
+	cfg.OAuth.UserToken = os.ExpandEnv(cfg.OAuth.UserToken)
 
 	agentsPath := filepath.Join(cfg.BaseDir, "agents.yaml")
 	agentsData, err := os.ReadFile(agentsPath)

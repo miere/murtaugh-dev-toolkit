@@ -16,22 +16,29 @@ import (
 
 // Tool is the `slack.send-msg` capability.
 type Tool struct {
-	client *slacklib.LazyClient
-	warn   io.Writer
+	client      *slacklib.LazyClient
+	adminClient *slacklib.LazyClient
+	warn        io.Writer
 }
 
-// New constructs a Tool that builds its Slack client lazily from the given
-// bot token (sourced from oauth.bot_token in slack.yaml). Warnings about
-// unresolvable mentions are written to os.Stderr.
-func New(token string) *Tool {
-	return &Tool{client: slacklib.NewLazyClient(token), warn: os.Stderr}
+// New constructs a Tool that builds its Slack clients lazily from the given
+// tokens. botToken (oauth.bot_token in slack.yaml) backs the default "as
+// bot" sends. userToken (oauth.user_token, the admin's xoxp-… token) backs
+// "as admin" sends; when it is empty, requesting as: "admin" returns an
+// error. Warnings about unresolvable mentions are written to os.Stderr.
+func New(botToken, userToken string) *Tool {
+	var adminClient *slacklib.LazyClient
+	if userToken != "" {
+		adminClient = slacklib.NewLazyClient(userToken)
+	}
+	return &Tool{client: slacklib.NewLazyClient(botToken), adminClient: adminClient, warn: os.Stderr}
 }
 
-// NewWith constructs a Tool against the given LazyClient and warn writer.
-// Intended for tests so they can inject a fake SlackAPI and capture
-// warnings.
-func NewWith(client *slacklib.LazyClient, warn io.Writer) *Tool {
-	return &Tool{client: client, warn: warn}
+// NewWith constructs a Tool against the given LazyClients and warn writer.
+// Intended for tests so they can inject fake SlackAPIs and capture
+// warnings. A nil adminClient models a missing user token.
+func NewWith(client, adminClient *slacklib.LazyClient, warn io.Writer) *Tool {
+	return &Tool{client: client, adminClient: adminClient, warn: warn}
 }
 
 // Name returns the registry key.
@@ -53,6 +60,7 @@ func (t *Tool) InputSchema() *jsonschema.Schema {
 			"thread":          {Type: "string", Description: "Thread timestamp to reply to."},
 			"attachment_type": {Type: "string", Enum: []any{"markdown"}, Description: "Snippet type for the attachment."},
 			"blocks":          {Type: "string", Description: "Block Kit blocks: either a JSON string (starts with [ or {) or a path to a JSON file. Mutually exclusive with attachment."},
+			"as":              {Type: "string", Enum: []any{"bot", "admin"}, Description: "Sender identity: \"bot\" (default) posts as the app; \"admin\" posts as the human admin via their Slack user token (requires oauth.user_token)."},
 		},
 		Required: []string{"body", "to"},
 	}
@@ -80,6 +88,7 @@ func (t *Tool) Invoke(ctx context.Context, args map[string]any) (any, error) {
 	thread, _ := args["thread"].(string)
 	attachmentType, _ := args["attachment_type"].(string)
 	blocks, _ := args["blocks"].(string)
+	as, _ := args["as"].(string)
 
 	if body == "" {
 		return nil, fmt.Errorf("Error: --body is required")
@@ -91,12 +100,27 @@ func (t *Tool) Invoke(ctx context.Context, args map[string]any) (any, error) {
 		return nil, fmt.Errorf("Error: --attachment and --blocks are mutually exclusive")
 	}
 
+	// Pick the sender: "admin" posts via the admin's user token; "bot"
+	// (default) and the empty string post via the bot token. We never
+	// silently fall back to the bot when admin is requested but unavailable.
+	client := t.client
+	switch as {
+	case "", "bot":
+	case "admin":
+		if t.adminClient == nil {
+			return nil, fmt.Errorf("Error: as=admin requires a Slack user token; set oauth.user_token in slack.yaml")
+		}
+		client = t.adminClient
+	default:
+		return nil, fmt.Errorf("Error: --as must be \"bot\" or \"admin\"")
+	}
+
 	rawBlocks, err := slacklib.ResolveBlocks(blocks)
 	if err != nil {
 		return nil, err
 	}
 
-	api, err := t.client.Get()
+	api, err := client.Get()
 	if err != nil {
 		return nil, err
 	}

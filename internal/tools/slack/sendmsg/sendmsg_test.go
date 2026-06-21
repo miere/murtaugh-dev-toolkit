@@ -14,7 +14,7 @@ import (
 )
 
 func TestTool_Metadata(t *testing.T) {
-	tool := New("")
+	tool := New("", "")
 	if tool.Name() != "slack.send-msg" {
 		t.Fatalf("Name = %q, want slack.send-msg", tool.Name())
 	}
@@ -40,7 +40,7 @@ func TestInvoke_PostsToChannelByName(t *testing.T) {
 		Channels:   []slacklib.Channel{{ID: "C123", Name: "general"}},
 		PostResult: slacklib.PostMessageResult{Channel: "C123", TS: "111.222"},
 	}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 
 	res, err := tool.Invoke(context.Background(), map[string]any{
 		"body": "hello",
@@ -61,13 +61,91 @@ func TestInvoke_PostsToChannelByName(t *testing.T) {
 	}
 }
 
+func TestInvoke_AsAdminUsesUserTokenClient(t *testing.T) {
+	bot := &slacktest.FakeAPI{
+		Channels:   []slacklib.Channel{{ID: "C123", Name: "general"}},
+		PostResult: slacklib.PostMessageResult{Channel: "C123", TS: "bot.ts"},
+	}
+	admin := &slacktest.FakeAPI{
+		Channels:   []slacklib.Channel{{ID: "C123", Name: "general"}},
+		PostResult: slacklib.PostMessageResult{Channel: "C123", TS: "admin.ts"},
+	}
+	tool := NewWith(bot.LazyClient(), admin.LazyClient(), &bytes.Buffer{})
+
+	res, err := tool.Invoke(context.Background(), map[string]any{
+		"body": "hello",
+		"to":   "#general",
+		"as":   "admin",
+	})
+	if err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if r := res.(Result); r.TS != "admin.ts" {
+		t.Fatalf("Result TS = %q, want admin.ts (admin client)", r.TS)
+	}
+	if len(admin.Posted) != 1 || admin.Posted[0].Text != "hello" {
+		t.Fatalf("admin Posted = %+v, want one post", admin.Posted)
+	}
+	if len(bot.Posted) != 0 {
+		t.Fatalf("expected no bot posts when as=admin, got %+v", bot.Posted)
+	}
+}
+
+func TestInvoke_AsAdminWithoutUserTokenErrors(t *testing.T) {
+	bot := &slacktest.FakeAPI{Channels: []slacklib.Channel{{ID: "C123", Name: "general"}}}
+	tool := NewWith(bot.LazyClient(), nil, &bytes.Buffer{})
+
+	_, err := tool.Invoke(context.Background(), map[string]any{
+		"body": "hello",
+		"to":   "#general",
+		"as":   "admin",
+	})
+	if err == nil || !strings.Contains(err.Error(), "as=admin requires a Slack user token") {
+		t.Fatalf("Invoke err = %v, want missing-user-token error", err)
+	}
+	if len(bot.Posted) != 0 {
+		t.Fatalf("expected no fallback to bot, got %+v", bot.Posted)
+	}
+}
+
+func TestInvoke_AsBotUnchanged(t *testing.T) {
+	bot := &slacktest.FakeAPI{
+		Channels:   []slacklib.Channel{{ID: "C123", Name: "general"}},
+		PostResult: slacklib.PostMessageResult{Channel: "C123", TS: "bot.ts"},
+	}
+	admin := &slacktest.FakeAPI{
+		Channels:   []slacklib.Channel{{ID: "C123", Name: "general"}},
+		PostResult: slacklib.PostMessageResult{Channel: "C123", TS: "admin.ts"},
+	}
+	tool := NewWith(bot.LazyClient(), admin.LazyClient(), &bytes.Buffer{})
+
+	for _, as := range []map[string]any{
+		{"body": "hi", "to": "#general"},
+		{"body": "hi", "to": "#general", "as": "bot"},
+	} {
+		res, err := tool.Invoke(context.Background(), as)
+		if err != nil {
+			t.Fatalf("Invoke(%v): %v", as, err)
+		}
+		if r := res.(Result); r.TS != "bot.ts" {
+			t.Fatalf("Result TS = %q, want bot.ts", r.TS)
+		}
+	}
+	if len(admin.Posted) != 0 {
+		t.Fatalf("expected no admin posts, got %+v", admin.Posted)
+	}
+	if len(bot.Posted) != 2 {
+		t.Fatalf("bot Posted = %d, want 2", len(bot.Posted))
+	}
+}
+
 func TestInvoke_ResolvesMentionsInBody(t *testing.T) {
 	fake := &slacktest.FakeAPI{
 		Channels:   []slacklib.Channel{{ID: "C1", Name: "general"}},
 		Users:      []slacklib.User{{ID: "U99", Name: "ada"}},
 		PostResult: slacklib.PostMessageResult{Channel: "C1", TS: "1.0"},
 	}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 
 	_, err := tool.Invoke(context.Background(), map[string]any{
 		"body": "hi @ada",
@@ -87,7 +165,7 @@ func TestInvoke_OpenDMForUserMention(t *testing.T) {
 		DMFor:      map[string]string{"U987": "D111"},
 		PostResult: slacklib.PostMessageResult{Channel: "D111", TS: "2.0"},
 	}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 
 	res, err := tool.Invoke(context.Background(), map[string]any{
 		"body": "hey",
@@ -114,7 +192,7 @@ func TestInvoke_UploadsAttachment(t *testing.T) {
 		Channels:     []slacklib.Channel{{ID: "C1", Name: "general"}},
 		UploadResult: slacklib.PostMessageResult{Channel: "C1", TS: "F123"},
 	}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 
 	if _, err := tool.Invoke(context.Background(), map[string]any{
 		"body":            "report",
@@ -141,7 +219,7 @@ func TestInvoke_UploadsAttachment(t *testing.T) {
 
 func TestInvoke_AttachmentMissingErrorsWithCLIMessage(t *testing.T) {
 	fake := &slacktest.FakeAPI{Channels: []slacklib.Channel{{ID: "C1", Name: "general"}}}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 
 	_, err := tool.Invoke(context.Background(), map[string]any{
 		"body":       "x",
@@ -155,7 +233,7 @@ func TestInvoke_AttachmentMissingErrorsWithCLIMessage(t *testing.T) {
 
 func TestInvoke_MissingRequiredArgsFail(t *testing.T) {
 	fake := &slacktest.FakeAPI{}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 	if _, err := tool.Invoke(context.Background(), map[string]any{"to": "#g"}); err == nil {
 		t.Fatalf("Invoke without body should fail")
 	}
@@ -169,7 +247,7 @@ func TestInvoke_ForwardsBlocksToPostMessage(t *testing.T) {
 		Channels:   []slacklib.Channel{{ID: "C1", Name: "general"}},
 		PostResult: slacklib.PostMessageResult{Channel: "C1", TS: "1.0"},
 	}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 
 	blocks := `[{"type":"section","text":{"type":"mrkdwn","text":"hi"}}]`
 	if _, err := tool.Invoke(context.Background(), map[string]any{
@@ -198,7 +276,7 @@ func TestInvoke_BlocksFromFilePath(t *testing.T) {
 		Channels:   []slacklib.Channel{{ID: "C1", Name: "general"}},
 		PostResult: slacklib.PostMessageResult{Channel: "C1", TS: "1.0"},
 	}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 
 	if _, err := tool.Invoke(context.Background(), map[string]any{
 		"body":   "hi",
@@ -214,7 +292,7 @@ func TestInvoke_BlocksFromFilePath(t *testing.T) {
 
 func TestInvoke_BlocksInvalidJSONFails(t *testing.T) {
 	fake := &slacktest.FakeAPI{Channels: []slacklib.Channel{{ID: "C1", Name: "general"}}}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 
 	_, err := tool.Invoke(context.Background(), map[string]any{
 		"body":   "x",
@@ -236,7 +314,7 @@ func TestInvoke_BlocksAndAttachmentMutuallyExclusive(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 	fake := &slacktest.FakeAPI{Channels: []slacklib.Channel{{ID: "C1", Name: "general"}}}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 
 	_, err := tool.Invoke(context.Background(), map[string]any{
 		"body":       "x",
@@ -257,7 +335,7 @@ func TestInvoke_ResultIsJSONSerialisable(t *testing.T) {
 		Channels:   []slacklib.Channel{{ID: "C1", Name: "general"}},
 		PostResult: slacklib.PostMessageResult{Channel: "C1", TS: "1.0"},
 	}
-	tool := NewWith(fake.LazyClient(), &bytes.Buffer{})
+	tool := NewWith(fake.LazyClient(), nil, &bytes.Buffer{})
 	res, err := tool.Invoke(context.Background(), map[string]any{"body": "x", "to": "#general"})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
