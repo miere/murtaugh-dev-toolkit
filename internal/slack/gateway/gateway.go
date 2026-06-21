@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -152,6 +153,14 @@ type Gateway struct {
 	// a ticker by startChannelCache; nil disables name-based routing (only the
 	// exact channel-ID keys still match), so CLI/MCP and tests never pay for it.
 	channelCache *channelNameCache
+	// noMentionPerChannel maps a channel-ID/channel-NAME glob (same key syntax as
+	// chat.channel_agents) to the Slack user IDs whose plain channel messages the
+	// bot replies to without an @mention. Captured from cfg.Chat at construction;
+	// any handle entries are resolved to IDs by resolveAllowSet at the start of
+	// Run, so the runtime membership test in handleEventsAPI is ID-only. The
+	// effective no-mention set for a channel is the UNION of cfg.DoNotRequireMentionFrom
+	// and the values of every pattern whose glob matches the channel.
+	noMentionPerChannel map[string][]string
 }
 
 func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recorder journal.Recorder) *Gateway {
@@ -306,6 +315,9 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		recorder:        recorder,
 		botToken:        cfg.OAuth.BotToken,
 		channelCache:    channelCache,
+		// Captured here so the no-mention check in handleEventsAPI can run without
+		// re-importing the full cfg; the global list lives on cfg (a.cfg) already.
+		noMentionPerChannel: cfg.Chat.ChannelDoNotRequireMention,
 	}
 }
 
@@ -540,12 +552,30 @@ func (a *Gateway) handleEvent(ctx context.Context, event socketmode.Event) {
 // empty the Gateway is effectively locked down and direct interactions will be
 // denied; a warning is logged in that case.
 func (a *Gateway) resolveAllowSet(ctx context.Context) error {
-	refs := make([]string, 0, 1+len(a.cfg.AllowedUsers))
+	// The admin and allowed_users entries plus the no-mention lists (global and
+	// per-channel) may each be handles or IDs. They are resolved in one batched
+	// users.list call by concatenating every reference, resolving once, and
+	// slicing the result back into place — so a workspace with no handles makes
+	// zero Slack calls and one with handles makes exactly one.
 	hasAdmin := strings.TrimSpace(a.cfg.AdminUser) != ""
+
+	// Deterministic per-channel key order so the resolved slices line up with the
+	// keys when we split the result back out.
+	channelKeys := make([]string, 0, len(a.noMentionPerChannel))
+	for key := range a.noMentionPerChannel {
+		channelKeys = append(channelKeys, key)
+	}
+	sort.Strings(channelKeys)
+
+	refs := make([]string, 0, 1+len(a.cfg.AllowedUsers)+len(a.cfg.DoNotRequireMentionFrom))
 	if hasAdmin {
 		refs = append(refs, a.cfg.AdminUser)
 	}
 	refs = append(refs, a.cfg.AllowedUsers...)
+	refs = append(refs, a.cfg.DoNotRequireMentionFrom...)
+	for _, key := range channelKeys {
+		refs = append(refs, a.noMentionPerChannel[key]...)
+	}
 	if len(refs) == 0 {
 		a.logger.Warn("authorization locked down: configuration.admin_user and configuration.allowed_users are both empty; direct interactions will be ignored")
 		return nil
@@ -554,12 +584,28 @@ func (a *Gateway) resolveAllowSet(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	// Slice the resolved IDs back into the same shapes, in the same order they
+	// were appended above.
+	cursor := 0
 	if hasAdmin {
-		a.cfg.AdminUser = ids[0]
-		a.cfg.AllowedUsers = ids[1:]
-	} else {
-		a.cfg.AllowedUsers = ids
+		a.cfg.AdminUser = ids[cursor]
+		cursor++
 	}
+	a.cfg.AllowedUsers = ids[cursor : cursor+len(a.cfg.AllowedUsers)]
+	cursor += len(a.cfg.AllowedUsers)
+	a.cfg.DoNotRequireMentionFrom = ids[cursor : cursor+len(a.cfg.DoNotRequireMentionFrom)]
+	cursor += len(a.cfg.DoNotRequireMentionFrom)
+	if len(channelKeys) > 0 {
+		resolvedPerChannel := make(map[string][]string, len(channelKeys))
+		for _, key := range channelKeys {
+			n := len(a.noMentionPerChannel[key])
+			resolvedPerChannel[key] = ids[cursor : cursor+n]
+			cursor += n
+		}
+		a.noMentionPerChannel = resolvedPerChannel
+	}
+
 	a.logger.Info("resolved authorized Slack users", "admin_user", a.cfg.AdminUser, "allowed_users", len(a.cfg.AllowedUsers))
 	return nil
 }
@@ -891,7 +937,8 @@ func (a *Gateway) handleEventsAPI(event socketmode.Event) {
 			a.logger.Debug("ignored message because ACP chat is disabled")
 			return
 		}
-		if inner.BotID != "" || inner.ChannelType != "im" {
+		// Bot/self messages are never answered, in DMs or channels.
+		if inner.BotID != "" {
 			return
 		}
 		// Allow plain messages and file uploads ("file_share"); drop other
@@ -900,18 +947,69 @@ func (a *Gateway) handleEventsAPI(event socketmode.Event) {
 		if inner.SubType != "" && inner.SubType != "file_share" {
 			return
 		}
-		if !a.cfg.IsAllowedUser(inner.User) {
-			a.logger.Debug("ignored DM from unauthorized user", "user", inner.User, "channel", inner.Channel)
+		if inner.ChannelType == "im" {
+			a.handleDirectMessage(eventsAPI, inner, event)
 			return
 		}
-		if a.isDuplicateEvent(eventsAPI.TeamID, inner.Channel, inner.TimeStamp) {
-			a.logger.Info("ignored duplicate DM", "channel", inner.Channel, "ts", inner.TimeStamp)
-			return
-		}
-		a.startChat(context.Background(), ChatRequest{TeamID: eventsAPI.TeamID, ChannelID: inner.Channel, UserID: inner.User, ThreadTS: inner.ThreadTimeStamp, MessageTS: inner.TimeStamp, Text: inner.Text, Files: eventFiles(event), DM: true, Source: "dm"})
+		// A plain (non-mention) channel message: the bot only answers it when the
+		// author is waived from the mention requirement for this channel. Users not
+		// on the no-mention list still reach the bot via the app_mention path.
+		a.handleChannelMessage(eventsAPI, inner, event)
 	default:
 		a.logger.Debug("ignored Events API event", "inner_type", eventsAPI.InnerEvent.Type)
 	}
+}
+
+// handleDirectMessage answers a DM (channel_type "im"). It is the verbatim DM
+// path lifted out of handleEventsAPI: authorize the author, drop redelivered
+// duplicates, then start the chat. DMs never require a mention.
+func (a *Gateway) handleDirectMessage(eventsAPI slackevents.EventsAPIEvent, inner *slackevents.MessageEvent, event socketmode.Event) {
+	if !a.cfg.IsAllowedUser(inner.User) {
+		a.logger.Debug("ignored DM from unauthorized user", "user", inner.User, "channel", inner.Channel)
+		return
+	}
+	if a.isDuplicateEvent(eventsAPI.TeamID, inner.Channel, inner.TimeStamp) {
+		a.logger.Info("ignored duplicate DM", "channel", inner.Channel, "ts", inner.TimeStamp)
+		return
+	}
+	a.startChat(context.Background(), ChatRequest{TeamID: eventsAPI.TeamID, ChannelID: inner.Channel, UserID: inner.User, ThreadTS: inner.ThreadTimeStamp, MessageTS: inner.TimeStamp, Text: inner.Text, Files: eventFiles(event), DM: true, Source: "dm"})
+}
+
+// handleChannelMessage answers a plain (non-mention) message posted in a public
+// channel or private group. The bot normally only replies to explicit
+// @mentions there; this path waives the mention requirement for authors listed
+// in the effective no-mention set — the UNION of configuration.do_not_require_mention_from
+// and chat.channel_do_not_require_mention entries whose glob matches this
+// channel. The waiver is mention-only: the author must STILL pass IsAllowedUser.
+//
+// The channel name is resolved from the in-memory cache (no Slack I/O on the
+// socket goroutine); a cache miss triggers a non-blocking refresh so a
+// brand-new channel's name-glob rules can match the NEXT message. Dedup relies
+// on the shared message ts: an author who DID @mention is handled by the
+// app_mention path, and isDuplicateEvent keys on (team, channel, ts), so the
+// twin plain-message delivery is dropped here rather than double-firing.
+func (a *Gateway) handleChannelMessage(eventsAPI slackevents.EventsAPIEvent, inner *slackevents.MessageEvent, event socketmode.Event) {
+	if !a.cfg.IsAllowedUser(inner.User) {
+		a.logger.Debug("ignored channel message from unauthorized user", "user", inner.User, "channel", inner.Channel)
+		return
+	}
+	channelName, known := a.channelCache.nameFor(inner.Channel)
+	if !known {
+		a.channelCache.refreshAsync(context.Background())
+	}
+	allowed := usersAllowedWithoutMention(inner.Channel, channelName, a.cfg.DoNotRequireMentionFrom, a.noMentionPerChannel)
+	if !allowed[inner.User] {
+		a.logger.Debug("ignored channel message: author not waived from mention requirement", "user", inner.User, "channel", inner.Channel)
+		return
+	}
+	if a.isDuplicateEvent(eventsAPI.TeamID, inner.Channel, inner.TimeStamp) {
+		a.logger.Info("ignored duplicate channel message", "channel", inner.Channel, "ts", inner.TimeStamp)
+		return
+	}
+	// Strip any mentions so the prompt is clean whether or not the user @mentioned
+	// the bot (a listed user who also mentions is de-duped above via the shared ts).
+	text := stripSlackMentions(inner.Text)
+	a.startChat(context.Background(), ChatRequest{TeamID: eventsAPI.TeamID, ChannelID: inner.Channel, UserID: inner.User, ThreadTS: inner.ThreadTimeStamp, MessageTS: inner.TimeStamp, Text: text, Files: eventFiles(event), Source: "channel_no_mention"})
 }
 
 func (a *Gateway) handleLinkShared(teamID string, inner *slackevents.LinkSharedEvent) {
