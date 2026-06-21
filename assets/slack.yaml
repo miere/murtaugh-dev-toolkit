@@ -14,10 +14,23 @@ configuration:
   # (e.g. alice, @alice); handles are resolved to IDs at startup and the bot
   # refuses to start if any entry cannot be resolved.
   allowed_users: []
+  # Users whose plain CHANNEL messages the bot answers WITHOUT an @mention
+  # (it normally only replies to explicit mentions in channels). This waives
+  # the mention requirement only — a listed user must STILL be in allowed_users
+  # (or be the admin). Entries may be IDs or handles, resolved at startup.
+  do_not_require_mention_from: []
   debug: false
 
 chat:
   default_agent: default
+  # Per-channel version of configuration.do_not_require_mention_from. Keys use
+  # the same channel-ID / channel-NAME glob syntax as channel_agents (below);
+  # values are the users waived from the mention requirement in matching
+  # channels. The effective no-mention set for a channel is the UNION of the
+  # global list and every matching pattern here.
+  # channel_do_not_require_mention:
+  #   feature-*: [alice, U0123ABC]
+  #   incident-prod: [oncall]
 
 commands:
   - name: /murtaugh

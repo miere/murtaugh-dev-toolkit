@@ -841,6 +841,39 @@ func TestValidateRejectsUnknownAgentInChannelGlob(t *testing.T) {
 	}
 }
 
+// noMentionValidationConfig builds a minimal ACP-enabled config whose only
+// variable is the chat.channel_do_not_require_mention map, so a test can
+// exercise its glob-key validation in isolation.
+func noMentionValidationConfig(perChannel map[string][]string) Config {
+	return Config{
+		OAuth: OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"},
+		ACP:   ACPConfig{Enabled: true},
+		Agents: map[string]AgentProfile{
+			"coding": {Command: "/bin/agent"},
+		},
+		Chat: ChatConfig{DefaultAgent: "coding", ChannelDoNotRequireMention: perChannel},
+	}
+}
+
+func TestValidateAcceptsNoMentionChannelGlobs(t *testing.T) {
+	cfg := noMentionValidationConfig(map[string][]string{
+		"C12345":    {"U1"},
+		"feature-*": {"U2", "@bob"},
+		"*-prod":    {"U3"},
+	})
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid no-mention channel globs to pass, got: %v", err)
+	}
+}
+
+func TestValidateRejectsMalformedNoMentionChannelGlob(t *testing.T) {
+	cfg := noMentionValidationConfig(map[string][]string{"feature-[a-*": {"U1"}})
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "chat.channel_do_not_require_mention") || !strings.Contains(err.Error(), "not a valid channel-name glob") {
+		t.Fatalf("expected malformed no-mention glob validation error, got: %v", err)
+	}
+}
+
 func TestValidateRejectsEnvKeyWithEquals(t *testing.T) {
 	cfg, err := Parse(testConfig(""))
 	if err != nil {
