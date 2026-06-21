@@ -209,6 +209,26 @@ murtaugh slack send-msg --to "@miere" --body "ping" --thread 1716950455.123456
 murtaugh slack send-msg --to "#status" --body "Status" --blocks ./status-blocks.json
 ```
 
+## murtaugh slack create-channel
+
+Create a public or private Slack channel, optionally inviting users and setting
+a topic/purpose. Uses the bot token from `oauth.bot_token` in `slack.yaml`. The
+bot needs the `channels:manage` scope for public channels and `groups:write`
+for private ones (those scopes also cover the invites).
+
+| Flag        | Required | Type    | Notes                                                              |
+|-------------|----------|---------|--------------------------------------------------------------------|
+| `--name`    | yes      | string  | Channel name (a leading `#` is stripped). Slack lowercases it and replaces spaces with hyphens. |
+| `--private` | no       | boolean | Create a private channel instead of a public one.                  |
+| `--invite`  | no       | array   | Users to invite: `@handle` mentions or raw `U…/W…` user IDs. Unresolvable handles are skipped with a warning; per-user failures don't abort. |
+| `--topic`   | no       | string  | Channel topic to set after creation.                               |
+| `--purpose` | no       | string  | Channel purpose/description to set after creation.                 |
+
+```
+murtaugh slack create-channel --name launch-2026 --topic "Launch coordination"
+murtaugh slack create-channel --name incident-42 --private true --invite @miere --invite U07ABCDE
+```
+
 ## murtaugh slack fetch-msgs
 
 Fetch messages from a channel or thread, oldest-first. Capped at 100 messages.

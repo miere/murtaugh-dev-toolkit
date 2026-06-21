@@ -25,6 +25,7 @@ type FakeAPI struct {
 	Posted   []slacklib.PostMessageParams
 	Updated  []slacklib.UpdateMessageParams
 	Uploaded []slacklib.UploadFileParams
+	Created  []slacklib.CreateChannelParams
 
 	PostResult   slacklib.PostMessageResult
 	PostErr      error
@@ -32,6 +33,8 @@ type FakeAPI struct {
 	UpdateErr    error
 	UploadResult slacklib.PostMessageResult
 	UploadErr    error
+	CreateResult slacklib.CreateChannelResult
+	CreateErr    error
 
 	History    []slacklib.Message
 	HistoryErr error
@@ -102,6 +105,12 @@ func (f *FakeAPI) OpenDM(_ context.Context, userID string) (string, error) {
 		return "", f.OpenDMErr
 	}
 	return f.DMFor[userID], nil
+}
+
+// CreateChannel records p and returns the configured result/err.
+func (f *FakeAPI) CreateChannel(_ context.Context, p slacklib.CreateChannelParams) (slacklib.CreateChannelResult, error) {
+	f.Created = append(f.Created, p)
+	return f.CreateResult, f.CreateErr
 }
 
 // LazyClient returns a slacklib.LazyClient that yields f.

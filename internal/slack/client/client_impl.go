@@ -165,6 +165,42 @@ func (c *SlackClient) OpenDM(ctx context.Context, userID string) (string, error)
 	return ch.ID, nil
 }
 
+// CreateChannel creates a public or private channel, then best-effort invites
+// any requested users and sets the topic/purpose. Channel creation failure is
+// fatal; per-user invite failures are collected into InviteErrors so the
+// caller can report them without losing the channel. Topic/purpose failures
+// are likewise non-fatal.
+func (c *SlackClient) CreateChannel(ctx context.Context, p CreateChannelParams) (CreateChannelResult, error) {
+	ch, err := c.api.CreateConversationContext(ctx, slackgo.CreateConversationParams{
+		ChannelName: p.Name,
+		IsPrivate:   p.Private,
+	})
+	if err != nil {
+		return CreateChannelResult{}, slackError("conversations.create", err)
+	}
+	res := CreateChannelResult{Channel: Channel{ID: ch.ID, Name: ch.Name}}
+
+	// Invite users one at a time so one bad ID doesn't fail the whole batch.
+	for _, user := range p.Invite {
+		if _, err := c.api.InviteUsersToConversationContext(ctx, ch.ID, user); err != nil {
+			res.InviteErrors = append(res.InviteErrors,
+				fmt.Sprintf("%s: %s", user, slackError("conversations.invite", err).Error()))
+		}
+	}
+
+	if p.Topic != "" {
+		if _, err := c.api.SetTopicOfConversationContext(ctx, ch.ID, p.Topic); err != nil {
+			res.InviteErrors = append(res.InviteErrors, slackError("conversations.setTopic", err).Error())
+		}
+	}
+	if p.Purpose != "" {
+		if _, err := c.api.SetPurposeOfConversationContext(ctx, ch.ID, p.Purpose); err != nil {
+			res.InviteErrors = append(res.InviteErrors, slackError("conversations.setPurpose", err).Error())
+		}
+	}
+	return res, nil
+}
+
 // convertMessages projects slack-go Message values into the package's public
 // Message type so callers never see slack-go types.
 func convertMessages(in []slackgo.Message) []Message {

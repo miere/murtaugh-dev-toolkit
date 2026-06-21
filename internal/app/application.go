@@ -37,6 +37,7 @@ import (
 	setupmcpregister "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/mcpregister"
 	setupslack "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/slack"
 	setupupdate "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/update"
+	slackcreatechannel "github.com/miere/murtaugh-dev-toolkit/internal/tools/slack/createchannel"
 	slackfetchmsgs "github.com/miere/murtaugh-dev-toolkit/internal/tools/slack/fetchmsgs"
 	slackfetchreactions "github.com/miere/murtaugh-dev-toolkit/internal/tools/slack/fetchreactions"
 	slacksendmsg "github.com/miere/murtaugh-dev-toolkit/internal/tools/slack/sendmsg"
@@ -392,6 +393,7 @@ func buildRegistry(cfg config.Config, configPath, version string, recorder journ
 	// unconfigured token only surfaces when a tool is actually called.
 	botToken := cfg.OAuth.BotToken
 	reg.Register(slacksendmsg.New(botToken))
+	reg.Register(slackcreatechannel.New(botToken))
 	reg.Register(slackfetchmsgs.New(botToken))
 	reg.Register(slackfetchreactions.New(botToken))
 	reg.Register(slackupdatemsg.New(botToken))

@@ -52,6 +52,26 @@ type UpdateMessageParams struct {
 	Blocks    []byte // raw JSON of Block Kit blocks; nil if absent
 }
 
+// CreateChannelParams collects the inputs CreateChannel accepts. Name is the
+// channel name (without a leading "#"). Private selects a private channel.
+// Invite is a list of user IDs to add after creation. Topic and Purpose are
+// optional; empty values are skipped.
+type CreateChannelParams struct {
+	Name    string
+	Private bool
+	Invite  []string
+	Topic   string
+	Purpose string
+}
+
+// CreateChannelResult reports the created channel plus any non-fatal
+// follow-up failures. InviteErrors holds one human-readable message per user
+// that could not be invited; the channel still exists when it is non-empty.
+type CreateChannelResult struct {
+	Channel      Channel
+	InviteErrors []string
+}
+
 // User is the minimal projection of a Slack user the resolver needs.
 type User struct {
 	ID          string
@@ -77,6 +97,7 @@ type SlackAPI interface {
 	ListChannels(ctx context.Context) ([]Channel, error)
 	ListUsers(ctx context.Context) ([]User, error)
 	OpenDM(ctx context.Context, userID string) (string, error)
+	CreateChannel(ctx context.Context, p CreateChannelParams) (CreateChannelResult, error)
 }
 
 // SlackClient is the production SlackAPI implementation. It is constructed

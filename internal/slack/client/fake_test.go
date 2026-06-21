@@ -66,3 +66,7 @@ func (f *fakeAPI) OpenDM(_ context.Context, userID string) (string, error) {
 	}
 	return f.dmFor[userID], nil
 }
+
+func (f *fakeAPI) CreateChannel(_ context.Context, _ CreateChannelParams) (CreateChannelResult, error) {
+	return CreateChannelResult{}, nil
+}

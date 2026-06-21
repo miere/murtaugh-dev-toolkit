@@ -77,7 +77,7 @@ func TestEveryCommandDocumented(t *testing.T) {
 		"ping",
 		"jobs run", "jobs define",
 		"journal query", "journal stats", "journal prune",
-		"slack send-msg", "slack fetch-msgs", "slack fetch-reactions", "slack update-msg",
+		"slack send-msg", "slack create-channel", "slack fetch-msgs", "slack fetch-reactions", "slack update-msg",
 		"slack gateway",
 		"mcp",
 		"setup bootstrap", "setup slack", "setup agents", "setup env",
