@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
@@ -126,6 +128,24 @@ type Gateway struct {
 	// tests never start it.
 	journalSweep      func(context.Context) error
 	journalSweepEvery time.Duration
+	// webClient is the concrete Slack Web API client. It backs both the
+	// active connection heartbeat (auth.test) and the construction of fresh
+	// socketmode clients on every (re)connect. The Web API is stateless HTTP
+	// and never goes "zombie", so the same client is reused across reconnects.
+	// nil in struct-literal test gateways, which never run the supervisor.
+	webClient *slack.Client
+	// connMu guards socket across the supervisor's reconnects: the supervisor
+	// swaps in a fresh socketmode.Client per attempt while the ack path reads
+	// the current one. The single *socketmode.Client field is otherwise written
+	// once at construction.
+	connMu sync.Mutex
+	// lastActivityNano is the UnixNano of the most recent inbound socketmode
+	// event of ANY kind. The watchdog reads it to detect a half-open websocket
+	// (the daemon believes it is connected but no frames arrive); the event loop
+	// stamps it. Atomic so the watchdog goroutine reads it without the lock.
+	lastActivityNano atomic.Int64
+	// now supplies the current time; overridable in tests. nil ⇒ time.Now.
+	now func() time.Time
 }
 
 func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recorder journal.Recorder) *Gateway {
@@ -236,7 +256,9 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 	}
 	return &Gateway{
 		api:             api,
+		webClient:       api,
 		socket:          socket,
+		now:             time.Now,
 		handler:         NewDefaultSlashCommandHandler(cfg.Commands),
 		workflow:        workflow.NewEngine(cfg, workflow.Options{Logger: logger, Delegator: workflowDelegator, Recorder: recorder}),
 		chat:            chat,
@@ -343,29 +365,16 @@ func (a *Gateway) Run(ctx context.Context) error {
 		return fmt.Errorf("resolve allowed users: %w", err)
 	}
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- a.socket.RunContext(ctx)
-	}()
 	a.warmChat(ctx)
 	a.startConfigWatcher(ctx)
 	a.startJournalSweeper(ctx)
 	stopScheduler := a.startScheduler(ctx)
 	defer stopScheduler()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case err := <-errCh:
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
-		case event := <-a.socket.Events:
-			a.handleEvent(ctx, event)
-		}
-	}
+	// The Slack socket is owned by a supervisor that reconnects on failure and
+	// recycles a wedged (half-open) connection via a heartbeat watchdog, rather
+	// than running socketmode.RunContext once and giving up when it returns.
+	return a.superviseSocket(ctx)
 }
 
 func (a *Gateway) warmChat(ctx context.Context) {
@@ -456,11 +465,18 @@ func (a *Gateway) runJournalSweep(ctx context.Context) {
 func (a *Gateway) handleEvent(ctx context.Context, event socketmode.Event) {
 	switch event.Type {
 	case socketmode.EventTypeConnected:
-		a.logger.Debug("socket mode lifecycle event", "type", event.Type)
+		a.logger.Info("Slack socket connected")
+		a.recordConnection(ctx, journal.LevelInfo, "connected", "Slack socket connected", nil)
 		a.notifyStartup(ctx)
 		a.notifyResume(ctx)
 	case socketmode.EventTypeConnecting, socketmode.EventTypeHello:
 		a.logger.Debug("socket mode lifecycle event", "type", event.Type)
+	case socketmode.EventTypeDisconnect:
+		a.logger.Warn("Slack socket disconnected", "type", event.Type)
+		a.recordConnection(ctx, journal.LevelWarn, "disconnected", "Slack socket disconnected", nil)
+	case socketmode.EventTypeConnectionError, socketmode.EventTypeInvalidAuth, socketmode.EventTypeIncomingError:
+		a.logger.Warn("Slack socket error", "type", event.Type)
+		a.recordConnection(ctx, journal.LevelWarn, "error", fmt.Sprintf("Slack socket error: %s", event.Type), map[string]any{"event_type": string(event.Type)})
 	case socketmode.EventTypeSlashCommand:
 		a.handleSlashCommand(ctx, event)
 	case socketmode.EventTypeInteractive:
@@ -1093,7 +1109,11 @@ func (a *Gateway) ack(event socketmode.Event, response ...any) {
 		a.logger.Warn("cannot acknowledge event without request", "type", event.Type)
 		return
 	}
-	if err := a.socket.Ack(*event.Request, response...); err != nil {
+	socket := a.currentSocket()
+	if socket == nil {
+		return // no-op when no socket is wired (struct-literal test gateways)
+	}
+	if err := socket.Ack(*event.Request, response...); err != nil {
 		a.logger.Error("failed to acknowledge Slack request", "error", err)
 	}
 }
