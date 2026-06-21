@@ -51,7 +51,13 @@ type OAuthConfig struct {
 type ConfigurationConfig struct {
 	AdminUser    string   `yaml:"admin_user"`
 	AllowedUsers []string `yaml:"allowed_users"`
-	Debug        bool     `yaml:"debug"`
+	// DoNotRequireMentionFrom lists Slack users (IDs or handles) whose plain
+	// channel messages the bot replies to WITHOUT an @mention. It waives the
+	// mention requirement only — a listed user must still pass IsAllowedUser. The
+	// gateway startup layer resolves any handle entries to IDs (see
+	// resolveAllowSet) so the runtime check is ID-only.
+	DoNotRequireMentionFrom []string `yaml:"do_not_require_mention_from"`
+	Debug                   bool     `yaml:"debug"`
 }
 
 type ChatConfig struct {
@@ -62,8 +68,16 @@ type ChatConfig struct {
 	// exact-ID, then exact-name, then longest-literal-prefix glob (see
 	// gateway.matchChannelAgent).
 	ChannelAgents map[string]string `yaml:"channel_agents"`
-	DMAgent       string            `yaml:"dm_agent"`
-	DefaultAgent  string            `yaml:"default_agent"`
+	// ChannelDoNotRequireMention lists, per channel, the Slack users (IDs or
+	// handles) whose plain messages the bot replies to without an @mention. The
+	// keys use the SAME channel-ID/channel-NAME glob syntax as ChannelAgents
+	// (e.g. "feature-*"); the effective no-mention set for a channel is the union
+	// of configuration.do_not_require_mention_from and the values of every
+	// pattern whose glob matches the channel. It waives the mention requirement
+	// only — listed users must still pass IsAllowedUser.
+	ChannelDoNotRequireMention map[string][]string `yaml:"channel_do_not_require_mention"`
+	DMAgent                    string              `yaml:"dm_agent"`
+	DefaultAgent               string              `yaml:"default_agent"`
 }
 
 type CommandConfig struct {
@@ -553,6 +567,16 @@ func (c Config) Validate() error {
 			if strings.ContainsRune(channel, '*') {
 				if _, err := path.Match(channel, "probe"); err != nil {
 					errs = append(errs, fmt.Errorf("chat.channel_agents[%s] is not a valid channel-name glob: %w", channel, err))
+				}
+			}
+		}
+		// channel_do_not_require_mention shares the channel_agents key syntax, so
+		// validate its glob keys the same way; the user lists themselves need no
+		// validation (a stray entry simply never matches an author ID).
+		for channel := range c.Chat.ChannelDoNotRequireMention {
+			if strings.ContainsRune(channel, '*') {
+				if _, err := path.Match(channel, "probe"); err != nil {
+					errs = append(errs, fmt.Errorf("chat.channel_do_not_require_mention[%s] is not a valid channel-name glob: %w", channel, err))
 				}
 			}
 		}

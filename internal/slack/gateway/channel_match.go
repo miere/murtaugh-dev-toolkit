@@ -91,3 +91,59 @@ func validChannelAgentGlob(key string) bool {
 	_, err := path.Match(key, "probe")
 	return err == nil
 }
+
+// usersAllowedWithoutMention returns the effective set of Slack user IDs whose
+// plain channel messages the bot replies to WITHOUT an @mention in the channel
+// identified by channelID/channelName. Unlike matchChannelAgent's single-winner
+// precedence, this is a UNION: the global list plus the users from EVERY
+// per-channel pattern whose key matches the channel (an exact channel-ID key, an
+// exact channel-name key, or a `*` glob on the name — the same key syntax as
+// chat.channel_agents). channelName may be empty when the cache has not yet
+// learned the channel's name; only exact channel-ID keys can match in that case.
+//
+// The result is a set keyed by user ID for O(1) membership tests at the call
+// site. It is pure (no I/O) so it is safe to call on the Slack socket goroutine.
+// A nil/empty result means no one in this channel is waived from the mention
+// requirement.
+func usersAllowedWithoutMention(channelID, channelName string, global []string, perChannel map[string][]string) map[string]bool {
+	set := make(map[string]bool, len(global))
+	for _, u := range global {
+		if u != "" {
+			set[u] = true
+		}
+	}
+	for key, users := range perChannel {
+		if !channelKeyMatches(key, channelID, channelName) {
+			continue
+		}
+		for _, u := range users {
+			if u != "" {
+				set[u] = true
+			}
+		}
+	}
+	return set
+}
+
+// channelKeyMatches reports whether a chat.channel_agents-style key matches the
+// given channel. The key is an exact channel-ID match, an exact channel-name
+// match, or — when it contains `*` — a path.Match glob on the channel name. It
+// mirrors matchChannelAgent's matching semantics but without the precedence
+// scoring, because the no-mention check unions across every matching key rather
+// than picking a single winner.
+func channelKeyMatches(key, channelID, channelName string) bool {
+	if key == "" {
+		return false
+	}
+	if channelID != "" && key == channelID {
+		return true
+	}
+	if channelName == "" {
+		return false
+	}
+	if !strings.ContainsRune(key, '*') {
+		return key == channelName
+	}
+	matched, err := path.Match(key, channelName)
+	return err == nil && matched
+}
