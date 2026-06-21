@@ -146,6 +146,12 @@ type Gateway struct {
 	lastActivityNano atomic.Int64
 	// now supplies the current time; overridable in tests. nil ⇒ time.Now.
 	now func() time.Time
+	// channelCache maps Slack channel IDs to names so the chat resolver can
+	// route channel→agent by NAME glob (chat.channel_agents) without doing any
+	// Slack API I/O on the socket goroutine. Warmed at startup and refreshed on
+	// a ticker by startChannelCache; nil disables name-based routing (only the
+	// exact channel-ID keys still match), so CLI/MCP and tests never pay for it.
+	channelCache *channelNameCache
 }
 
 func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recorder journal.Recorder) *Gateway {
@@ -161,6 +167,18 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 	if err != nil {
 		logger.Error("startup Slack ping disabled", "error", err)
 	}
+	// The channel-name cache backs name-glob routing in chat.channel_agents. It
+	// needs a SlackAPI with ListChannels (the narrow socket api/webClient do
+	// not expose it), so build a Web API client over the bot token. A build
+	// failure (empty token — already rejected by config validation) just leaves
+	// the cache nil, degrading to exact channel-ID matching.
+	var channelCache *channelNameCache
+	if channelAPI, err := slackclient.NewClient(cfg.OAuth.BotToken); err != nil {
+		logger.Warn("channel-name routing disabled: could not build Slack client", "error", err)
+	} else {
+		channelCache = newChannelNameCache(channelAPI, 30*time.Second, logger)
+	}
+
 	var chat *ChatHandler
 	var sessions map[string]ChatSessionManager
 	if !cfg.ACP.Enabled {
@@ -190,6 +208,12 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 			).WithLogger(logger.With("agent", name)).WithCancelOverride(profile.Interruptible)
 		}
 
+		// The resolver runs on the Slack socket goroutine, so it must not do any
+		// Slack API I/O: channel→agent routing consults the in-memory
+		// channelCache (ID→name) and the pure matchChannelAgent matcher. A name
+		// the cache has not learned yet (a brand-new channel) falls back to the
+		// default agent and triggers a non-blocking refresh so the NEXT message
+		// can match by name.
 		resolver := func(req ChatRequest) string {
 			if req.DM {
 				if cfg.Chat.DMAgent != "" {
@@ -197,7 +221,11 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 				}
 				return cfg.Chat.DefaultAgent
 			}
-			if agent, ok := cfg.Chat.ChannelAgents[req.ChannelID]; ok {
+			channelName, known := channelCache.nameFor(req.ChannelID)
+			if !known {
+				channelCache.refreshAsync(context.Background())
+			}
+			if agent, ok := matchChannelAgent(req.ChannelID, channelName, cfg.Chat.ChannelAgents); ok {
 				return agent
 			}
 			return cfg.Chat.DefaultAgent
@@ -277,6 +305,7 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		scheduledJobs:   cfg.Jobs,
 		recorder:        recorder,
 		botToken:        cfg.OAuth.BotToken,
+		channelCache:    channelCache,
 	}
 }
 
@@ -367,6 +396,7 @@ func (a *Gateway) Run(ctx context.Context) error {
 	}
 
 	a.warmChat(ctx)
+	a.startChannelCache(ctx)
 	a.startConfigWatcher(ctx)
 	a.startJournalSweeper(ctx)
 	stopScheduler := a.startScheduler(ctx)
@@ -422,6 +452,19 @@ func (a *Gateway) onConfigFileChanged(ctx context.Context, path string, mtime ti
 	if _, _, err := a.SuggestRestart(ctx, "", reason); err != nil {
 		a.logger.Error("config watcher: restart suggestion failed", "path", path, "error", err)
 	}
+}
+
+// startChannelCache launches the channel-name cache lifecycle in a goroutine
+// that lives for the Run context. It warms the ID→name map once at startup (so
+// the first channel messages can route by name) and refreshes it on a ticker.
+// No-op when no cache is wired (no bot token, CLI/MCP, struct-literal test
+// gateways), so only the Slack daemon path pays for it.
+func (a *Gateway) startChannelCache(ctx context.Context) {
+	if a.channelCache == nil {
+		return
+	}
+	a.logger.Info("channel-name cache started", "every", defaultChannelCacheRefresh.String())
+	go a.channelCache.run(ctx, defaultChannelCacheRefresh)
 }
 
 // startJournalSweeper launches the retention sweeper in a goroutine that lives
