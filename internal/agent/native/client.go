@@ -265,6 +265,11 @@ func (c *Client) Prompt(ctx context.Context, sessionID string, req agent.PromptR
 	sess.conv.AppendUser(strings.Join(parts, "\n\n"))
 
 	runCtx, cancel := context.WithCancel(ctx)
+	// Carry the Slack conversation on the turn context so interactive tools (the
+	// `ask` tool, and later the approval gate) post into this thread without
+	// relying on the model to pass it. Empty for non-chat callers, which makes
+	// those tools refuse rather than block.
+	runCtx = agent.WithTurnLocation(runCtx, agent.TurnLocation{ChannelID: req.Channel, ThreadTS: req.Thread})
 	inf := &inflight{cancel: cancel}
 	c.mu.Lock()
 	c.cancels[sessionID] = inf

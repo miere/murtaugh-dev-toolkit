@@ -91,3 +91,27 @@ type ConversationKey struct {
 	ThreadTS  string
 	DM        bool
 }
+
+// TurnLocation is the Slack conversation a turn is running in. The native client
+// stashes it on the per-turn context so interactive tools (e.g. `ask`) can post
+// their prompt into the same thread — reliably, without depending on the model to
+// pass the channel/thread as arguments.
+type TurnLocation struct {
+	ChannelID string
+	ThreadTS  string
+}
+
+type turnLocationKey struct{}
+
+// WithTurnLocation returns ctx carrying loc.
+func WithTurnLocation(ctx context.Context, loc TurnLocation) context.Context {
+	return context.WithValue(ctx, turnLocationKey{}, loc)
+}
+
+// TurnLocationFromContext returns the Slack location stashed on ctx, if any. ok
+// is false when the turn carries no usable location (e.g. CLI/MCP callers), so
+// interactive tools can refuse to run rather than block forever.
+func TurnLocationFromContext(ctx context.Context) (TurnLocation, bool) {
+	loc, ok := ctx.Value(turnLocationKey{}).(TurnLocation)
+	return loc, ok && loc.ChannelID != ""
+}

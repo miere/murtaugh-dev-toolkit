@@ -3,6 +3,7 @@ package native
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/llm"
@@ -12,6 +13,14 @@ import (
 // defaultMaxTurns bounds a single Run when the constructor is given a
 // non-positive maxTurns. It is a safety net against runaway tool loops.
 const defaultMaxTurns = 40
+
+// toolHeartbeatInterval is how often a still-running tool emits a status event so
+// the gateway's idle watchdog (which resets on any event) does not treat a turn
+// blocked in a long tool call as stalled. The canonical case is the `ask` tool
+// waiting on a human; it also helps any genuinely slow tool. Must stay well under
+// the gateway's request_timeout (default 10m). A var, not a const, so tests can
+// shorten it.
+var toolHeartbeatInterval = 30 * time.Second
 
 // Loop runs the in-process tool-calling turn loop for a native agent. It owns the
 // stream→run-tools→repeat cycle against an llm.Provider, executing matching
@@ -248,7 +257,15 @@ func (l *Loop) invokeTool(ctx context.Context, call llm.ToolCall, emit func(agen
 		return msg
 	}
 
+	// Keep the turn alive while the tool runs: a tool that blocks (the `ask` tool
+	// awaiting a human, or any slow call) would otherwise emit nothing between the
+	// in-progress event above and its result, and the gateway's idle watchdog
+	// would cancel the turn. The heartbeat emits a meta status event the gateway
+	// renders as nothing but resets its timer on.
+	stopHeartbeat := make(chan struct{})
+	go heartbeat(ctx, emit, stopHeartbeat)
 	result, invErr := t.Invoke(ctx, args)
+	close(stopHeartbeat)
 	if invErr != nil {
 		msg := fmt.Sprintf("error: %v", invErr)
 		emit(eventTask(call.ID, call.Name, agent.TaskStatusFailed, msg))
@@ -258,4 +275,24 @@ func (l *Loop) invokeTool(ctx context.Context, call llm.ToolCall, emit func(agen
 	out := toolResultString(result)
 	emit(eventTask(call.ID, call.Name, agent.TaskStatusComplete, out))
 	return out
+}
+
+// heartbeat emits a status event every toolHeartbeatInterval until stop is closed
+// or ctx is cancelled. A still-running tool produces no events of its own, so
+// without this a long/blocking tool call would let the gateway's inactivity
+// watchdog trip mid-turn. The status event is meta only — the gateway resets its
+// idle timer on it but renders nothing to the reply.
+func heartbeat(ctx context.Context, emit func(agent.Event), stop <-chan struct{}) {
+	t := time.NewTicker(toolHeartbeatInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			emit(eventStatus("still working…"))
+		}
+	}
 }

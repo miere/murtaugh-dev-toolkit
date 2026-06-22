@@ -22,7 +22,9 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/frontends/mcp"
 	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 	gateway "github.com/miere/murtaugh-dev-toolkit/internal/slack/gateway"
+	"github.com/miere/murtaugh-dev-toolkit/internal/slack/interaction"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh-dev-toolkit/internal/tools/ask"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/jobs/define"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/jobs/run"
 	journalprune "github.com/miere/murtaugh-dev-toolkit/internal/tools/journal/prune"
@@ -70,6 +72,10 @@ type Application struct {
 	version    string
 	logger     *slog.Logger
 	registry   *tools.Registry
+	// interactionBroker backs the `ask` tool and is shared with the gateway so a
+	// prompt's button click is routed back to the blocked turn. Constructed once
+	// here; only the gateway wires it as the click router.
+	interactionBroker *interaction.Broker
 	// restart is the optional graceful-restart coordinator. Only the
 	// gateway path attaches one; CLI and MCP modes leave it nil.
 	restart *RestartCoordinator
@@ -104,16 +110,21 @@ func New(mode Mode, args []string, cfg config.Config, configPath, version string
 	if recorder == nil {
 		recorder = journal.NopRecorder{}
 	}
-	reg := buildRegistry(cfg, configPath, version, recorder)
+	// The broker is shared between the `ask` tool (registered below) and the
+	// gateway (which routes clicks back). Construct it first so both see the same
+	// instance and its pending registry.
+	broker := interaction.New(cfg.OAuth.BotToken)
+	reg := buildRegistry(cfg, configPath, version, recorder, broker)
 	return &Application{
-		mode:       mode,
-		args:       args,
-		cfg:        cfg,
-		configPath: configPath,
-		version:    version,
-		logger:     logger,
-		registry:   reg,
-		recorder:   recorder,
+		mode:              mode,
+		args:              args,
+		cfg:               cfg,
+		configPath:        configPath,
+		version:           version,
+		logger:            logger,
+		registry:          reg,
+		interactionBroker: broker,
+		recorder:          recorder,
 	}
 }
 
@@ -125,7 +136,8 @@ func (a *Application) Run(ctx context.Context) error {
 	case ModeMCP:
 		return mcp.New(a.registry).Serve(ctx)
 	case ModeGateway:
-		gw := gateway.New(a.cfg, a.registry, a.logger, a.recorder)
+		gw := gateway.New(a.cfg, a.registry, a.logger, a.recorder).
+			WithInteractionBroker(a.interactionBroker)
 		if rc := a.restart; rc != nil {
 			// Adapt the coordinator's Request method into the gateway's
 			// stringly-typed trigger so the gateway package stays free
@@ -302,7 +314,7 @@ func (a *Application) WithJournalSweeper(sweep func(context.Context) error, ever
 
 // buildRegistry wires every tool Murtaugh ships with. New tools must be
 // registered here so they appear in both the CLI and MCP frontends.
-func buildRegistry(cfg config.Config, configPath, version string, recorder journal.Recorder) *tools.Registry {
+func buildRegistry(cfg config.Config, configPath, version string, recorder journal.Recorder, broker *interaction.Broker) *tools.Registry {
 	reg := tools.NewRegistry()
 	reg.Register(ping.New())
 
@@ -405,6 +417,12 @@ func buildRegistry(cfg config.Config, configPath, version string, recorder journ
 	// confirms in Slack (or via the admin-only slash command), never from
 	// this tool. With no channel it asks the configured admin in their DM.
 	reg.Register(restart.New(botToken, cfg.Configuration.AdminUser))
+
+	// `ask` lets an agent put a question with options to the user as clickable
+	// Slack buttons and wait for the answer, instead of assuming one. It shares
+	// the interaction broker with the gateway (which routes the click back). An
+	// agent opts in by adding `ask` to its `tools:` list.
+	reg.Register(ask.New(broker))
 
 	// `troubleshoot.bundle` assembles a redacted diagnostics zip. It resolves
 	// its read paths (journal, blobs, config dir) from the loaded config on

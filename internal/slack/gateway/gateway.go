@@ -19,6 +19,7 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 	slackclient "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
+	askbroker "github.com/miere/murtaugh-dev-toolkit/internal/slack/interaction"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 	"github.com/miere/murtaugh-dev-toolkit/internal/unfurl"
 	"github.com/miere/murtaugh-dev-toolkit/internal/workflow"
@@ -49,10 +50,14 @@ type RestartTrigger func(source, userID, channel, reason string) bool
 type TroubleshootBundler func(ctx context.Context, note string) (zipPath string, warnings []string, err error)
 
 type Gateway struct {
-	api             userDirectoryAPI
-	socket          *socketmode.Client
-	handler         SlashCommandHandler
-	workflow        workflowDispatcher
+	api      userDirectoryAPI
+	socket   *socketmode.Client
+	handler  SlashCommandHandler
+	workflow workflowDispatcher
+	// interactions routes broker prompt clicks (the `ask` tool, later the
+	// approval gate) back to the blocked turn. nil leaves broker prompts
+	// unrouted (CLI/MCP, or a gateway built without it).
+	interactions    *askbroker.Broker
 	chat            *ChatHandler
 	chatSessions    map[string]ChatSessionManager
 	chatWarmTimeout time.Duration
@@ -354,6 +359,15 @@ func (a *Gateway) WithResumeMarkerStore(store ResumeMarkerStore) *Gateway {
 // default) the restart slash verb reports the feature as unavailable.
 func (a *Gateway) WithRestartTrigger(trigger RestartTrigger) *Gateway {
 	a.restart = trigger
+	return a
+}
+
+// WithInteractionBroker wires the shared interaction broker so clicks on a broker
+// prompt (the `ask` tool, later the approval gate) are routed back to the blocked
+// turn. Returns the receiver for fluent wiring. nil (the default) leaves broker
+// prompts unrouted.
+func (a *Gateway) WithInteractionBroker(b *askbroker.Broker) *Gateway {
+	a.interactions = b
 	return a
 }
 
@@ -659,6 +673,15 @@ func (a *Gateway) handleInteractive(event socketmode.Event) {
 			defer cancel()
 			a.handleRestartSuggestionInteraction(ctx, interaction)
 		}()
+		return
+	}
+	// Broker prompts (the `ask` tool, later the approval gate) are routed back to
+	// the blocked turn waiting on the click, before the workflow engine sees it.
+	// The blocked Ask owns editing the message to its terminal state.
+	if a.interactions != nil && askbroker.IsInteraction(interaction) {
+		if corr, decision, ok := askbroker.ParseClick(interaction); ok {
+			a.interactions.Resolve(corr, decision)
+		}
 		return
 	}
 	// Mint a correlation id for this interaction and record its arrival. The
