@@ -31,6 +31,7 @@ import (
 	journalquery "github.com/miere/murtaugh-dev-toolkit/internal/tools/journal/query"
 	journalstats "github.com/miere/murtaugh-dev-toolkit/internal/tools/journal/stats"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/ping"
+	"github.com/miere/murtaugh-dev-toolkit/internal/tools/plan"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/restart"
 	setupagents "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/agents"
 	setupbootstrap "github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/bootstrap"
@@ -422,6 +423,12 @@ func buildRegistry(cfg config.Config, configPath, version string, recorder journ
 	// the interaction broker with the gateway (which routes the click back). An
 	// agent opts in by adding `ask` to its `tools:` list.
 	reg.Register(ask.New(broker))
+
+	// `present_plan` lets an agent lay a plan in front of the user with
+	// Proceed / Revise / Cancel buttons and WAIT for sign-off before doing
+	// multi-step work. It shares the same interaction broker as `ask`; an
+	// agent opts in by adding `present_plan` to its `tools:` list.
+	reg.Register(plan.New(broker))
 
 	// `troubleshoot.bundle` assembles a redacted diagnostics zip. It resolves
 	// its read paths (journal, blobs, config dir) from the loaded config on
