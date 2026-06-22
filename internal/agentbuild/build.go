@@ -26,6 +26,10 @@ type Deps struct {
 	MCPServers map[string]config.MCPServerConfig
 	BaseDir    string
 	Logger     *slog.Logger
+	// Approver gates a native agent's side-effecting tool calls behind human
+	// approval. nil disables gating — set only on the interactive chat path,
+	// never for headless/delegated agents. Ignored for ACP agents.
+	Approver native.Approver
 }
 
 // Client builds the backend for profile. It does no network/process I/O — both
@@ -42,6 +46,7 @@ func Client(profile config.AgentProfile, deps Deps) (agent.Client, error) {
 			MCPServers: deps.MCPServers,
 			BaseDir:    deps.BaseDir,
 			Logger:     logger,
+			Approver:   deps.Approver,
 		})
 	case config.AgentKindACP:
 		workDir := strings.TrimSpace(profile.WorkDir)

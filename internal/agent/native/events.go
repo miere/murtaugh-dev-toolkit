@@ -2,9 +2,26 @@ package native
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 )
+
+// approvalSummary renders a short human description of a tool call for the
+// approval prompt. A `command` argument (the terminal tool) is shown verbatim;
+// otherwise the args are compactly JSON-encoded.
+func approvalSummary(args map[string]any) string {
+	if cmd, ok := args["command"].(string); ok {
+		if cmd = strings.TrimSpace(cmd); cmd != "" {
+			return cmd
+		}
+	}
+	b, err := json.Marshal(args)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
 
 // decodeToolArgs unmarshals a model-produced ToolCall.Arguments payload into the
 // map[string]any a tools.Tool.Invoke expects. An empty or null payload yields a

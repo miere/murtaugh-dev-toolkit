@@ -135,6 +135,23 @@ const (
 	AgentKindACP AgentKind = "acp"
 )
 
+// ApprovalConfig gates a native agent's side-effecting tool calls behind human
+// approval in Slack. v1 covers the terminal tool — the only tool that can act
+// outside the rooted workspace (the files tools are confined to the workdir).
+type ApprovalConfig struct {
+	// Terminal selects the gating posture for the terminal tool:
+	//   "allowlist" (default) — auto-run a recognized read-only command; ask for
+	//                           anything else (fail closed)
+	//   "prompt"              — ask before every terminal command
+	//   "off"                 — never ask (the pre-gate behaviour)
+	// Gating is only active in a Slack chat (where there is a human to ask);
+	// headless runs (scheduled jobs, delegated agents) are never gated.
+	Terminal string `yaml:"terminal"`
+	// Allow extends the built-in read-only allowlist with extra command keys:
+	// an argv0 ("kubectl") or a "binary subcommand" pair ("docker ps").
+	Allow []string `yaml:"allow"`
+}
+
 type AgentProfile struct {
 	// Kind selects the backend. Empty resolves via ResolvedKind: a profile with
 	// a Command (and no explicit kind) is treated as acp for back-compat;
@@ -186,6 +203,10 @@ type AgentProfile struct {
 	// "off"/"none" disables caching. Empty uses the default. Applied for
 	// Anthropic/OpenAI; Gemini caches a static prefix implicitly regardless.
 	CacheRetention string `yaml:"cache_retention"`
+	// Approval gates the agent's side-effecting tool calls behind human approval
+	// in Slack. v1 covers the terminal tool (the only tool that can act outside
+	// the rooted workspace). Defaults to allowlist (gating on) when unset.
+	Approval ApprovalConfig `yaml:"approval"`
 	// Interruptible overrides auto-detection of session/cancel support. When
 	// nil (the default) Murtaugh probes the agent at warmup; set it explicitly
 	// to skip the probe or to correct a wrong verdict.
@@ -957,6 +978,11 @@ func validateNativeAgent(name string, p AgentProfile, servers map[string]MCPServ
 	case "", "off", "none", "5m", "short", "1h", "long":
 	default:
 		errs = append(errs, fmt.Errorf("agents[%s].cache_retention must be one of 5m, 1h, or off (got %q)", name, p.CacheRetention))
+	}
+	switch strings.ToLower(strings.TrimSpace(p.Approval.Terminal)) {
+	case "", "allowlist", "prompt", "off":
+	default:
+		errs = append(errs, fmt.Errorf("agents[%s].approval.terminal must be one of allowlist, prompt, or off (got %q)", name, p.Approval.Terminal))
 	}
 	for _, ref := range p.MCPServers {
 		if _, ok := servers[ref]; !ok {

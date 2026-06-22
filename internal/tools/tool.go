@@ -23,6 +23,15 @@ type Tool interface {
 	Invoke(ctx context.Context, args map[string]any) (any, error)
 }
 
+// ApprovalClassifier is implemented by tools whose invocations may be
+// side-effecting and should be gated behind human approval. The native loop's
+// approval gate type-asserts it: a tool that does not implement it is never
+// gated, and a tool that does decides per-call (from its own policy and the
+// args) whether THIS invocation needs the user's go-ahead before running.
+type ApprovalClassifier interface {
+	RequiresApproval(args map[string]any) bool
+}
+
 // Registry holds the set of tools available to the application. It is
 // constructed by the composition root (internal/app) and handed to each
 // frontend.

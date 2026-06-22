@@ -46,6 +46,9 @@ type Deps struct {
 	// SkillsDir backs the skills tool. Required when the allowlist includes
 	// "skills".
 	SkillsDir string
+	// TerminalApproval is the approval policy applied to the terminal tool. The
+	// zero value (empty Mode) leaves NewWithApproval's default (allowlist).
+	TerminalApproval terminal.ApprovalPolicy
 }
 
 // Resolve builds the toolset for a native agent. allow is the agent's `tools:`
@@ -105,7 +108,7 @@ func Resolve(allow []string, mcpTools []tools.Tool, deps Deps) ([]tools.Tool, er
 			if strings.TrimSpace(deps.WorkDir) == "" {
 				return nil, fmt.Errorf("toolset: workdir is required for the %q tool", GroupTerminal)
 			}
-			add(terminal.New(deps.WorkDir))
+			add(terminal.NewWithApproval(deps.WorkDir, deps.TerminalApproval))
 		case GroupSkills:
 			if strings.TrimSpace(deps.SkillsDir) == "" {
 				return nil, fmt.Errorf("toolset: skills_dir is required for the %q tool", GroupSkills)

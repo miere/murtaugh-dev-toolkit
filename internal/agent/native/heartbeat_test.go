@@ -30,12 +30,9 @@ func (b *blockingTool) Invoke(ctx context.Context, _ map[string]any) (any, error
 }
 
 func TestInvokeTool_EmitsHeartbeatsWhileBlocking(t *testing.T) {
-	prev := toolHeartbeatInterval
-	toolHeartbeatInterval = 5 * time.Millisecond
-	defer func() { toolHeartbeatInterval = prev }()
-
 	bt := &blockingTool{release: make(chan struct{})}
 	loop := NewLoop(nil, "m", []tools.Tool{bt}, 1)
+	loop.heartbeatInterval = 5 * time.Millisecond
 
 	var mu sync.Mutex
 	statuses := 0

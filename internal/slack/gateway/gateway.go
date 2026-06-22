@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
+	"github.com/miere/murtaugh-dev-toolkit/internal/agent/native"
 	"github.com/miere/murtaugh-dev-toolkit/internal/agentbuild"
 	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
@@ -168,7 +169,7 @@ type Gateway struct {
 	noMentionPerChannel map[string][]string
 }
 
-func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recorder journal.Recorder) *Gateway {
+func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recorder journal.Recorder, broker *askbroker.Broker) *Gateway {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -200,6 +201,13 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 	}
 	if cfg.ACP.Enabled {
 		sessions = make(map[string]ChatSessionManager)
+		// Chat agents are gated: a side-effecting tool call asks the user for
+		// approval in the thread. nil broker leaves them ungated. Headless and
+		// delegated agents (built elsewhere) never get an approver.
+		var approver native.Approver
+		if broker != nil {
+			approver = askbroker.NewApprover(broker)
+		}
 		for name, profile := range cfg.Agents {
 			// Default an agent's working directory to the workspace (the
 			// config dir, e.g. ~/.config/murtaugh) when it leaves workdir
@@ -210,6 +218,7 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 				MCPServers: cfg.MCPServers,
 				BaseDir:    cfg.BaseDir,
 				Logger:     logger.With("agent", name),
+				Approver:   approver,
 			})
 			if err != nil {
 				logger.Error("agent disabled: could not build client", "agent", name, "kind", profile.ResolvedKind(), "error", err)
@@ -304,6 +313,7 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		now:             time.Now,
 		handler:         NewDefaultSlashCommandHandler(cfg.Commands),
 		workflow:        workflow.NewEngine(cfg, workflow.Options{Logger: logger, Delegator: workflowDelegator, Recorder: recorder}),
+		interactions:    broker,
 		chat:            chat,
 		chatSessions:    sessions,
 		chatWarmTimeout: cfg.ACP.EffectiveStartupTimeout(),
@@ -359,15 +369,6 @@ func (a *Gateway) WithResumeMarkerStore(store ResumeMarkerStore) *Gateway {
 // default) the restart slash verb reports the feature as unavailable.
 func (a *Gateway) WithRestartTrigger(trigger RestartTrigger) *Gateway {
 	a.restart = trigger
-	return a
-}
-
-// WithInteractionBroker wires the shared interaction broker so clicks on a broker
-// prompt (the `ask` tool, later the approval gate) are routed back to the blocked
-// turn. Returns the receiver for fluent wiring. nil (the default) leaves broker
-// prompts unrouted.
-func (a *Gateway) WithInteractionBroker(b *askbroker.Broker) *Gateway {
-	a.interactions = b
 	return a
 }
 

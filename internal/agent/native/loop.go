@@ -14,13 +14,13 @@ import (
 // non-positive maxTurns. It is a safety net against runaway tool loops.
 const defaultMaxTurns = 40
 
-// toolHeartbeatInterval is how often a still-running tool emits a status event so
-// the gateway's idle watchdog (which resets on any event) does not treat a turn
-// blocked in a long tool call as stalled. The canonical case is the `ask` tool
-// waiting on a human; it also helps any genuinely slow tool. Must stay well under
-// the gateway's request_timeout (default 10m). A var, not a const, so tests can
-// shorten it.
-var toolHeartbeatInterval = 30 * time.Second
+// defaultToolHeartbeatInterval is how often a still-running tool emits a status
+// event so the gateway's idle watchdog (which resets on any event) does not treat
+// a turn blocked in a long tool call as stalled. The canonical cases are the
+// `ask` tool and the approval gate waiting on a human; it also helps any slow
+// tool. Must stay well under the gateway's request_timeout (default 10m). Held on
+// the Loop (not a global) so tests can shorten it per-instance without racing.
+const defaultToolHeartbeatInterval = 30 * time.Second
 
 // Loop runs the in-process tool-calling turn loop for a native agent. It owns the
 // stream→run-tools→repeat cycle against an llm.Provider, executing matching
@@ -40,6 +40,24 @@ type Loop struct {
 	// cacheRetention enables provider prompt-caching on each turn's request
 	// ("5m"/"1h"); empty disables it. Set via WithCache.
 	cacheRetention string
+	// approver gates side-effecting tool calls behind human approval. nil (the
+	// default) disables gating. Set via WithApprover.
+	approver Approver
+	// heartbeatInterval is how often a running tool emits a keep-alive status
+	// event. Defaults to defaultToolHeartbeatInterval; tests shorten it.
+	heartbeatInterval time.Duration
+}
+
+// Approver gates a side-effecting tool call behind human approval. The loop
+// consults it only for tools that classify a call as needing approval
+// (tools.ApprovalClassifier); a nil approver disables gating entirely. The
+// concrete implementation lives outside this package (it asks over Slack), so
+// the loop stays transport-agnostic.
+type Approver interface {
+	// Approve asks the user to confirm a side-effecting tool call. summary is a
+	// short human description (e.g. the shell command). It returns whether to run
+	// the tool and, when not, a note to feed back to the model as the tool result.
+	Approve(ctx context.Context, toolName, summary string) (allowed bool, note string)
 }
 
 // NewLoop constructs a Loop. maxTurns ≤ 0 falls back to defaultMaxTurns.
@@ -60,11 +78,12 @@ func NewLoop(provider llm.Provider, model string, ts []tools.Tool, maxTurns int)
 		list = append(list, t)
 	}
 	return &Loop{
-		provider: provider,
-		model:    model,
-		tools:    byName,
-		toolList: list,
-		maxTurns: maxTurns,
+		provider:          provider,
+		model:             model,
+		tools:             byName,
+		toolList:          list,
+		maxTurns:          maxTurns,
+		heartbeatInterval: defaultToolHeartbeatInterval,
 	}
 }
 
@@ -81,6 +100,13 @@ func (l *Loop) WithCompaction(contextLimit int, mode CompactionMode) *Loop {
 // cached prefix stable across turns and conversations. Returns the receiver.
 func (l *Loop) WithCache(retention string) *Loop {
 	l.cacheRetention = retention
+	return l
+}
+
+// WithApprover sets the approval gate consulted before a side-effecting tool
+// runs. nil (the default) disables gating. Returns the receiver.
+func (l *Loop) WithApprover(a Approver) *Loop {
+	l.approver = a
 	return l
 }
 
@@ -257,15 +283,32 @@ func (l *Loop) invokeTool(ctx context.Context, call llm.ToolCall, emit func(agen
 		return msg
 	}
 
-	// Keep the turn alive while the tool runs: a tool that blocks (the `ask` tool
-	// awaiting a human, or any slow call) would otherwise emit nothing between the
-	// in-progress event above and its result, and the gateway's idle watchdog
-	// would cancel the turn. The heartbeat emits a meta status event the gateway
-	// renders as nothing but resets its timer on.
+	// Keep the turn alive while we wait on the (possibly slow) approval gate and
+	// the tool run: both can block — the gate awaiting a human, a tool awaiting a
+	// human or a long job — and would otherwise emit nothing between the
+	// in-progress event above and the result, letting the gateway's idle watchdog
+	// cancel the turn. The heartbeat emits a meta status event the gateway renders
+	// as nothing but resets its timer on. Started before the gate so the approval
+	// wait is covered too.
 	stopHeartbeat := make(chan struct{})
-	go heartbeat(ctx, emit, stopHeartbeat)
+	go heartbeat(ctx, emit, stopHeartbeat, l.heartbeatInterval)
+	defer close(stopHeartbeat)
+
+	// Approval gate: for a tool that classifies this call as side-effecting, ask
+	// the user before running it. A denied/timed-out call is skipped with a note
+	// fed back to the model — never an abort, so the tool-call/result pairing
+	// stays intact.
+	if l.approver != nil {
+		if classifier, ok := t.(tools.ApprovalClassifier); ok && classifier.RequiresApproval(args) {
+			allowed, note := l.approver.Approve(ctx, call.Name, approvalSummary(args))
+			if !allowed {
+				emit(eventTask(call.ID, call.Name, agent.TaskStatusFailed, note))
+				return note
+			}
+		}
+	}
+
 	result, invErr := t.Invoke(ctx, args)
-	close(stopHeartbeat)
 	if invErr != nil {
 		msg := fmt.Sprintf("error: %v", invErr)
 		emit(eventTask(call.ID, call.Name, agent.TaskStatusFailed, msg))
@@ -282,8 +325,8 @@ func (l *Loop) invokeTool(ctx context.Context, call llm.ToolCall, emit func(agen
 // without this a long/blocking tool call would let the gateway's inactivity
 // watchdog trip mid-turn. The status event is meta only — the gateway resets its
 // idle timer on it but renders nothing to the reply.
-func heartbeat(ctx context.Context, emit func(agent.Event), stop <-chan struct{}) {
-	t := time.NewTicker(toolHeartbeatInterval)
+func heartbeat(ctx context.Context, emit func(agent.Event), stop <-chan struct{}, interval time.Duration) {
+	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {

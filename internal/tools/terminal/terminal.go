@@ -30,21 +30,64 @@ const (
 	truncationNotice = "\n\n[output truncated: exceeded 64KB cap]"
 )
 
-// Tool is the terminal capability. It runs shell commands rooted at root.
-type Tool struct {
-	root string
+// Approval mode values for ApprovalPolicy.Mode.
+const (
+	ApprovalAllowlist = "allowlist" // auto-run recognized read-only commands; ask otherwise
+	ApprovalPrompt    = "prompt"    // ask before every command
+	ApprovalOff       = "off"       // never ask
+)
+
+// ApprovalPolicy controls whether a command needs human approval before it runs
+// (consulted by the native loop's gate via RequiresApproval). Mode "off" — the
+// default for the bare New constructor — disables gating entirely.
+type ApprovalPolicy struct {
+	Mode  string
+	Allow []string // extra allowlist keys (argv0 or "binary subcommand")
 }
 
-// New constructs a terminal Tool rooted at root. Commands run with a working
-// directory defaulting to root; the optional workdir argument may select a
-// subdirectory of root but never a path outside it. root is cleaned to an
-// absolute path so traversal checks are reliable.
+// Tool is the terminal capability. It runs shell commands rooted at root.
+type Tool struct {
+	root     string
+	approval ApprovalPolicy
+}
+
+// New constructs a terminal Tool rooted at root with approval gating OFF
+// (the historical behaviour; CLI/MCP and tests). Use NewWithApproval to gate.
+// Commands run with a working directory defaulting to root; the optional workdir
+// argument may select a subdirectory of root but never a path outside it. root
+// is cleaned to an absolute path so traversal checks are reliable.
 func New(root string) *Tool {
+	return NewWithApproval(root, ApprovalPolicy{Mode: ApprovalOff})
+}
+
+// NewWithApproval constructs a terminal Tool rooted at root with the given
+// approval policy. An empty Mode defaults to allowlist (gating on).
+func NewWithApproval(root string, policy ApprovalPolicy) *Tool {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		abs = filepath.Clean(root)
 	}
-	return &Tool{root: abs}
+	if strings.TrimSpace(policy.Mode) == "" {
+		policy.Mode = ApprovalAllowlist
+	}
+	return &Tool{root: abs, approval: policy}
+}
+
+// RequiresApproval reports whether THIS command needs the user's go-ahead before
+// running, per the tool's approval policy. It satisfies tools.ApprovalClassifier
+// so the native loop's gate can consult it. Off → never; prompt → always;
+// allowlist (the default) → only when the command is not a recognized read-only
+// one (fail closed).
+func (t *Tool) RequiresApproval(args map[string]any) bool {
+	switch t.approval.Mode {
+	case ApprovalOff:
+		return false
+	case ApprovalPrompt:
+		return true
+	default: // allowlist
+		command, _ := args["command"].(string)
+		return !isReadOnly(command, t.approval.Allow)
+	}
 }
 
 // Name returns the registry key.

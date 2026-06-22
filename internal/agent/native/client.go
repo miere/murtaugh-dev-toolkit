@@ -23,6 +23,7 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/mcpclient"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/skills"
+	"github.com/miere/murtaugh-dev-toolkit/internal/tools/terminal"
 	"github.com/miere/murtaugh-dev-toolkit/internal/toolset"
 )
 
@@ -52,22 +53,24 @@ func resolveCacheRetention(configured string) string {
 // the toolset resolved lazily in Initialize (matching ACP, whose Initialize
 // starts the agent process), so constructing a Client does no I/O.
 type Client struct {
-	provider       llm.Provider
-	model          string
-	systemPrompt   string
-	agentsDoc      string
-	skillsIndex    string
-	maxTurns       int
-	workDir        string
-	skillsDir      string
-	registry       *tools.Registry
-	toolAllow      []string
-	serverCfgs     []mcpclient.ServerConfig
-	contextLimit   int
-	compaction     CompactionMode
-	cacheRetention string
-	logger         *slog.Logger
-	now            func() time.Time
+	provider         llm.Provider
+	model            string
+	systemPrompt     string
+	agentsDoc        string
+	skillsIndex      string
+	maxTurns         int
+	workDir          string
+	skillsDir        string
+	registry         *tools.Registry
+	toolAllow        []string
+	serverCfgs       []mcpclient.ServerConfig
+	contextLimit     int
+	compaction       CompactionMode
+	cacheRetention   string
+	terminalApproval terminal.ApprovalPolicy
+	approver         Approver
+	logger           *slog.Logger
+	now              func() time.Time
 
 	mu          sync.Mutex
 	mcp         *mcpclient.Manager
@@ -98,6 +101,10 @@ type BuildDeps struct {
 	MCPServers map[string]config.MCPServerConfig
 	BaseDir    string
 	Logger     *slog.Logger
+	// Approver gates side-effecting tool calls behind human approval. nil
+	// disables gating — set only on the interactive chat path (the gateway),
+	// never for headless/delegated agents that have no human to ask.
+	Approver Approver
 }
 
 // Build constructs a native Client from a kind:native AgentProfile. It resolves
@@ -163,24 +170,26 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 	}
 
 	return &Client{
-		provider:       provider,
-		model:          profile.Model,
-		systemPrompt:   systemPrompt,
-		agentsDoc:      readAgentsDoc(workDir),
-		skillsIndex:    skillsIndex,
-		maxTurns:       profile.MaxTurns,
-		workDir:        workDir,
-		skillsDir:      skillsDir,
-		registry:       deps.Registry,
-		toolAllow:      profile.Tools,
-		serverCfgs:     serverCfgs,
-		contextLimit:   contextLimit,
-		compaction:     parseCompaction(profile.Compaction),
-		cacheRetention: resolveCacheRetention(profile.CacheRetention),
-		logger:         logger,
-		now:            time.Now,
-		sessions:       make(map[string]*nativeSession),
-		cancels:        make(map[string]*inflight),
+		provider:         provider,
+		model:            profile.Model,
+		systemPrompt:     systemPrompt,
+		agentsDoc:        readAgentsDoc(workDir),
+		skillsIndex:      skillsIndex,
+		maxTurns:         profile.MaxTurns,
+		workDir:          workDir,
+		skillsDir:        skillsDir,
+		registry:         deps.Registry,
+		toolAllow:        profile.Tools,
+		serverCfgs:       serverCfgs,
+		contextLimit:     contextLimit,
+		compaction:       parseCompaction(profile.Compaction),
+		cacheRetention:   resolveCacheRetention(profile.CacheRetention),
+		terminalApproval: terminal.ApprovalPolicy{Mode: strings.TrimSpace(profile.Approval.Terminal), Allow: profile.Approval.Allow},
+		approver:         deps.Approver,
+		logger:           logger,
+		now:              time.Now,
+		sessions:         make(map[string]*nativeSession),
+		cancels:          make(map[string]*inflight),
 	}, nil
 }
 
@@ -195,16 +204,18 @@ func (c *Client) Initialize(ctx context.Context) error {
 	}
 	c.mcp = mcpclient.Open(ctx, c.serverCfgs, c.logger)
 	ts, err := toolset.Resolve(c.toolAllow, c.mcp.Tools(), toolset.Deps{
-		Registry:  c.registry,
-		WorkDir:   c.workDir,
-		SkillsDir: c.skillsDir,
+		Registry:         c.registry,
+		WorkDir:          c.workDir,
+		SkillsDir:        c.skillsDir,
+		TerminalApproval: c.terminalApproval,
 	})
 	if err != nil {
 		return fmt.Errorf("native: resolve toolset: %w", err)
 	}
 	c.loop = NewLoop(c.provider, c.model, ts, c.maxTurns).
 		WithCompaction(c.contextLimit, c.compaction).
-		WithCache(c.cacheRetention)
+		WithCache(c.cacheRetention).
+		WithApprover(c.approver)
 	c.initialized = true
 	c.logger.Info("native agent initialized", "model", c.model, "tools", len(ts), "mcp_servers", len(c.serverCfgs),
 		"context_limit", c.contextLimit, "compaction", c.compaction)

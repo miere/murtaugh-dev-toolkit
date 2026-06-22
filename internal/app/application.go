@@ -136,8 +136,7 @@ func (a *Application) Run(ctx context.Context) error {
 	case ModeMCP:
 		return mcp.New(a.registry).Serve(ctx)
 	case ModeGateway:
-		gw := gateway.New(a.cfg, a.registry, a.logger, a.recorder).
-			WithInteractionBroker(a.interactionBroker)
+		gw := gateway.New(a.cfg, a.registry, a.logger, a.recorder, a.interactionBroker)
 		if rc := a.restart; rc != nil {
 			// Adapt the coordinator's Request method into the gateway's
 			// stringly-typed trigger so the gateway package stays free

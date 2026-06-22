@@ -49,6 +49,16 @@ agents:
   #   # buttons and WAIT for your answer (instead of assuming one). Recommended.
   #   mcp_servers: [vaultre, data-api]               # from the block above
   #   max_turns: 40
+  #   # Approval gate: confirm side-effecting terminal commands in Slack before
+  #   # they run. terminal: allowlist (default — auto-run recognized read-only
+  #   # commands like ls/cat/grep/git status, ask for anything else), prompt (ask
+  #   # for every command), or off (never ask). `allow` extends the read-only set
+  #   # with your own commands (an argv0 like "kubectl", or a "binary subcommand"
+  #   # like "docker ps"). Only active in live chat; scheduled/delegated runs are
+  #   # never gated.
+  #   approval:
+  #     terminal: allowlist
+  #     allow: [kubectl, "docker ps"]
   #   # Context-window management — keeps a long thread within the model window.
   #   # context_limit: token budget; omit to use a per-provider-family default.
   #   # compaction: "truncate" (default — drop oldest turns) or "summarize"

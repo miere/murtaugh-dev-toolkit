@@ -48,7 +48,7 @@ func TestAppNotifiesStartupOnceWhenSocketConnects(t *testing.T) {
 }
 
 func TestNewWithoutAdminUserDoesNotInstallTypedNilStartupNotifier(t *testing.T) {
-	app := New(config.Config{OAuth: config.OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"}}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	app := New(config.Config{OAuth: config.OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"}}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
 	if app.startupNotifier != nil {
 		t.Fatalf("expected no startup notifier without configuration.admin_user, got %#v", app.startupNotifier)
 	}
