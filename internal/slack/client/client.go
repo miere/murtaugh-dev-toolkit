@@ -98,6 +98,12 @@ type SlackAPI interface {
 	ListUsers(ctx context.Context) ([]User, error)
 	OpenDM(ctx context.Context, userID string) (string, error)
 	CreateChannel(ctx context.Context, p CreateChannelParams) (CreateChannelResult, error)
+	// OpenView opens a modal view in response to a user interaction. triggerID
+	// comes from the block_actions callback that prompted the open; it is
+	// short-lived (Slack expires it within seconds), so callers must open
+	// promptly. The returned view response is discarded — callers only need to
+	// know whether the open succeeded.
+	OpenView(ctx context.Context, triggerID string, view slackgo.ModalViewRequest) error
 }
 
 // SlackClient is the production SlackAPI implementation. It is constructed

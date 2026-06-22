@@ -80,6 +80,16 @@ func (c *SlackClient) UpdateMessage(ctx context.Context, p UpdateMessageParams) 
 	return PostMessageResult{Channel: channel, TS: ts}, nil
 }
 
+// OpenView opens a modal via views.open. The trigger_id must come from a fresh
+// user interaction; Slack expires it within a few seconds. The ViewResponse is
+// discarded — only the error matters to callers.
+func (c *SlackClient) OpenView(ctx context.Context, triggerID string, view slackgo.ModalViewRequest) error {
+	if _, err := c.api.OpenViewContext(ctx, triggerID, view); err != nil {
+		return slackError("views.open", err)
+	}
+	return nil
+}
+
 // GetHistory fetches up to limit messages newer than oldestTS. The returned
 // slice is left in Slack's natural newest-first order; callers reverse it
 // before display.

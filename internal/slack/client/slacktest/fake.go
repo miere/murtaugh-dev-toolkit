@@ -7,6 +7,8 @@ package slacktest
 import (
 	"context"
 
+	slackgo "github.com/slack-go/slack"
+
 	slacklib "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
 )
 
@@ -43,6 +45,10 @@ type FakeAPI struct {
 
 	HistoryCalls []HistoryCall
 	RepliesCalls []RepliesCall
+
+	OpenedViews  []slackgo.ModalViewRequest
+	OpenTriggers []string
+	OpenViewErr  error
 }
 
 // HistoryCall captures one GetHistory invocation.
@@ -111,6 +117,13 @@ func (f *FakeAPI) OpenDM(_ context.Context, userID string) (string, error) {
 func (f *FakeAPI) CreateChannel(_ context.Context, p slacklib.CreateChannelParams) (slacklib.CreateChannelResult, error) {
 	f.Created = append(f.Created, p)
 	return f.CreateResult, f.CreateErr
+}
+
+// OpenView records the trigger ID and view, then returns the configured err.
+func (f *FakeAPI) OpenView(_ context.Context, triggerID string, view slackgo.ModalViewRequest) error {
+	f.OpenTriggers = append(f.OpenTriggers, triggerID)
+	f.OpenedViews = append(f.OpenedViews, view)
+	return f.OpenViewErr
 }
 
 // LazyClient returns a slacklib.LazyClient that yields f.

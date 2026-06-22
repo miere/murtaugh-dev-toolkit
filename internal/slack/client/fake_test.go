@@ -1,6 +1,10 @@
 package client
 
-import "context"
+import (
+	"context"
+
+	slackgo "github.com/slack-go/slack"
+)
 
 // fakeAPI is the in-memory SlackAPI used by the package's own tests.
 type fakeAPI struct {
@@ -69,4 +73,8 @@ func (f *fakeAPI) OpenDM(_ context.Context, userID string) (string, error) {
 
 func (f *fakeAPI) CreateChannel(_ context.Context, _ CreateChannelParams) (CreateChannelResult, error) {
 	return CreateChannelResult{}, nil
+}
+
+func (f *fakeAPI) OpenView(_ context.Context, _ string, _ slackgo.ModalViewRequest) error {
+	return nil
 }

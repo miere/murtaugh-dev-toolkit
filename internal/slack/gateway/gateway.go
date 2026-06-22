@@ -685,6 +685,29 @@ func (a *Gateway) handleInteractive(event socketmode.Event) {
 		}
 		return
 	}
+	// Modal-form path (the `ask` tool's multi-question / multi-select / free-text
+	// mode). A click on the "Answer" button opens the modal against the click's
+	// trigger_id; a view_submission carries the answers back to the blocked
+	// AskForm. The trigger_id is short-lived, so OpenForm runs promptly.
+	if a.interactions != nil {
+		if corr, ok := askbroker.IsFormAnswerClick(interaction); ok {
+			triggerID := interaction.TriggerID
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := a.interactions.OpenForm(ctx, corr, triggerID); err != nil {
+					a.logger.Error("opening ask modal failed", "error", err, "correlation", corr)
+				}
+			}()
+			return
+		}
+		if interaction.Type == slack.InteractionTypeViewSubmission {
+			if corr, resp, ok := askbroker.ParseViewSubmission(interaction); ok {
+				a.interactions.ResolveForm(corr, resp)
+				return
+			}
+		}
+	}
 	// Mint a correlation id for this interaction and record its arrival. The
 	// same id is propagated into the workflow engine via the context so the
 	// match/no-match/trigger events all tie back to this one click.

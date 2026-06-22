@@ -94,16 +94,30 @@ type Broker struct {
 
 	mu      sync.Mutex
 	pending map[string]chan Decision
+	// forms/formPending back the modal-based AskForm flow (see form.go): forms
+	// holds the spec a pending "Answer" click will open into a modal, and
+	// formPending is the rendezvous a submission resolves. Both are guarded by mu.
+	forms       map[string]FormSpec
+	formPending map[string]chan FormResponse
 }
 
 // New builds a Broker that posts with the given Slack bot token.
 func New(token string) *Broker {
-	return &Broker{client: slacklib.NewLazyClient(token), pending: make(map[string]chan Decision)}
+	return newBroker(slacklib.NewLazyClient(token))
 }
 
 // NewWith builds a Broker against an injected client, for tests.
 func NewWith(client *slacklib.LazyClient) *Broker {
-	return &Broker{client: client, pending: make(map[string]chan Decision)}
+	return newBroker(client)
+}
+
+func newBroker(client *slacklib.LazyClient) *Broker {
+	return &Broker{
+		client:      client,
+		pending:     make(map[string]chan Decision),
+		forms:       make(map[string]FormSpec),
+		formPending: make(map[string]chan FormResponse),
+	}
 }
 
 // Ask posts the prompt to dest and blocks until the user clicks an option, the
