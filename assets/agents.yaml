@@ -44,7 +44,9 @@ agents:
   #   # base_url:            # set for Z.ai/DeepSeek/Kimi compat endpoints
   #   workdir: ${HOME}/work/emily      # roots the files/terminal tools
   #   system_prompt_file: prompts/emily.md   # or inline `system_prompt: |`
-  #   tools: [files, terminal, skills, slack, jobs]  # native groups + registry namespaces
+  #   tools: [files, terminal, skills, slack, jobs, ask]  # native groups + registry namespaces
+  #   # `ask` lets the agent put a question with options to you as clickable Slack
+  #   # buttons and WAIT for your answer (instead of assuming one). Recommended.
   #   mcp_servers: [vaultre, data-api]               # from the block above
   #   max_turns: 40
   #   # Context-window management — keeps a long thread within the model window.
