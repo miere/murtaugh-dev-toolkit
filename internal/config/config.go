@@ -268,6 +268,20 @@ type JobProfile struct {
 	// Schedule. When both Schedule and Every are empty the job is
 	// manual-only: it runs solely when invoked via jobs.run or a workflow.
 	Every string `yaml:"every"`
+	// Confirmed tracks whether a job may auto-run. nil = operator-defined/trusted
+	// (runs). A non-nil false marks an agent-defined job awaiting first-run
+	// confirmation (held, not auto-run). true = confirmed. Uses a pointer so an
+	// absent field (hand-written jobs) is distinguishable from an explicit false.
+	Confirmed *bool `yaml:"confirmed"`
+}
+
+// AwaitingConfirmation reports whether the job is an agent-defined job that has
+// not yet been confirmed for its first run. A nil Confirmed (hand-written or
+// operator-trusted job) and an explicit true both return false; only a non-nil
+// false — the stamp jobs.define applies — returns true. The gateway scheduler
+// uses this to hold such jobs back from auto-running.
+func (p JobProfile) AwaitingConfirmation() bool {
+	return p.Confirmed != nil && !*p.Confirmed
 }
 
 // ScheduleKind classifies how a job is triggered.

@@ -43,6 +43,14 @@ func (a *Gateway) startScheduler(ctx context.Context) func() {
 		if job.ScheduleKind() == config.ScheduleManual {
 			continue
 		}
+		// An agent-defined job is held unconfirmed (Confirmed non-nil false) so
+		// its command can't run headless and ungated: skip scheduling it. The
+		// interactive first-run confirmation is a separate follow-up. Hand-written
+		// jobs (Confirmed nil) are unaffected.
+		if job.AwaitingConfirmation() {
+			a.logger.Info(fmt.Sprintf("job %q is awaiting first-run confirmation; not run", name), "job", name)
+			continue
+		}
 		definition, err := scheduleDefinition(job)
 		if err != nil {
 			a.logger.Error("skipping scheduled job: invalid schedule", "job", name, "error", err)

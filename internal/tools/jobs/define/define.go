@@ -38,6 +38,41 @@ func New(path PathProvider) *Tool {
 // Name returns the registry key.
 func (t *Tool) Name() string { return "jobs.define" }
 
+// RequiresApproval satisfies tools.ApprovalClassifier: defining a job always
+// needs human approval. A defined job's command is later run HEADLESS by the
+// scheduler/jobs.run path, so the approval at definition time is the only gate
+// the human gets — it must never be skipped.
+func (t *Tool) RequiresApproval(map[string]any) bool { return true }
+
+// ApprovalSummary satisfies tools.ApprovalSummarizer: render the actual command
+// and schedule the human is approving, rather than the gate's generic args
+// rendering. The line reads e.g. `define job "nightly": runs "/bin/backup --all"
+// — cron 0 2 * * *`.
+func (t *Tool) ApprovalSummary(args map[string]any) string {
+	name, _ := args["name"].(string)
+	command, _ := args["command"].(string)
+	schedule, _ := args["schedule"].(string)
+	every, _ := args["every"].(string)
+	jobArgs, _ := stringSlice(args["args"])
+
+	cmd := strings.TrimSpace(command)
+	if len(jobArgs) > 0 {
+		cmd = strings.TrimSpace(cmd + " " + strings.Join(jobArgs, " "))
+	}
+
+	var when string
+	switch {
+	case strings.TrimSpace(every) != "":
+		when = "every " + strings.TrimSpace(every)
+	case strings.TrimSpace(schedule) != "":
+		when = "cron " + strings.TrimSpace(schedule)
+	default:
+		when = "manual (no schedule)"
+	}
+
+	return fmt.Sprintf("define job %q: runs %q — %s", strings.TrimSpace(name), cmd, when)
+}
+
 // Description returns the human-facing summary used by MCP clients.
 func (t *Tool) Description() string {
 	return "Register a job (command, args, workdir, timeout, schedule/every) in jobs.yaml."
@@ -132,13 +167,19 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 	}
 
 	_, exists := existing[name]
+	// Stamp agent-defined jobs as unconfirmed so the scheduler holds them back
+	// from auto-running until a human confirms the first run (a follow-up PR).
+	// This closes the bypass where an agent could define a scheduled command
+	// that then runs headless and ungated.
+	unconfirmed := false
 	existing[name] = config.JobProfile{
-		Command:  command,
-		Args:     jobArgs,
-		WorkDir:  workdir,
-		Timeout:  timeout,
-		Schedule: schedule,
-		Every:    every,
+		Command:   command,
+		Args:      jobArgs,
+		WorkDir:   workdir,
+		Timeout:   timeout,
+		Schedule:  schedule,
+		Every:     every,
+		Confirmed: &unconfirmed,
 	}
 
 	if err := writeJobs(path, existing); err != nil {

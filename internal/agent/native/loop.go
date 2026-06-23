@@ -300,7 +300,14 @@ func (l *Loop) invokeTool(ctx context.Context, call llm.ToolCall, emit func(agen
 	// stays intact.
 	if l.approver != nil {
 		if classifier, ok := t.(tools.ApprovalClassifier); ok && classifier.RequiresApproval(args) {
-			allowed, note := l.approver.Approve(ctx, call.Name, approvalSummary(args))
+			// Prefer the tool's own richer summary (e.g. a job's command +
+			// schedule) so the human approves the real thing; fall back to the
+			// gate's generic args rendering for tools that don't implement it.
+			summary := approvalSummary(args)
+			if summarizer, ok := t.(tools.ApprovalSummarizer); ok {
+				summary = summarizer.ApprovalSummary(args)
+			}
+			allowed, note := l.approver.Approve(ctx, call.Name, summary)
 			if !allowed {
 				emit(eventTask(call.ID, call.Name, agent.TaskStatusFailed, note))
 				return note

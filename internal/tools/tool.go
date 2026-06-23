@@ -32,6 +32,13 @@ type ApprovalClassifier interface {
 	RequiresApproval(args map[string]any) bool
 }
 
+// ApprovalSummarizer lets a tool render its own human-facing summary for the
+// approval prompt (e.g. a job's command + schedule), instead of the gate's
+// generic args rendering. Optional; tools that don't implement it fall back.
+type ApprovalSummarizer interface {
+	ApprovalSummary(args map[string]any) string
+}
+
 // Registry holds the set of tools available to the application. It is
 // constructed by the composition root (internal/app) and handed to each
 // frontend.

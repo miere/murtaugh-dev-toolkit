@@ -60,6 +60,71 @@ func TestStartSchedulerNoOpWhenNoScheduledJobs(t *testing.T) {
 	stop()
 }
 
+func TestStartSchedulerSkipsUnconfirmedJob(t *testing.T) {
+	unconfirmed := false
+	fired := make(chan string, 1)
+	a := &Gateway{
+		logger: discardLogger(),
+		scheduledJobs: map[string]config.JobProfile{
+			"held": {Command: "/bin/echo", Every: "20ms", Confirmed: &unconfirmed},
+		},
+		runJob: func(_ context.Context, name string) error {
+			select {
+			case fired <- name:
+			default:
+			}
+			return nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// startScheduler is a no-op when every candidate is skipped, so stop is the
+	// empty closure; calling it must still be safe.
+	stop := a.startScheduler(ctx)
+	defer stop()
+
+	select {
+	case got := <-fired:
+		t.Fatalf("unconfirmed job %q fired, want it held back", got)
+	case <-time.After(300 * time.Millisecond):
+		// Expected: the held job never runs.
+	}
+}
+
+func TestStartSchedulerFiresConfirmedAndManualNilJobs(t *testing.T) {
+	confirmed := true
+	fired := make(chan string, 4)
+	a := &Gateway{
+		logger: discardLogger(),
+		scheduledJobs: map[string]config.JobProfile{
+			// Confirmed (non-nil true) interval job: must fire.
+			"go": {Command: "/bin/echo", Every: "20ms", Confirmed: &confirmed},
+			// Hand-written (Confirmed nil) interval job: must fire (unaffected).
+			"plain": {Command: "/bin/echo", Every: "20ms"},
+		},
+		runJob: func(_ context.Context, name string) error {
+			select {
+			case fired <- name:
+			default:
+			}
+			return nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop := a.startScheduler(ctx)
+	defer stop()
+
+	select {
+	case <-fired:
+		// At least one of the two eligible jobs fired.
+	case <-time.After(2 * time.Second):
+		t.Fatal("no eligible scheduled job fired within 2s")
+	}
+}
+
 func TestStartSchedulerFiresIntervalJob(t *testing.T) {
 	var (
 		mu    sync.Mutex
