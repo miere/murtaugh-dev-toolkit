@@ -7,9 +7,10 @@ Routing is **kind-agnostic** — the same rules pick a native or an ACP agent. T
 chat:
   default_agent: default        # required when acp.enabled
   dm_agent: support             # optional: override for DMs
-  channel_agents:               # optional: per-channel overrides (by channel ID)
-    C0ENG1: coding
-    C0SUP2: support
+  channel_agents:               # optional: per-channel overrides
+    C0ENG1: coding              #   by exact channel ID
+    support: support            #   by exact channel name
+    "feature-*": coding         #   by channel-name glob
 ```
 
 ## Resolution order
@@ -17,12 +18,29 @@ chat:
 For an incoming prompt, Murtaugh picks the agent like this:
 
 - **DM** → `chat.dm_agent` if set, otherwise `chat.default_agent`.
-- **Channel @-mention** → `chat.channel_agents[<channel ID>]` if that channel has
-  an entry, otherwise `chat.default_agent`.
+- **Channel @-mention** → the matching `chat.channel_agents` entry for that
+  channel (by ID, name, or name glob — see below), otherwise `chat.default_agent`.
 - **`/murtaugh chat …`** → same rules, based on where the command was run.
 
-> `channel_agents` keys are **Slack channel IDs** (`C0ENG1`), not `#names`. Grab
-> the ID from the channel's "About" panel or a message link.
+## Channel keys: ID, name, or glob
+
+A `channel_agents` key — and a `channel_do_not_require_mention` key, which uses
+the same syntax — can be any of three forms. `matchChannelAgent` tries them in
+this order:
+
+1. **Exact channel ID** (`C…`/`G…`) — always works. Grab it from the channel's
+   "About" panel or a message link.
+2. **Exact channel name** — e.g. `support` (no leading `#`).
+3. **Channel-name glob** — e.g. `feature-*` (`path.Match` syntax). When several
+   globs match the same channel, the one with the **longest literal prefix**
+   wins (so `feature-api-*` beats `feature-*`).
+
+> Name and glob keys require Murtaugh to resolve the channel's **name**, which it
+> reads from an in-memory cache built via the Slack `conversations.list` API. If
+> the bot can't list channels (missing scope, or the cache failed to build),
+> routing falls back to **exact-ID-only** and a name/glob key won't match.
+> Channel **IDs** always work regardless — use them if name resolution is
+> unavailable.
 
 ## Validation (fail-closed)
 
@@ -43,6 +61,7 @@ chat:
   default_agent: default
   dm_agent: support            # DMs go to the support agent
   channel_agents:
-    C0ENG1: coding             # #engineering mentions go to the coding agent
+    C0ENG1: coding             # by ID: this channel's mentions go to coding
+    "support-*": support       # by glob: any support-* channel goes to support
 # → a mention in any other channel falls back to `default`
 ```
