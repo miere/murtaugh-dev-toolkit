@@ -46,6 +46,7 @@ import (
 	slacksendmsg "github.com/miere/murtaugh-dev-toolkit/internal/tools/slack/sendmsg"
 	slackupdatemsg "github.com/miere/murtaugh-dev-toolkit/internal/tools/slack/updatemsg"
 	troubleshootbundle "github.com/miere/murtaugh-dev-toolkit/internal/tools/troubleshoot/bundle"
+	versiontool "github.com/miere/murtaugh-dev-toolkit/internal/tools/version"
 	"github.com/miere/murtaugh-dev-toolkit/internal/troubleshoot"
 )
 
@@ -317,6 +318,7 @@ func (a *Application) WithJournalSweeper(sweep func(context.Context) error, ever
 func buildRegistry(cfg config.Config, configPath, version string, recorder journal.Recorder, broker *interaction.Broker) *tools.Registry {
 	reg := tools.NewRegistry()
 	reg.Register(ping.New())
+	reg.Register(versiontool.New(version))
 
 	jobsLookup := func(name string) (config.JobProfile, bool) {
 		j, ok := cfg.Jobs[name]
