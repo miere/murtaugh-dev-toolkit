@@ -1,5 +1,10 @@
 # Example jobs.yaml showing all three trigger modes plus agent delegation.
 # Copy entries into your real ~/.config/murtaugh/jobs.yaml and edit.
+#
+# These hand-written entries omit `confirmed:`, so they are operator-trusted and
+# a scheduled one auto-runs. The `jobs_define` tool instead writes each entry
+# `confirmed: false`, which HOLDS its first scheduled run until the admin
+# confirms it in their DM (see reference/scheduling.md).
 
 jobs:
   # 1. MANUAL — neither schedule nor every. Runs only when invoked:

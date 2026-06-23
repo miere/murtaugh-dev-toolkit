@@ -34,6 +34,14 @@ command jobs.
 A non-zero exit is returned as the result's `exit_code` (it is not, by itself, a
 tool error). A failure to *start* the process (missing binary, etc.) is an error.
 
+**Approval when the job is still awaiting first-run confirmation.** If the target
+job is an agent-defined job stamped `confirmed: false` that has not yet been
+confirmed, `jobs_run` **requires human approval** before it runs — so an agent
+can't call `jobs_run` to slip past the scheduler's first-run hold (see
+`scheduling.md`). Confirmed and hand-written jobs run without that gate. (This
+only governs an agent calling `jobs_run` inside a chat turn; the scheduler runs
+the job below that gate once the admin has approved its first run.)
+
 ## `jobs_define` — register / update a job
 
 ```bash
@@ -44,6 +52,16 @@ murtaugh jobs define --name hourly-sync \
 
 - Reads `jobs.yaml`, adds or replaces the named entry, writes it back. Other
   jobs are preserved verbatim.
+- **Requires human approval.** Defining a job is **not** a silent write: the tool
+  always prompts a human first, and the prompt shows the **rendered command +
+  schedule** the job will run (e.g. `define job "nightly": runs "/bin/backup
+  --all" — cron 0 2 * * *`), not a generic args dump. This is the only gate the
+  human gets, because a defined job's command later runs **headless** via the
+  scheduler / `jobs_run` path.
+- **Writes the entry `confirmed: false`.** Every job `jobs_define` creates or
+  updates is stamped `confirmed: false`, which holds its first scheduled run
+  until the admin confirms it (see `scheduling.md`). Hand-editing `jobs.yaml`
+  omits the field, leaving the job operator-trusted.
 - **Required:** `--name` and `--command`.
 - **Optional:** `--args` (repeatable — once per argument, e.g.
   `--args --full --args /data`), `--workdir`, `--timeout` (Go duration like
@@ -67,7 +85,11 @@ murtaugh jobs define --name nightly-backup \
 | The scheduler | automatically, per `schedule` / `every` (see `scheduling.md`) |
 
 All paths share one execution path, so a job behaves the same no matter who
-fires it.
+fires it. They differ only in the **approval gate** in front of that path: an
+agent calling `jobs_run` on a job still awaiting first-run confirmation is asked
+to approve it, and the scheduler asks the admin to approve a held job's first run
+(see `scheduling.md`). A hand-by-you CLI run and a confirmed/operator-trusted job
+run straight through.
 
 ## Output and logs
 

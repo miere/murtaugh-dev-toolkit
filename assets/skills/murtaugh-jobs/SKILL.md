@@ -27,6 +27,15 @@ exclusive** fields:
 Scheduled modes (`schedule`/`every`) only fire while the **`slack gateway`
 daemon** is running — it owns the in-process scheduler.
 
+**Operator-written vs agent-defined jobs.** A job you hand-write in `jobs.yaml`
+(no `confirmed:` field) is **trusted**: a scheduled one auto-runs as soon as the
+gateway is up, exactly as the table above describes. A job created by the
+`jobs_define` tool is stamped `confirmed: false` and is **held**: it is still
+scheduled, but on its **first trigger** the scheduler asks the admin (in their
+DM) to approve that run before it executes — see `reference/scheduling.md`. This
+exists because a defined job's command runs **headless and ungated**, so the
+agent never gets to define-then-auto-run a command without a human OK.
+
 ## Read the right file (don't load everything)
 
 | When you're… | Read |
@@ -45,6 +54,11 @@ daemon** is running — it owns the in-process scheduler.
   rejects that at validation time. Leave both unset for a manual-only job.
 - **Schedule edits apply on the next gateway restart**, not live. After editing
   `jobs.yaml`, restart the gateway (the config watcher already suggests it).
+- **`jobs_define` requires approval.** Defining a job is never a silent write —
+  the tool always prompts a human, showing the rendered command + schedule, and
+  stamps the new/updated entry `confirmed: false` so its first scheduled run is
+  held until the admin confirms it (see `reference/running.md` and
+  `reference/scheduling.md`).
 - **`command` should be an absolute path** (or a binary on `PATH`); a relative
   `command` resolves against the job's `workdir`, which defaults to the
   workspace (`~/.config/murtaugh`).

@@ -31,6 +31,12 @@ jobs:
 | `timeout` | no | A Go duration (`30s`, `5m`, `2h`). The run is killed if it exceeds this. Defaults to **10m**. |
 | `schedule` | no | Cron expression for automatic runs. Mutually exclusive with `every`. → `scheduling.md` |
 | `every` | no | Interval duration for automatic runs. Mutually exclusive with `schedule`. → `scheduling.md` |
+| `confirmed` | no | First-run gate for a scheduled job. **Absent** (hand-written) = operator-trusted, auto-runs. `false` = agent-defined via `jobs_define`, **held** until the admin confirms its first scheduled run. `true` = confirmed. → `scheduling.md` |
+
+`jobs_define` writes every entry `confirmed: false` and is itself approval-gated
+(it prompts a human, showing the rendered command + schedule, before writing) —
+see `running.md`. When you hand-edit `jobs.yaml`, just leave `confirmed` out: an
+absent field means the job is trusted and auto-runs.
 
 ## Agent jobs
 

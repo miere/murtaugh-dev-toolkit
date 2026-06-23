@@ -47,6 +47,35 @@ The first run happens one interval after the gateway starts (not immediately).
 - **Bad schedules degrade gracefully.** A malformed cron expression is logged at
   startup and that one job is skipped — the gateway and the other jobs still run.
 
+## First-run confirmation for agent-defined jobs
+
+A job stamped `confirmed: false` — the mark `jobs_define` applies to every job it
+writes (see `reference/running.md`) — is **held**. It is still registered with
+the scheduler, but the **first time** its trigger fires the scheduler does not
+run it blindly: it posts an **Approve / Deny** prompt to the **admin's DM**,
+showing the actual command (with args) and the schedule, and runs the job only if
+the admin approves.
+
+- **Approve** → the job runs, and the approval is remembered for the rest of this
+  daemon's lifetime, so later triggers run without asking again.
+- **Deny** → the job does **not** run; the scheduler asks again on the **next**
+  trigger.
+- **No broker / no admin DM available** → the job does **not** run (and is
+  re-asked on the next trigger).
+
+A hand-written job (no `confirmed:` field) and an explicitly `confirmed: true`
+job skip all of this and auto-run as described above.
+
+Two details worth knowing:
+
+- **Confirmation is session-scoped.** The approval is held in memory only — it is
+  **not** written back to `jobs.yaml`. A gateway restart re-asks on the next
+  trigger (a deliberately safe default).
+- **At most one prompt per job at a time.** While the scheduler is blocked
+  waiting for the admin's decision, gocron's singleton mode (`LimitModeReschedule`)
+  **drops** any triggers that fire in the meantime, so a held job never stacks up
+  a backlog of approval prompts.
+
 ## Two things to know
 
 1. **Edits apply on restart.** Schedules are read from `jobs.yaml` once, at
