@@ -16,6 +16,15 @@ recent messages/reactions.
 > — buttons and link previews — see the `murtaugh-slack` (workflow-rules) and
 > `murtaugh-unfurl` skills.
 
+> **To *ask*, don't post.** This skill's `slack.*` inventory is scoped to that
+> namespace — posting and reading messages. To **ask the user a question and get the
+> answer back**, use the separate `ask` / `present_plan` tools, not a plain
+> `slack_send-msg`: they post the buttons/modal and **block the turn** until the user
+> responds, then return the choice to the agent. A `send-msg` is fire-and-forget — it
+> posts and returns immediately, with no answer to wait on. (`ask` / `present_plan`
+> live outside the `slack.*` namespace; see the `murtaugh-agents` skill and
+> `agents.yaml`.)
+
 ## The four tools (at a glance)
 
 | Tool | Does | Key args |

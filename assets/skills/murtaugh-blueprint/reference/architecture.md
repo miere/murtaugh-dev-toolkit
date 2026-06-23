@@ -20,9 +20,20 @@ capability skill — defer to them for flag/tool details:
 | `automations/` | Python (or shell) routines that do the work | — (rules below) |
 | `slack.yaml` | Slack workflow rules: reply / run / unfurl / interactive (buttons) | `murtaugh-slack` |
 | active Slack actions | post / update / read messages from code | `murtaugh-slack-tools` |
+| `agents.yaml` | agent definitions: provider/model, tools, `approval:` gate, context/cache | `murtaugh-agents` |
 | `templates/` | static Block Kit payloads | — (rules below) |
 | link previews | URL unfurling | `murtaugh-unfurl` |
 | `jobs.yaml` | scheduled / on-demand job execution | `murtaugh-jobs` |
+
+> **`agents.yaml` carries an `approval:` block** (per agent) that gates side-effecting
+> terminal commands behind a Slack confirmation: `terminal: allowlist` (the default —
+> auto-run recognized read-only commands, ask for anything else), `prompt` (ask for
+> every command), or `off` (never ask), plus `allow: [...]` to extend the read-only set
+> with your own commands. This gate, and the agent's `ask` / `present_plan` tools, are
+> Murtaugh's **native interactivity** — a path **separate from `slack.yaml`**. They open
+> their prompts (buttons and real modals) through the gateway's interaction broker and
+> block the agent's turn for the answer; they do **not** go through `workflow-rules`. See
+> `murtaugh-agents`.
 
 ## Top-level layout
 

@@ -1,6 +1,6 @@
 ---
 name: murtaugh-slack
-description: End-to-end guide for building reactive Slack experiences on Murtaugh, where an agent posts a Block Kit message, a user interacts with it, and Murtaugh's server handles the block_actions click and renders a response via slack.yaml workflow-rules. Covers the inbound/reactive surface — matching workflow-rules by block_id/action_id, firing reply-to-slack, run, and delegate-to-agent triggers, designing message buttons (modals/view_submission are unsupported), and scheduled clock-tick automations. Use when wiring what happens on a Slack button click, defining or reusing action_ids and match rules in slack.yaml, building approval forms, PR action cards, status mirrors, or unfurl/ping-style interactive handlers. For actively posting, updating, or reading messages from a script, see murtaugh-slack-tools instead.
+description: End-to-end guide for building reactive Slack experiences on Murtaugh, where an agent posts a Block Kit message, a user interacts with it, and Murtaugh's server handles the block_actions click and renders a response via slack.yaml workflow-rules. Covers the inbound/reactive surface — matching workflow-rules by block_id/action_id (workflow-rules fire on block_actions only; they cannot match modal view_submissions), firing reply-to-slack, run, and delegate-to-agent triggers, designing message buttons, and scheduled clock-tick automations. Use when wiring what happens on a Slack button click, defining or reusing action_ids and match rules in slack.yaml, building approval forms, PR action cards, status mirrors, or unfurl/ping-style interactive handlers. To have the AGENT itself ask the user a question (incl. a multi-field modal) and block for the answer, use the `ask`/`present_plan` tools instead of hand-wiring a button. For actively posting, updating, or reading messages from a script, see murtaugh-slack-tools instead.
 ---
 
 # Skill: Murtaugh Slack Workflows
@@ -11,10 +11,19 @@ interaction and **renders** a response. Use this whenever a task involves sendin
 updating, or reacting to Slack messages through Murtaugh — code-review cards, PR
 actions, approval forms, status mirrors, and similar.
 
-> **Buttons only.** Murtaugh handles `block_actions` interactions (buttons and
-> other elements that fire immediately). Modal dialogs (`views.open` /
-> `view_submission`) are **not** supported — design around message buttons, not
-> pop-ups.
+> **`workflow-rules` are buttons-only.** A `slack.yaml` `workflow-rules` entry
+> matches `block_actions` interactions (buttons and other elements that fire
+> immediately) — it **cannot** match a modal `view_submission`. So design *rule-driven*
+> flows around message buttons, not pop-ups.
+>
+> **Want the agent to *ask* the user something?** Don't hand-wire a button plus a
+> matching workflow-rule. Have the agent call the `ask` tool (for a question with
+> options, or a multi-field modal) or `present_plan` (for plan sign-off): these
+> post the buttons/modal and **block the turn** until the user answers, then hand
+> the choice straight back to the agent. They go through Murtaugh's native
+> interaction broker — a separate path from `slack.yaml` — and the daemon *does*
+> open real modals there (`views.open` / `view_submission`). See `agents.yaml`
+> (`tools: [… ask, present_plan]`) and the `murtaugh-agents` skill.
 
 ## The dance (mental model)
 

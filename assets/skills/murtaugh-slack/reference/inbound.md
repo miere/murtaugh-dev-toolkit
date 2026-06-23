@@ -4,8 +4,14 @@ How Murtaugh turns a button click into a response. This is the *interaction* hal
 of the dance (steps 2–4). For composing and sending the message that carries the
 buttons, see `outbound.md`; for the blocks themselves, see `blocks.md`.
 
-> **Buttons only.** Murtaugh handles `block_actions` interactions. Modal dialogs
-> (`views.open` / `view_submission`) are not supported yet.
+> **`workflow-rules` are buttons-only.** A `workflow-rules` entry can only match
+> `block_actions` interactions; it **cannot** trigger on a modal `view_submission`.
+> This is a limitation of the *rules* surface, **not** the daemon: Murtaugh's native
+> interaction broker (backing the `ask` / `present_plan` tools and the terminal
+> approval gate) *does* open real modals and parse their `view_submission`s — the
+> gateway routes those to the blocked agent turn before workflow-rules ever see them.
+> So if you need a multi-field prompt, reach for the `ask` tool (it opens a modal and
+> returns the answers) rather than trying to wire one through a workflow-rule.
 
 ## How it works
 
@@ -100,13 +106,23 @@ A rule may list several triggers; they execute in the order written.
 
 Slack delivers Block Kit messages to **every member of the channel** they're posted
 to. The `admin_user` / `allowed_users` allowlist gates *who can act* (clicks from
-outsiders are silently dropped), but does **not** control *who can see*. Before
-drafting a form, walk the user through:
+outsiders are silently dropped), but does **not** control *who can see*.
+
+> Before you hand-build an "approval form" out of buttons + a workflow-rule, check
+> whether you actually want the agent to *ask*. For agent-driven approval and
+> decisions, prefer the `present_plan` tool (plan sign-off), the `ask` tool (a
+> question with options, or a multi-field modal), or the terminal **approval gate**
+> (`agents.yaml` → `approval:`, which confirms side-effecting commands in the thread).
+> Those block the turn and return the user's choice directly — no rule wiring, and
+> no secrets travelling in `value`. Hand-wired forms are for *standalone* reactive
+> flows that aren't part of an agent turn (PR action cards, status mirrors).
+
+Before drafting a hand-wired form, walk the user through:
 
 - **Visibility — who should see the buttons?** A public post is visible to every
   channel member. For one recipient, use an ephemeral message (in-channel, only
-  that user, dismissible) or a DM. Modals (inherently single-user) are not
-  supported.
+  that user, dismissible) or a DM. (A *workflow-rule* can't drive a modal; if you
+  need a single-user modal prompt, that's the `ask` tool's job, not a hand-wired form.)
 - **Actors — who is in `allowed_users`?** Anyone outside the allowlist is silently
   ignored on click; confirm the intended actors are allowlisted, or the form is
   inert for them.

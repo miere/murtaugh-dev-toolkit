@@ -64,7 +64,9 @@ A compact header. Example from `templates/code-review/01-open-pull-request.json`
 ## Custom block: `plan`
 
 A task checklist with per-task status — ideal for showing where something sits in
-a lifecycle.
+a lifecycle. (Not to be confused with the agent's `present_plan` *tool*, which posts
+a plan with Proceed / Revise / Cancel buttons and blocks the turn for sign-off — a
+different surface entirely; see the `murtaugh-agents` skill.)
 
 **Fields:** `type` (`"plan"`), `title` (**object**: `{ "type": "plain_text",
 "text": … }` — not a bare string), optional `block_id`, `tasks[]`.

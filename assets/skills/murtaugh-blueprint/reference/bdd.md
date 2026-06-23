@@ -83,6 +83,11 @@ two tools every Murtaugh user already has. Reach **Slack through the `murtaugh`
 CLI**, not a bespoke per-machine Python client, and recover structured data via
 its JSON output:
 
+> The harness covers *automation* code (CLI-driven Slack posting/reading). The agent's
+> native interaction tools (`ask` / `present_plan` and the terminal approval gate) are
+> **not** exercised by this BDD harness — they're a daemon-side path with no `murtaugh`
+> CLI seam to fake. Test those at the Go level, not in `behave`.
+
 ```
 murtaugh slack send-msg --to "#chan" --body "…" --json   ->   {"ok":true,"channel":"C…","ts":"170…"}
 ```
