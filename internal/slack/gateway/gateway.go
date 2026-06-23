@@ -112,6 +112,11 @@ type Gateway struct {
 	// construction. The scheduler registers the entries whose ScheduleKind
 	// is cron/every; manual jobs are ignored. Empty disables scheduling.
 	scheduledJobs map[string]config.JobProfile
+	// confirmedJobs records which held (agent-defined, unconfirmed) jobs have
+	// been approved for their first run during this process. Session-scoped and
+	// guarded by confirmedJobsMu; not persisted, so a restart re-asks.
+	confirmedJobs   map[string]bool
+	confirmedJobsMu sync.Mutex
 	// runJob executes a job by name to completion. Injected by the
 	// composition root (WithScheduledRunner) as a closure over the jobs.run
 	// tool. nil disables the scheduler, so CLI/MCP and tests never pay for

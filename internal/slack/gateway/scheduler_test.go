@@ -60,7 +60,7 @@ func TestStartSchedulerNoOpWhenNoScheduledJobs(t *testing.T) {
 	stop()
 }
 
-func TestStartSchedulerSkipsUnconfirmedJob(t *testing.T) {
+func TestStartSchedulerHoldsUnconfirmedJobWithoutBroker(t *testing.T) {
 	unconfirmed := false
 	fired := make(chan string, 1)
 	a := &Gateway{
@@ -75,20 +75,20 @@ func TestStartSchedulerSkipsUnconfirmedJob(t *testing.T) {
 			}
 			return nil
 		},
+		// No interaction broker wired, so the first-run confirmation can never be
+		// granted and the held job must not run.
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// startScheduler is a no-op when every candidate is skipped, so stop is the
-	// empty closure; calling it must still be safe.
 	stop := a.startScheduler(ctx)
 	defer stop()
 
 	select {
 	case got := <-fired:
-		t.Fatalf("unconfirmed job %q fired, want it held back", got)
+		t.Fatalf("unconfirmed job %q ran without confirmation, want it held back", got)
 	case <-time.After(300 * time.Millisecond):
-		// Expected: the held job never runs.
+		// Expected: the held job fires its trigger but is never executed.
 	}
 }
 
