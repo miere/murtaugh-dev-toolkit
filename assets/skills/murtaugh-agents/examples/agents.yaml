@@ -1,7 +1,8 @@
-# Example agents.yaml (ACP chat enabled with one agent).
-# Pair with a chat block in slack.yaml (see below).
+# Example agents.yaml (agent chat enabled).
+# Leads with a native agent (the default kind); an ACP profile is shown as the
+# legacy alternative. Pair with a chat block in slack.yaml (see below).
 
-acp:
+acp:                          # runtime tuning (also spelled `agent:`)
   enabled: true
   request_timeout: 10m
   session_idle_timeout: 30m
@@ -9,13 +10,53 @@ acp:
   stream_append_interval: 750ms
   stream_min_chunk_chars: 96
   cancel_grace_period: 2s
+  progress_display: simplified
+
+# External MCP servers a native agent can attach to (by name, from a profile's
+# `mcp_servers:` below). Secrets in env come from ~/.config/murtaugh/.env.
+mcp_servers:
+  vaultre:
+    command: vaultre-mcp
+    args: [--stdio]
+    env:
+      VAULTRE_TOKEN: ${VAULTRE_TOKEN}
 
 agents:
+  # --- Native agent (kind: native is the DEFAULT) --------------------------
+  # Murtaugh talks to the model itself — no external agent process. The API key
+  # never lives here: api_key_env names the variable in ~/.config/murtaugh/.env
+  # (write it with `setup_env`).
   default:
-    command: /usr/local/bin/acp-agent
-    args: [--stdio]
-    # workdir defaults to ~/.config/murtaugh when omitted
-    # interruptible: false   # pin only if the startup probe is wrong
+    provider: gemini            # gemini | anthropic | openai
+    model: gemini-2.5-pro
+    api_key_env: GEMINI_API_KEY
+    # base_url:                 # set for Z.ai/DeepSeek/Kimi compat endpoints
+    workdir: ${HOME}/work       # roots the files/terminal tools
+    system_prompt_file: prompts/default.md   # or inline `system_prompt: |`
+    tools: [files, terminal, skills, slack, jobs, ask, present_plan]
+    # `ask` lets the agent put a question (buttons, or a multi/free-text form) to
+    # you and WAIT for the answer. `present_plan` shows a plan with Proceed /
+    # Revise / Cancel and WAITS for sign-off before multi-step work.
+    mcp_servers: [vaultre]
+    max_turns: 40
+    context_limit: 1000000
+    compaction: truncate        # truncate (default) | summarize
+    cache_retention: 5m         # 5m (default) | 1h | off
+    # Terminal approval gate (only active in live chat): allowlist (default —
+    # auto-run recognized read-only commands, ask for the rest), prompt (ask for
+    # every command), or off. `allow` extends the read-only set with your own
+    # command keys (an argv0 like "kubectl", or a "binary subcommand" pair).
+    approval:
+      terminal: allowlist
+      allow: [kubectl, "docker ps"]
+
+  # --- ACP agent (kind: acp — external process, the LEGACY alternative) -----
+  # legacy:
+  #   kind: acp
+  #   command: /usr/local/bin/acp-agent
+  #   args: [--stdio]
+  #   # workdir defaults to ~/.config/murtaugh when omitted
+  #   # interruptible: false   # pin only if the startup probe is wrong
 
 # ---------------------------------------------------------------------------
 # In slack.yaml, point chat routing at an agent defined above:
@@ -24,5 +65,5 @@ agents:
 #   default_agent: default
 #   # dm_agent: default
 #   # channel_agents:
-#   #   C0ENG1: default        # keys are channel IDs, not #names
+#   #   C0ENG1: default        # keys are channel IDs (or name globs), not #names
 # ---------------------------------------------------------------------------

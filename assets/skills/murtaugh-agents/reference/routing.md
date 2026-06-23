@@ -1,6 +1,7 @@
 # Chat routing: which agent answers
 
-The `chat` block in `slack.yaml` decides which agent handles each conversation:
+Routing is **kind-agnostic** — the same rules pick a native or an ACP agent. The
+`chat` block in `slack.yaml` decides which agent handles each conversation:
 
 ```yaml
 chat:

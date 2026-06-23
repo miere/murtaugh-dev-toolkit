@@ -1,7 +1,7 @@
-# Seeding & config: bootstrap, slack, agents
+# Seeding & config: bootstrap, slack, env, agents
 
-All three write into the workspace (`~/.config/murtaugh` by default) and back up
-any file they replace.
+These tools write into the workspace (`~/.config/murtaugh` by default) and back
+up any file they replace.
 
 > **CLI flag spelling.** The `Arg` columns below name the schema fields
 > (snake_case), which is what you pass over MCP. On the **CLI** each is a
@@ -46,25 +46,83 @@ existing file. Re-run to rotate tokens or change the admin.
 murtaugh setup slack --app-token xapp-… --bot-token xoxb-… --admin-user @you
 ```
 
+## `setup_env` — upsert .env secrets
+
+*Upsert `KEY=VALUE` secrets into `~/.config/murtaugh/.env` (other entries
+preserved).*
+
+This is the credential writer the installer uses for **LLM provider keys** — a
+native agent references its key by variable name (`api_key_env`), and the value
+lives only here, never in YAML. Anything else that must stay out of YAML (an MCP
+server token, etc.) goes here too.
+
+| Arg | Required | Meaning |
+|---|---|---|
+| `set` | yes | A `KEY=VALUE` pair to upsert. **Repeatable** — pass `--set` once per pair. The value is written verbatim. |
+
+Merges into the existing `.env`: keys you pass are added or updated, every other
+entry is left untouched. Writes `0600` and backs up any existing file. The result
+reports key **names** only — never the secret values.
+
+```bash
+# Native agents can't authenticate until their key is in .env:
+murtaugh setup env --set GEMINI_API_KEY=AIza… --set ANTHROPIC_API_KEY=sk-ant-…
+```
+
 ## `setup_agents` — write agents.yaml
 
-*Write agents.yaml with the ACP block and an optional default agent.*
+*Write agents.yaml with the runtime block and a native (default) or ACP agent.*
+
+The **kind is inferred** when you don't pass `--kind`: a `--provider` ⇒ **native**,
+a `--command` ⇒ **acp**. Passing neither writes a disabled file (chat off);
+passing agent flags that can't determine a kind is rejected rather than silently
+skipped.
+
+Shared:
 
 | Arg | Required | Meaning |
 |---|---|---|
 | `agent_name` | no | Key to register the agent under. Defaults to `default`. |
-| `command` | no | Path to the ACP-speaking binary. **Blank disables ACP** (`acp.enabled: false`). |
-| `args` | no | Arguments for the agent command. Repeatable: pass `--args` once per argument. |
+| `kind` | no | `native` (default) or `acp`. Inferred from the flags when omitted. |
 
-Writes the ACP block with tuned defaults plus the agent profile (`0600`, backs
-up existing). To enable chat you still need `chat.default_agent` in `slack.yaml`
-(see the `murtaugh-agents` skill).
+**Native** (`--kind native`, or just pass `--provider`):
 
-`--args` is a repeatable flag — give it once per argument; the values become the
-agent command's argv in order:
+| Arg | Required | Meaning |
+|---|---|---|
+| `provider` | yes | Provider family: `gemini`, `anthropic`, or `openai`. |
+| `model` | yes | Provider model id (e.g. `gemini-2.5-pro`). |
+| `api_key_env` | yes | Name of the `.env` variable holding the API key (write the value with `setup_env`). |
+| `base_url` | no | Endpoint override for a compat provider (Z.ai/DeepSeek/Kimi). |
+| `tools` | no | Tool allowlist. **Repeatable** — `--tools files --tools terminal …`. |
+| `mcp_servers` | no | Names of `mcp_servers` entries to attach. **Repeatable**. |
+| `system_prompt_file` | no | Path (relative to the config dir) to the system prompt file. |
+| `context_limit` | no | Token budget for compaction (integer). `0` uses a per-family default. |
+| `compaction` | no | `truncate` (default) or `summarize`. |
+| `cache_retention` | no | Prompt-cache TTL: `5m` (default), `1h`, or `off`. |
+
+**ACP** (`--kind acp`, or just pass `--command`):
+
+| Arg | Required | Meaning |
+|---|---|---|
+| `command` | yes | Path to the ACP-speaking binary. |
+| `args` | no | Arguments for the agent command. **Repeatable** — once per argument. |
+
+Writes the runtime block with tuned defaults plus the agent profile (`0600`,
+backs up existing). To enable chat you still need `chat.default_agent` in
+`slack.yaml` (see the `murtaugh-agents` skill).
+
+> `setup_agents` does **not** write the `approval:` block, an inline
+> `system_prompt`, a `workdir`, or `max_turns` — edit `agents.yaml` directly for
+> those (see the `murtaugh-agents` skill).
 
 ```bash
-murtaugh setup agents --agent-name claude \
+# Native agent (default kind): the key value already went into .env via setup_env.
+murtaugh setup agents --provider gemini --model gemini-2.5-pro \
+  --api-key-env GEMINI_API_KEY \
+  --tools files --tools terminal --tools skills --tools ask --tools present_plan
+
+# Legacy ACP agent. --args is repeatable; values become argv in order:
+murtaugh setup agents --agent-name claude --kind acp \
   --command /usr/local/bin/acp-agent --args --stdio --args --verbose
 # → agents.yaml: command: /usr/local/bin/acp-agent, args: [--stdio, --verbose]
 ```

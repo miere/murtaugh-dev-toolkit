@@ -1,8 +1,12 @@
 # Running Murtaugh as an MCP server
 
 `murtaugh mcp` runs Murtaugh as a **stdio MCP server** (JSON-RPC over
-stdin/stdout). It exposes every Murtaugh tool — `ping`, `jobs_*`, `slack_*`,
-`setup_*` — to any MCP client, each advertised with its own input schema.
+stdin/stdout). It exposes every Murtaugh tool — `ping`, `version`, `jobs_*`,
+`slack_*`, `setup_*` (including `setup_env`) — to any MCP client, each advertised
+with its own input schema. The agent's mid-turn interaction tools `ask` and
+`present_plan` are part of the surface too, but only act inside a live Slack
+conversation (over plain MCP, with no gateway to route the click back, they
+return an error).
 
 ## How it's used
 
