@@ -9,6 +9,7 @@ import (
 	"github.com/go-co-op/gocron/v2"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	askbroker "github.com/miere/murtaugh-dev-toolkit/internal/slack/interaction"
 )
 
 // ScheduledRunner executes the named job to completion and returns a non-nil
@@ -43,14 +44,9 @@ func (a *Gateway) startScheduler(ctx context.Context) func() {
 		if job.ScheduleKind() == config.ScheduleManual {
 			continue
 		}
-		// An agent-defined job is held unconfirmed (Confirmed non-nil false) so
-		// its command can't run headless and ungated: skip scheduling it. The
-		// interactive first-run confirmation is a separate follow-up. Hand-written
-		// jobs (Confirmed nil) are unaffected.
-		if job.AwaitingConfirmation() {
-			a.logger.Info(fmt.Sprintf("job %q is awaiting first-run confirmation; not run", name), "job", name)
-			continue
-		}
+		// Agent-defined jobs (Confirmed non-nil false) are still scheduled, but
+		// runScheduledJob asks the admin to approve the FIRST run before executing
+		// (the command can't run headless and ungated without a human OK).
 		definition, err := scheduleDefinition(job)
 		if err != nil {
 			a.logger.Error("skipping scheduled job: invalid schedule", "job", name, "error", err)
@@ -95,12 +91,86 @@ func (a *Gateway) startScheduler(ctx context.Context) func() {
 // logged, never propagated: a failing scheduled run must not take down the
 // daemon, and the next trigger fires on schedule regardless.
 func (a *Gateway) runScheduledJob(ctx context.Context, name string) {
+	// A held agent-defined job needs the admin to approve its first run this
+	// process before it executes. Confirmed and hand-written jobs run straight
+	// away. gocron's singleton mode drops triggers that fire while we are still
+	// blocked awaiting the decision, so there is at most one prompt per job.
+	if job, ok := a.scheduledJobs[name]; ok && job.AwaitingConfirmation() && !a.isJobConfirmed(name) {
+		if !a.confirmHeldJob(ctx, name, job) {
+			return
+		}
+	}
 	a.logger.Info("running scheduled job", "job", name)
 	if err := a.runJob(ctx, name); err != nil {
 		a.logger.Error("scheduled job failed", "job", name, "error", err)
 		return
 	}
 	a.logger.Info("scheduled job completed", "job", name)
+}
+
+// isJobConfirmed reports whether a held job has been approved for its first run
+// during this daemon lifetime. Confirmation is session-scoped — it is not
+// written back to jobs.yaml, so a restart re-asks (a deliberately safe default;
+// persisting it is a follow-up).
+func (a *Gateway) isJobConfirmed(name string) bool {
+	a.confirmedJobsMu.Lock()
+	defer a.confirmedJobsMu.Unlock()
+	return a.confirmedJobs[name]
+}
+
+func (a *Gateway) markJobConfirmed(name string) {
+	a.confirmedJobsMu.Lock()
+	defer a.confirmedJobsMu.Unlock()
+	if a.confirmedJobs == nil {
+		a.confirmedJobs = make(map[string]bool)
+	}
+	a.confirmedJobs[name] = true
+}
+
+// confirmHeldJob asks the admin (in their DM) to approve a held job's first run,
+// showing the actual command and schedule, and blocks until they answer. It
+// returns true only on approval, recording the confirmation for this process so
+// later triggers run without asking again. With no broker or no admin DM
+// available the job is not run (and is re-asked on the next trigger).
+func (a *Gateway) confirmHeldJob(ctx context.Context, name string, job config.JobProfile) bool {
+	if a.interactions == nil {
+		a.logger.Info("held scheduled job cannot be confirmed: no interaction broker; not run", "job", name)
+		return false
+	}
+	dest, err := a.resolveSuggestionDestination(ctx, "")
+	if err != nil || dest == "" {
+		a.logger.Warn("held scheduled job cannot be confirmed: no admin DM available; not run", "job", name, "error", err)
+		return false
+	}
+	question := fmt.Sprintf("Scheduled job `%s` is about to run for the first time:\n```%s```\nSchedule: %s. Approve its first run?",
+		name, jobCommandLine(job), scheduleSummary(job))
+	decision, err := a.interactions.Ask(ctx, askbroker.Destination{ChannelID: dest}, askbroker.PromptSpec{
+		Title:    ":alarm_clock: First run of a scheduled job",
+		Question: question,
+		Options: []askbroker.Option{
+			{ID: "approve", Label: "Approve", Style: "primary"},
+			{ID: "deny", Label: "Deny", Style: "danger"},
+		},
+	})
+	if err != nil {
+		a.logger.Warn("held scheduled job confirmation failed; not run", "job", name, "error", err)
+		return false
+	}
+	if decision.OptionID == "approve" {
+		a.markJobConfirmed(name)
+		a.logger.Info("scheduled job approved for first run", "job", name, "user", decision.UserID)
+		return true
+	}
+	a.logger.Info("scheduled job first run not approved; will ask again on next trigger", "job", name)
+	return false
+}
+
+// jobCommandLine renders a job's command and args for the confirmation prompt.
+func jobCommandLine(job config.JobProfile) string {
+	if len(job.Args) == 0 {
+		return job.Command
+	}
+	return job.Command + " " + strings.Join(job.Args, " ")
 }
 
 // scheduleDefinition maps a job profile onto the gocron job definition for

@@ -101,6 +101,18 @@ func (t *Tool) record(ctx context.Context, level journal.Level, summary, name st
 // Name returns the registry key.
 func (t *Tool) Name() string { return "jobs.run" }
 
+// RequiresApproval reports whether running this job needs human approval: an
+// agent-defined job still awaiting its first-run confirmation does, so an agent
+// cannot use jobs.run to bypass the scheduler's first-run hold. Satisfies
+// tools.ApprovalClassifier. Confirmed and hand-written jobs do not require it.
+// (The scheduler invokes this tool directly, below the native loop's gate, so
+// this only governs an agent calling jobs.run inside a chat turn.)
+func (t *Tool) RequiresApproval(args map[string]any) bool {
+	name, _ := args["name"].(string)
+	job, ok := t.lookup(name)
+	return ok && job.AwaitingConfirmation()
+}
+
 // Description returns the human-facing summary used by MCP clients.
 func (t *Tool) Description() string {
 	return "Run a job defined in jobs.yaml by name."
