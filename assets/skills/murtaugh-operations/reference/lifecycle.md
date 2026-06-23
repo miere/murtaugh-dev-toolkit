@@ -20,11 +20,22 @@ What `murtaugh slack gateway` does, in order, when it starts:
 
 ## Startup ping
 
-Once connected, the gateway DMs the admin a one-time **":zap: The server has
-started."** notice (rendered from the embedded `templates/ping/01-ping.json`).
-It fires once per process — a reconnect won't repeat it. Seeing this DM is the
-quickest confirmation the daemon is up and the admin user resolved correctly. If
-it never arrives, check that `admin_user` is set and resolvable.
+Once connected, the gateway greets the admin **once per process** — and exactly
+one of two things happens:
+
+- **Fresh boot:** it DMs the admin a **":zap: The server has started."** card
+  with a **Test communication** button. The card is built in Go
+  (`internal/slack/pingcard`), and clicking the button is answered by the binary
+  itself (`:recycle: …functional.`) — no workflow rule or template involved, so
+  the self-test can't be broken by config edits.
+- **Returning from a restart:** the startup ping is suppressed; instead the
+  pending "restarting…" notice is edited in place into a **":white_check_mark:
+  Murtaugh is back online."** card carrying the same Test communication button
+  (see `config-and-restart.md`).
+
+A reconnect won't repeat the greeting. Seeing it is the quickest confirmation the
+daemon is up and the admin user resolved correctly. If it never arrives, check
+that `admin_user` is set and resolvable.
 
 ## Event deduplication
 

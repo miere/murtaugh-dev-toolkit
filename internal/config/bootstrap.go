@@ -55,7 +55,7 @@ func Bootstrap(configPath string) error {
 //
 // Under the workspace directory (the directory holding configPath, e.g.
 // ~/.config/murtaugh) it manages:
-//   - slack.yaml (seeded with the default ping/pong configuration), agents.yaml,
+//   - slack.yaml (seeded with the default Slack configuration), agents.yaml,
 //     and jobs.yaml — created on first run, then PRESERVED: these hold the
 //     user's tokens and customisations and are never overwritten.
 //   - templates/ — the bundled Block Kit templates (ping/, unfurl/), also

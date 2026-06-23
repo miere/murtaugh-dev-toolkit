@@ -43,16 +43,11 @@ commands:
     description: Cancel the in-flight Murtaugh response in this thread or DM
 
 workflow-rules:
-  startup-ping-pong:
-    request_event: interactive
-    match:
-      type: block_actions
-      actions:
-        - action_id: ping
-    trigger:
-      - reply-to-slack:
-          template: templates/ping/02-pong.json
-
+  # The "Test communication" ping → pong self-test is built into Murtaugh
+  # itself (it is not a workflow rule): the binary posts the card and answers the
+  # click directly, so the round-trip cannot be redirected by config or template
+  # edits. Define your own rules below to react to other interactive buttons.
+  #
   # A trigger has three mutually exclusive action types:
   #   * reply-to-slack — produce a Slack message JSON and post it back to the
   #     interaction. The JSON can come from a `template`, the stdout of a `run`
@@ -91,9 +86,8 @@ workflow-rules:
   #           Review the open PR referenced in channel
   #           {{ index .Payload.channel "name" }} and post your findings there.
 
-# If workflow-rules is omitted entirely, Murtaugh still installs a built-in
-# ping button workflow that renders templates/ping/02-pong.json in the original
-# message thread.
+# workflow-rules may be omitted entirely; the built-in ping → pong self-test is
+# handled natively by the binary regardless.
 
 # Custom link unfurling (disabled by default — uncomment to enable). Requires
 # the link_shared bot event plus the links:read and chat:write scopes, and each

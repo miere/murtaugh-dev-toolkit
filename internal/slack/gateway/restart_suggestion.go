@@ -169,8 +169,11 @@ func (a *Gateway) handleRestartSuggestionConfirm(ctx context.Context, interactio
 	if auditReason == "" {
 		auditReason = "user confirmed restart suggestion"
 	}
+	// Thread the "restarting…" notice under the approval card the operator just
+	// clicked (messageTS), so the whole restart conversation nests where the
+	// user approved it instead of stacking loose top-level messages.
 	noticeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	a.postRestartNoticeAndSaveMarker(noticeCtx, channel, "", user, restartSourceInteractive, auditReason)
+	a.postRestartNoticeAndSaveMarker(noticeCtx, channel, messageTS, user, restartSourceInteractive, auditReason)
 	cancel()
 	if !a.restart(restartSourceInteractive, user, channel, auditReason) {
 		a.editSuggestion(ctx, channel, messageTS, restartSuggestionBusy)

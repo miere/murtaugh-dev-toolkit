@@ -46,13 +46,3 @@ func TestSlackStartupNotifierSendsPingToAdminHandle(t *testing.T) {
 		t.Fatalf("expected startup ping in DADMIN with message options, got channel=%q options=%d", api.postChannel, api.postOptions)
 	}
 }
-
-func TestLoadStartupPingBlocks(t *testing.T) {
-	blocks, err := loadStartupPingBlocks()
-	if err != nil {
-		t.Fatalf("loadStartupPingBlocks returned error: %v", err)
-	}
-	if len(blocks) != 1 {
-		t.Fatalf("expected one startup ping block, got %d", len(blocks))
-	}
-}

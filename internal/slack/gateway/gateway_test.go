@@ -52,7 +52,7 @@ func TestNewWithoutAdminUserDoesNotInstallTypedNilStartupNotifier(t *testing.T) 
 	if app.startupNotifier != nil {
 		t.Fatalf("expected no startup notifier without configuration.admin_user, got %#v", app.startupNotifier)
 	}
-	app.notifyStartup(context.Background())
+	app.notifyConnected(context.Background())
 }
 
 func TestAppMentionEventRoutesToACPChat(t *testing.T) {

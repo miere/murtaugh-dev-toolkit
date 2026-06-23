@@ -8,10 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh-dev-toolkit/internal/slack/pingcard"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 )
@@ -21,9 +24,11 @@ import (
 // can inspect what the helper actually sent rather than re-deriving it
 // from package internals.
 type recordingMessaging struct {
+	mu              sync.Mutex
 	postCalls       int
 	postChannel     string
 	postTS          string
+	postThreadTS    string
 	postReturnedTS  string
 	postReturnedErr error
 
@@ -31,6 +36,7 @@ type recordingMessaging struct {
 	updateChannel    string
 	updateTS         string
 	updateText       string
+	updateOptions    int
 	updateReturnsErr error
 
 	openCalls       int
@@ -40,8 +46,13 @@ type recordingMessaging struct {
 }
 
 func (m *recordingMessaging) PostMessageContext(_ context.Context, channelID string, options ...slack.MsgOption) (string, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.postCalls++
 	m.postChannel = channelID
+	if _, values, err := slack.UnsafeApplyMsgOptions("", channelID, "", options...); err == nil {
+		m.postThreadTS = values.Get("thread_ts")
+	}
 	if m.postReturnedErr != nil {
 		return "", "", m.postReturnedErr
 	}
@@ -49,21 +60,39 @@ func (m *recordingMessaging) PostMessageContext(_ context.Context, channelID str
 		m.postReturnedTS = "1700000000.000100"
 	}
 	m.postTS = m.postReturnedTS
-	_ = options
 	return channelID, m.postReturnedTS, nil
 }
 
+// recordedPostCalls returns the post count under the lock, for assertions made
+// while a handler goroutine may still be running.
+func (m *recordingMessaging) recordedPostCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.postCalls
+}
+
 func (m *recordingMessaging) UpdateMessageContext(_ context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.updateCalls++
 	m.updateChannel = channelID
 	m.updateTS = timestamp
+	m.updateOptions = len(options)
 	if _, values, err := slack.UnsafeApplyMsgOptions("", channelID, "", options...); err == nil {
 		m.updateText = values.Get("text")
 	}
 	if m.updateReturnsErr != nil {
 		return "", "", "", m.updateReturnsErr
 	}
-	return channelID, timestamp, restartResumedText, nil
+	return channelID, timestamp, m.updateText, nil
+}
+
+// recordedUpdateCalls returns the update count under the lock, for assertions
+// made while a handler goroutine may still be running.
+func (m *recordingMessaging) recordedUpdateCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.updateCalls
 }
 
 func (m *recordingMessaging) OpenConversationContext(_ context.Context, params *slack.OpenConversationParameters) (*slack.Channel, bool, bool, error) {
@@ -241,12 +270,27 @@ func TestConsumeResumeMarkerEditsAndClears(t *testing.T) {
 	}
 	msg := &recordingMessaging{}
 	app := &Gateway{logger: newSilentLogger(), messaging: msg, resumeStore: store}
-	app.consumeResumeMarker(context.Background())
+	if !app.consumeResumeMarker(context.Background()) {
+		t.Fatal("expected consumeResumeMarker to report it rendered the back-online card")
+	}
 	if msg.updateCalls != 1 {
 		t.Fatalf("expected one UpdateMessage call, got %d", msg.updateCalls)
 	}
 	if msg.updateChannel != "C1" || msg.updateTS != "1700000000.000100" {
 		t.Fatalf("unexpected update args: channel=%q ts=%q", msg.updateChannel, msg.updateTS)
+	}
+	// The "restarting…" notice must become the ping card: back-online copy plus
+	// the Test-communication button. The button rides in a blocks option, so the
+	// edit carries text *and* blocks (two options) rather than the old text-only
+	// edit. pingcard's own tests pin the button's action_id.
+	if !strings.Contains(msg.updateText, "back online") {
+		t.Fatalf("expected back-online text on the edit, got %q", msg.updateText)
+	}
+	if msg.updateOptions < 2 {
+		t.Fatalf("expected the edit to carry the ping card blocks (text+blocks), got %d option(s)", msg.updateOptions)
+	}
+	if pingcard.BackOnlineText == "" || !strings.Contains(pingcard.BackOnlineText, "back online") {
+		t.Fatalf("pingcard.BackOnlineText drifted from the asserted copy: %q", pingcard.BackOnlineText)
 	}
 	if got, _ := store.Load(); got != nil {
 		t.Fatalf("expected marker cleared after consume, got %#v", got)
@@ -280,6 +324,82 @@ func TestConsumeResumeMarkerClearsEvenWhenEditFails(t *testing.T) {
 	app.consumeResumeMarker(context.Background())
 	if got, _ := store.Load(); got != nil {
 		t.Fatalf("expected marker cleared even when edit fails, got %#v", got)
+	}
+}
+
+// TestNotifyConnectedResumesAndSuppressesStartupPing covers point 2a: when a
+// fresh restart marker is waiting, notifyConnected renders the back-online card
+// (one edit) and does NOT also fire the standalone startup ping.
+func TestNotifyConnectedResumesAndSuppressesStartupPing(t *testing.T) {
+	store := NewFileResumeMarkerStore(filepath.Join(t.TempDir(), "restart.json"))
+	if err := store.Save(ResumeMarker{Channel: "C1", MessageTS: "1700000000.000100", RequestedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("seed Save returned error: %v", err)
+	}
+	msg := &recordingMessaging{}
+	notifier := recordingStartupNotifier{calls: make(chan struct{}, 1)}
+	app := &Gateway{logger: newSilentLogger(), messaging: msg, resumeStore: store, startupNotifier: notifier}
+
+	app.notifyConnected(context.Background())
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && msg.recordedUpdateCalls() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if msg.recordedUpdateCalls() != 1 {
+		t.Fatalf("expected the back-online edit, got %d update calls", msg.recordedUpdateCalls())
+	}
+	// Give any (erroneous) startup ping a chance to fire, then assert it didn't.
+	select {
+	case <-notifier.calls:
+		t.Fatal("expected the startup ping to be suppressed while resuming from a restart")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestNotifyConnectedSendsStartupPingWithoutMarker is the other branch: a fresh
+// boot with no marker greets with the normal startup ping and edits nothing.
+func TestNotifyConnectedSendsStartupPingWithoutMarker(t *testing.T) {
+	store := NewFileResumeMarkerStore(filepath.Join(t.TempDir(), "absent.json"))
+	msg := &recordingMessaging{}
+	notifier := recordingStartupNotifier{calls: make(chan struct{}, 1)}
+	app := &Gateway{logger: newSilentLogger(), messaging: msg, resumeStore: store, startupNotifier: notifier}
+
+	app.notifyConnected(context.Background())
+
+	select {
+	case <-notifier.calls:
+	case <-time.After(time.Second):
+		t.Fatal("expected the startup ping to fire on a fresh boot")
+	}
+	if got := msg.recordedUpdateCalls(); got != 0 {
+		t.Fatalf("expected no message edit on a fresh boot, got %d", got)
+	}
+}
+
+// TestNotifyConnectedGreetsOnlyOnce guards the once-per-process flag against
+// repeated Connected events (re-connects, flaky links).
+func TestNotifyConnectedGreetsOnlyOnce(t *testing.T) {
+	msg := &recordingMessaging{}
+	notifier := recordingStartupNotifier{calls: make(chan struct{}, 2)}
+	app := &Gateway{
+		logger:          newSilentLogger(),
+		messaging:       msg,
+		resumeStore:     NewFileResumeMarkerStore(filepath.Join(t.TempDir(), "absent.json")),
+		startupNotifier: notifier,
+	}
+
+	app.notifyConnected(context.Background())
+	app.notifyConnected(context.Background())
+
+	select {
+	case <-notifier.calls:
+	case <-time.After(time.Second):
+		t.Fatal("expected one startup ping")
+	}
+	select {
+	case <-notifier.calls:
+		t.Fatal("expected only one greeting across repeated Connected events")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

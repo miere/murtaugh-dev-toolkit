@@ -63,10 +63,6 @@ func NewEngine(cfg config.Config, opts Options) *Engine {
 	if templateFS == nil {
 		templateFS = assets.FS
 	}
-	if len(rulesConfig) == 0 {
-		rulesConfig = defaultWorkflowRules()
-	}
-
 	names := make([]string, 0, len(rulesConfig))
 	for name := range rulesConfig {
 		names = append(names, name)
@@ -107,21 +103,6 @@ func NewEngine(cfg config.Config, opts Options) *Engine {
 	return &Engine{rules: rules, poster: poster, runner: runner, delegator: opts.Delegator, templateDir: templateDir, templateFS: templateFS, logger: logger, recorder: recorder}
 }
 
-func defaultWorkflowRules() map[string]config.WorkflowRuleConfig {
-	return map[string]config.WorkflowRuleConfig{
-		"ping-pong": {
-			RequestEvent: "interactive",
-			Match: map[string]any{
-				"type":    "block_actions",
-				"actions": []any{map[string]any{"action_id": "ping"}},
-			},
-			Triggers: []config.TriggerConfig{{
-				Type:         "reply-to-slack",
-				ReplyToSlack: &config.ReplyToSlackTriggerConfig{Template: "templates/ping/02-pong.json"},
-			}},
-		},
-	}
-}
 
 // Execute matches interaction against the configured rules and runs the
 // triggers of the first match. rawPayload is the verbatim Slack interaction

@@ -39,14 +39,20 @@ or your own) brings it back.
 
 ## The "restarting… / back online" notice
 
-Across a restart the gateway preserves a notice so the requester sees it
-complete:
+Across a restart the gateway preserves a **single** notice so the requester sees
+it complete:
 
 1. Before exiting it posts **":hourglass_flowing_sand: Restarting Murtaugh
    now…"** and writes a **resume marker** to disk —
    `$XDG_STATE_HOME/murtaugh/restart.json` (else `~/.local/state/murtaugh/restart.json`).
-2. On reconnect it consumes the marker **once** and edits that same message to
-   **":white_check_mark: Murtaugh is back online."**, then clears the marker.
+   When the restart was approved via a card (the `restart` tool or a restart
+   suggestion), this notice is posted **in a thread under that approval card**, so
+   the whole exchange nests where it was approved.
+2. On reconnect it consumes the marker **once** and edits that same message into
+   the **":white_check_mark: Murtaugh is back online."** ping card — the
+   back-online confirmation *is* the Test communication card, so there is one
+   restart message, not three. The standalone startup ping is suppressed while a
+   marker is being consumed.
 
 A marker older than **1 hour** is treated as stale and ignored (so a crash long
 after the request doesn't post a misleading "back online"). The marker is

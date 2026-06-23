@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/miere/murtaugh-dev-toolkit/internal/slack/pingcard"
 	"github.com/slack-go/slack"
 )
 
@@ -101,8 +102,7 @@ type slackMessagingAPI interface {
 }
 
 const (
-	restartNoticeText  = ":hourglass_flowing_sand: Restarting Murtaugh now…"
-	restartResumedText = ":white_check_mark: Murtaugh is back online."
+	restartNoticeText = ":hourglass_flowing_sand: Restarting Murtaugh now…"
 	// resumeMarkerMaxAge bounds how stale a marker may be before it is
 	// dropped instead of consumed. Protects against markers left behind
 	// by a crash that never produced a real restart.
@@ -146,21 +146,28 @@ func (a *Gateway) postRestartNoticeAndSaveMarker(ctx context.Context, channel, t
 	a.logger.Info("restart notice posted", "channel", marker.Channel, "ts", marker.MessageTS, "user", userID)
 }
 
-// consumeResumeMarker is invoked once after Socket Mode connects. It
-// loads the marker (if any), edits the original notice to a confirmation
-// message, and clears the marker. The marker is cleared regardless of
-// whether the edit succeeded to avoid retry storms on every reconnect.
-func (a *Gateway) consumeResumeMarker(ctx context.Context) {
+// consumeResumeMarker is invoked once after Socket Mode connects. It loads the
+// marker (if any) and, when one is present and fresh, edits the original
+// "restarting…" notice in place into the back-online ping card — so the single
+// restart message becomes the operator's communication self-test (points 2c/2d
+// of the redesign). The marker is always cleared, regardless of whether the
+// edit succeeded, to avoid retry storms on every reconnect.
+//
+// It returns true only when it actually rendered the back-online card. The
+// caller (notifyConnected) uses that to suppress the otherwise-redundant
+// standalone startup ping. A missing, stale, or un-editable marker returns
+// false, leaving the normal startup greeting to run.
+func (a *Gateway) consumeResumeMarker(ctx context.Context) bool {
 	if a.resumeStore == nil || a.messaging == nil {
-		return
+		return false
 	}
 	marker, err := a.resumeStore.Load()
 	if err != nil {
 		a.logger.Error("load resume marker failed", "error", err)
-		return
+		return false
 	}
 	if marker == nil {
-		return
+		return false
 	}
 	defer func() {
 		if err := a.resumeStore.Clear(); err != nil {
@@ -173,11 +180,15 @@ func (a *Gateway) consumeResumeMarker(ctx context.Context) {
 			"ts", marker.MessageTS,
 			"age", time.Since(marker.RequestedAt).String(),
 		)
-		return
+		return false
 	}
-	if _, _, _, err := a.messaging.UpdateMessageContext(ctx, marker.Channel, marker.MessageTS, slack.MsgOptionText(restartResumedText, false)); err != nil {
+	if _, _, _, err := a.messaging.UpdateMessageContext(ctx, marker.Channel, marker.MessageTS,
+		slack.MsgOptionText(pingcard.BackOnlineText, false),
+		slack.MsgOptionBlocks(pingcard.BuildBackOnline()...),
+	); err != nil {
 		a.logger.Error("update restart notice failed", "channel", marker.Channel, "ts", marker.MessageTS, "error", err)
-		return
+		return false
 	}
 	a.logger.Info("restart notice updated", "channel", marker.Channel, "ts", marker.MessageTS, "user", marker.RequestedBy)
+	return true
 }

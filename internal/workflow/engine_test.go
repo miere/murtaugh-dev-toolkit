@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
@@ -265,29 +266,37 @@ func TestEngineSkipsWhenNoRuleMatches(t *testing.T) {
 	}
 }
 
-func TestEngineInstallsDefaultPingPongRule(t *testing.T) {
+// TestEngineHasNoDefaultRules pins the contract that the engine ships with no
+// built-in rules: the ping → pong self-test is now owned by the gateway (in Go),
+// so a ping click reaching the engine must produce nothing. A regression that
+// reinstated a default rule here would resurrect the template-driven path this
+// change removed.
+func TestEngineHasNoDefaultRules(t *testing.T) {
 	poster := &recordingPoster{}
 	engine := NewEngine(config.Config{}, Options{Poster: poster})
 
 	if err := engine.Execute(context.Background(), pingInteraction(), nil); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
-	if len(poster.bodies) != 1 || poster.urls[0] != "https://hooks.slack.test/ping" {
-		t.Fatalf("unexpected posted responses: urls=%#v bodies=%#v", poster.urls, poster.bodies)
-	}
-	var response map[string]any
-	if err := json.Unmarshal(poster.bodies[0], &response); err != nil {
-		t.Fatalf("default pong body is not JSON: %v", err)
-	}
-	if response["thread_ts"] != "1717450123.000100" || !strings.Contains(string(poster.bodies[0]), ":recycle: The server communication is functional.") {
-		t.Fatalf("unexpected default pong body: %s", poster.bodies[0])
+	if len(poster.bodies) != 0 {
+		t.Fatalf("expected no default rule to fire, got posts=%#v", poster.bodies)
 	}
 }
 
 func TestEngineUsesEmbeddedFallbackTemplateForConfiguredRule(t *testing.T) {
 	poster := &recordingPoster{}
+	// A user-configured rule may still resolve its template from the embedded FS
+	// when it is absent on disk. Use an injected TemplateFS so the test exercises
+	// that fallback without depending on any particular shipped asset.
+	fsys := fstest.MapFS{
+		"templates/custom/reply.json": &fstest.MapFile{Data: []byte(
+			`{"response_type":"in_channel","replace_original":false,` +
+				`"thread_ts":"{{ .Payload.message.ts }}",` +
+				`"blocks":[{"type":"section","text":{"type":"mrkdwn","text":":recycle: fallback works."}}]}`,
+		)},
+	}
 	engine := NewEngine(config.Config{WorkflowRules: map[string]config.WorkflowRuleConfig{
-		"startup-ping-pong": {
+		"reply-rule": {
 			RequestEvent: "interactive",
 			Match: map[string]any{
 				"type":    "block_actions",
@@ -295,16 +304,23 @@ func TestEngineUsesEmbeddedFallbackTemplateForConfiguredRule(t *testing.T) {
 			},
 			Triggers: []config.TriggerConfig{{
 				Type:         "reply-to-slack",
-				ReplyToSlack: &config.ReplyToSlackTriggerConfig{Template: "templates/ping/02-pong.json"},
+				ReplyToSlack: &config.ReplyToSlackTriggerConfig{Template: "templates/custom/reply.json"},
 			}},
 		},
-	}}, Options{Poster: poster})
+	}}, Options{Poster: poster, TemplateFS: fsys})
 
 	if err := engine.Execute(context.Background(), pingInteraction(), nil); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
-	if len(poster.bodies) != 1 || !strings.Contains(string(poster.bodies[0]), ":recycle: The server communication is functional.") {
+	if len(poster.bodies) != 1 || !strings.Contains(string(poster.bodies[0]), ":recycle: fallback works.") {
 		t.Fatalf("unexpected fallback template response: %#v", poster.bodies)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(poster.bodies[0], &response); err != nil {
+		t.Fatalf("fallback body is not JSON: %v", err)
+	}
+	if response["thread_ts"] != "1717450123.000100" {
+		t.Fatalf("expected rendered thread_ts from payload, got %v", response["thread_ts"])
 	}
 }
 

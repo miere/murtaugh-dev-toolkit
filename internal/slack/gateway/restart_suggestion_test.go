@@ -140,6 +140,14 @@ func TestHandleRestartSuggestionConfirmAdminFiresTrigger(t *testing.T) {
 	if msg.postCalls != 1 {
 		t.Fatalf("expected the restart-notice post, got %d", msg.postCalls)
 	}
+	// The notice must be threaded under the approval card the operator clicked
+	// (its message ts), so the restart conversation nests where it was approved.
+	if msg.postThreadTS != "1700000000.000100" {
+		t.Fatalf("expected restart notice threaded under approval card, got thread_ts=%q", msg.postThreadTS)
+	}
+	if marker, _ := store.Load(); marker == nil || marker.ThreadTS != "1700000000.000100" {
+		t.Fatalf("expected marker to record the approval-card thread, got %#v", marker)
+	}
 	if msg.updateCalls != 1 || msg.updateChannel != "C1" || msg.updateTS != "1700000000.000100" {
 		t.Fatalf("expected suggestion edit for confirm, got calls=%d channel=%q ts=%q", msg.updateCalls, msg.updateChannel, msg.updateTS)
 	}

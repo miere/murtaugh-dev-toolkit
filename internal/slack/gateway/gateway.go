@@ -77,7 +77,6 @@ type Gateway struct {
 	unfurl          *LinkUnfurlHandler
 	unfurlTimeout   time.Duration
 	startupNotifier StartupNotifier
-	startupPingSent bool
 	logger          *slog.Logger
 	// cfg holds the configuration values consulted at runtime. Authz entries
 	// (admin_user, allowed_users) start out as configured (IDs or handles) and
@@ -97,11 +96,12 @@ type Gateway struct {
 	// tests can substitute a narrow fake without re-implementing the
 	// full Slack client.
 	messaging slackMessagingAPI
-	// resumeConsumed flips to true the first time consumeResumeMarker
+	// connectHandled flips to true the first time the connect-time greeting
 	// runs after a successful socket connect. Slack may emit multiple
-	// EventTypeConnected events across the daemon's life (re-connects,
-	// flaky links); we only want to act on the marker once per process.
-	resumeConsumed bool
+	// EventTypeConnected events across the daemon's life (re-connects, flaky
+	// links); we only want to greet — resume notice or startup ping — once per
+	// process. See notifyConnected.
+	connectHandled bool
 	// configWatchPaths lists files whose mtime, when it advances,
 	// triggers a restart suggestion to the admin. Empty (the default)
 	// disables the watcher entirely. The composition root populates
@@ -543,8 +543,7 @@ func (a *Gateway) handleEvent(ctx context.Context, event socketmode.Event) {
 	case socketmode.EventTypeConnected:
 		a.logger.Info("Slack socket connected")
 		a.recordConnection(ctx, journal.LevelInfo, "connected", "Slack socket connected", nil)
-		a.notifyStartup(ctx)
-		a.notifyResume(ctx)
+		a.notifyConnected(ctx)
 	case socketmode.EventTypeConnecting, socketmode.EventTypeHello:
 		a.logger.Debug("socket mode lifecycle event", "type", event.Type)
 	case socketmode.EventTypeDisconnect:
@@ -630,33 +629,38 @@ func (a *Gateway) resolveAllowSet(ctx context.Context) error {
 	return nil
 }
 
-func (a *Gateway) notifyStartup(ctx context.Context) {
-	if a.startupNotifier == nil || a.startupPingSent {
+// notifyConnected runs the once-per-process, connect-time Slack greeting.
+// Exactly one of two things happens, decided by whether a fresh restart marker
+// is waiting on disk:
+//
+//   - Resuming from a restart: the "restarting…" notice is edited in place into
+//     the back-online ping card, and the standalone startup ping is suppressed
+//     (the operator already has a card to click — see point 2a of the redesign).
+//   - Fresh boot / crash / no marker: the normal startup ping card is posted.
+//
+// Resolving the two against one loaded marker is what makes them mutually
+// exclusive — a clean single greeting instead of three stacked messages. Slack
+// may emit several Connected events per process (re-connects, flaky links);
+// connectHandled guards against repeating the greeting.
+func (a *Gateway) notifyConnected(ctx context.Context) {
+	if a.connectHandled {
 		return
 	}
-	a.startupPingSent = true
+	a.connectHandled = true
 	go func() {
-		pingCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		c, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		if err := a.startupNotifier.NotifyStartup(pingCtx); err != nil {
+		// A consumed marker renders the back-online ping card itself, so the
+		// standalone startup ping would be redundant — skip it.
+		if a.consumeResumeMarker(c) {
+			return
+		}
+		if a.startupNotifier == nil {
+			return
+		}
+		if err := a.startupNotifier.NotifyStartup(c); err != nil {
 			a.logger.Error("startup Slack ping failed", "error", err)
 		}
-	}()
-}
-
-// notifyResume runs the once-per-process consumption of the on-disk
-// resume marker. Slack may emit several Connected events for one daemon
-// (re-connects, network blips); the resumeConsumed flag guards against
-// re-editing the same notice on every reconnect.
-func (a *Gateway) notifyResume(ctx context.Context) {
-	if a.resumeConsumed {
-		return
-	}
-	a.resumeConsumed = true
-	go func() {
-		resumeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		a.consumeResumeMarker(resumeCtx)
 	}()
 }
 
@@ -678,6 +682,18 @@ func (a *Gateway) handleInteractive(event socketmode.Event) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			a.handleRestartSuggestionInteraction(ctx, interaction)
+		}()
+		return
+	}
+	// The built-in communication self-test ("Test communication" button) is
+	// handled here, before the workflow engine, so the ping → pong round-trip is
+	// owned entirely by the binary and cannot be redirected by a configured
+	// workflow rule or an on-disk template.
+	if isPingInteraction(interaction) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			a.handlePingInteraction(ctx, interaction)
 		}()
 		return
 	}
