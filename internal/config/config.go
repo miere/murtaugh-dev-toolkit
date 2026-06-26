@@ -203,8 +203,11 @@ type AgentProfile struct {
 	// listed is removed (bespoke skills are never touched). Exporting a skill
 	// opts it out of the in-binary blind for this agent.
 	ExportSkillsToFS []string `yaml:"export_skills_to_fs"`
-	// MCPServers lists names from the top-level mcp_servers block to attach to
-	// this agent. Each contributes its remote tools to the agent's toolset.
+	// MCPServers historically selected which top-level mcp_servers to attach to
+	// this agent. As of spec 015 the global mcp_servers block is authoritative —
+	// every agent attaches all of them — so this per-agent list is no longer a
+	// selector. It is still parsed and validated (names must exist) for backward
+	// compatibility, but it no longer narrows the set.
 	MCPServers []string `yaml:"mcp_servers"`
 	// MaxTurns bounds tool-call iterations in a single prompt. 0 uses a default.
 	MaxTurns int `yaml:"max_turns"`

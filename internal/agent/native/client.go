@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -145,20 +146,9 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 		logger = slog.Default()
 	}
 
-	var serverCfgs []mcpclient.ServerConfig
-	for _, ref := range profile.MCPServers {
-		sc, ok := deps.MCPServers[ref]
-		if !ok {
-			continue // validated at config load; skip defensively
-		}
-		serverCfgs = append(serverCfgs, mcpclient.ServerConfig{
-			Name:    ref,
-			Command: sc.Command,
-			Args:    sc.Args,
-			Env:     expandEnvMap(sc.Env),
-			URL:     sc.URL,
-		})
-	}
+	// Global mcp_servers are authoritative: every agent attaches all of them, so
+	// the per-agent profile.MCPServers list is no longer a selector (spec 015 §4).
+	serverCfgs := MCPServerConfigs(deps.MCPServers)
 
 	// Advertise the available skills in the (static, cacheable) system prompt —
 	// but only when the agent can actually load them, i.e. the skills tool is in
@@ -429,6 +419,34 @@ func containsString(xs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// MCPServerConfigs converts the global mcp_servers definitions into sorted,
+// env-expanded mcpclient.ServerConfig values. Global servers are authoritative —
+// every agent (native and the ACP aggregator) attaches all of them — so this
+// takes the whole map rather than a per-agent selector. Sorted by name for
+// deterministic ordering across runs.
+func MCPServerConfigs(servers map[string]config.MCPServerConfig) []mcpclient.ServerConfig {
+	if len(servers) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]mcpclient.ServerConfig, 0, len(names))
+	for _, name := range names {
+		sc := servers[name]
+		out = append(out, mcpclient.ServerConfig{
+			Name:    name,
+			Command: sc.Command,
+			Args:    sc.Args,
+			Env:     expandEnvMap(sc.Env),
+			URL:     sc.URL,
+		})
+	}
+	return out
 }
 
 // expandEnvMap expands ${VAR} references in an MCP server's env values against
