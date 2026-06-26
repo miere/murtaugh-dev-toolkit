@@ -3,13 +3,16 @@ package agent
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -634,6 +637,14 @@ func (c *ProcessClient) deliverNotification(notification rpcNotification) {
 		ch <- Event{Type: EventTask, Task: task}
 		return
 	}
+	// A single agent message can carry binary content blocks (an image, audio, or
+	// an embedded resource blob) alongside its text. Surface each as a first-class
+	// attachment the chat handler uploads — emitted ahead of the text so the file
+	// lands before the prose that introduces it. Block on the send for the same
+	// back-pressure reason as text/task above.
+	for _, a := range extractAttachments(notification.Params) {
+		ch <- Event{Type: EventAttachment, Attachment: a}
+	}
 	event := Event{Type: EventText, Text: extractNotificationText(notification.Params)}
 	if event.Text == "" {
 		// An update we neither rendered as a task nor recognised as agent text.
@@ -697,6 +708,123 @@ func extractNotificationText(raw json.RawMessage) string {
 		return strings.Join(extractStrings(content), "")
 	}
 	return strings.Join(extractStrings(updateMap), "")
+}
+
+// extractAttachments pulls binary content blocks (image, audio, or an embedded
+// resource blob) out of an agent_message_chunk/agent_message session/update and
+// decodes them into AttachmentEvents the chat handler can upload. It is
+// deliberately limited to agent messages — content on user-message or tool-call
+// updates is not the agent replying with a file — and to embedded bytes: a
+// resource_link block carries only a URI (no bytes) and is left to the text path
+// to mention. Anything malformed (bad base64, missing data) is skipped rather
+// than failing the turn.
+func extractAttachments(raw json.RawMessage) []*AttachmentEvent {
+	var value any
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	m, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	update, ok := m["update"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	if su, _ := update["sessionUpdate"].(string); su != "agent_message_chunk" && su != "agent_message" {
+		return nil
+	}
+	content, ok := update["content"]
+	if !ok {
+		return nil
+	}
+	var out []*AttachmentEvent
+	for _, block := range contentBlocks(content) {
+		if a := attachmentFromBlock(block); a != nil {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// contentBlocks normalises an ACP content field — which may be a single block
+// object or an array of them — into a slice of block maps.
+func contentBlocks(content any) []map[string]any {
+	switch c := content.(type) {
+	case []any:
+		out := make([]map[string]any, 0, len(c))
+		for _, item := range c {
+			if bm, ok := item.(map[string]any); ok {
+				out = append(out, bm)
+			}
+		}
+		return out
+	case map[string]any:
+		return []map[string]any{c}
+	}
+	return nil
+}
+
+// attachmentFromBlock decodes one content block into an AttachmentEvent, or nil
+// when the block is text, a bare link, or otherwise carries no embedded bytes.
+func attachmentFromBlock(block map[string]any) *AttachmentEvent {
+	switch t, _ := block["type"].(string); t {
+	case "image", "audio":
+		data, _ := block["data"].(string)
+		mimeType, _ := block["mimeType"].(string)
+		return decodeAttachment(data, mimeType, "", t)
+	case "resource":
+		res, ok := block["resource"].(map[string]any)
+		if !ok {
+			return nil
+		}
+		blob, _ := res["blob"].(string)
+		if blob == "" {
+			return nil // a text resource (or bare link) — nothing to upload
+		}
+		mimeType, _ := res["mimeType"].(string)
+		uri, _ := res["uri"].(string)
+		return decodeAttachment(blob, mimeType, uri, "resource")
+	default:
+		return nil
+	}
+}
+
+// decodeAttachment base64-decodes an embedded blob and builds an AttachmentEvent
+// with a best-effort filename derived from the resource URI or the mimetype.
+// Returns nil when the payload is empty or not valid base64.
+func decodeAttachment(b64, mimeType, uri, kind string) *AttachmentEvent {
+	b64 = strings.TrimSpace(b64)
+	if b64 == "" {
+		return nil
+	}
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	return &AttachmentEvent{
+		Filename: attachmentFilename(uri, mimeType, kind),
+		Mimetype: mimeType,
+		Data:     data,
+	}
+}
+
+// attachmentFilename derives a download name: the URI's base name when present,
+// otherwise "<kind><ext>" with the extension inferred from the mimetype.
+func attachmentFilename(uri, mimeType, kind string) string {
+	if uri != "" {
+		if base := path.Base(uri); base != "." && base != "/" && base != "" {
+			return base
+		}
+	}
+	name := kind
+	if name == "" {
+		name = "attachment"
+	}
+	if exts, err := mime.ExtensionsByType(mimeType); err == nil && len(exts) > 0 {
+		return name + exts[0]
+	}
+	return name
 }
 
 // extractStopReason pulls the agent's stop reason out of a session/prompt

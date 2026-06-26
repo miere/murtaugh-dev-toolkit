@@ -42,9 +42,9 @@ agents:
     provider: gemini
     model: gemini-2.5-pro
     api_key_env: GEMINI_API_KEY
-    workdir: ${HOME}/work          # roots the files/terminal tools
+    workdir: ${HOME}/work          # roots the files/terminal/attach tools
     system_prompt_file: prompts/default.md
-    tools: [files, terminal, skills, slack, jobs, ask, present_plan]
+    tools: [files, terminal, skills, slack, jobs, ask, present_plan, attach]
     mcp_servers: [vaultre]
     max_turns: 40
     context_limit: 1000000
@@ -88,10 +88,10 @@ the `murtaugh-setup` skill's `setup_env`).
 | `model` | yes | Provider model id (e.g. `gemini-2.5-pro`, `glm-4.6`). |
 | `api_key_env` | yes | Name of the `.env` variable holding the API key (e.g. `GEMINI_API_KEY`). The credential never appears in YAML. |
 | `base_url` | no | Endpoint override for a compatible third party (Z.ai, DeepSeek, Kimi, self-hosted). Empty uses the provider default. |
-| `workdir` | no | Working directory that roots the files/terminal tools. Defaults to the workspace (`~/.config/murtaugh`) when unset. |
+| `workdir` | no | Working directory that roots the files/terminal/attach tools. Defaults to the workspace (`~/.config/murtaugh`) when unset. |
 | `system_prompt` | no | Inline system prompt. Mutually exclusive with `system_prompt_file`; when both are empty a built-in default is used. |
 | `system_prompt_file` | no | Path (resolved against the config dir) to a file holding the system prompt. Mutually exclusive with `system_prompt`. |
-| `tools` | no | Allowlist of tool groups the agent may use — native groups (`files`, `terminal`) plus registry namespaces (`skills`, `slack`, `jobs`, `ask`, `present_plan`, …) and the `manage` skills-visibility grant. Empty means only the always-on set. |
+| `tools` | no | Allowlist of tool groups the agent may use — native groups (`files`, `terminal`, `attach`) plus registry namespaces (`skills`, `slack`, `jobs`, `ask`, `present_plan`, …) and the `manage` skills-visibility grant. `attach` lets the agent return a workspace file (report, image, export) to the user as a real downloadable upload, confined to `workdir` like the files tools. Empty means only the always-on set. |
 | `export_skills_to_fs` | no | Bundled (`murtaugh-*`) skills to write into this agent's `workdir` so a filesystem-discovering backend (e.g. a Claude-based ACP agent) can load them. Empty (default) keeps the bundled skills in-binary only — readable solely through the gated `skills` tool, never by `files`/`terminal`. `[all]` exports every bundled skill. See below. |
 | `mcp_servers` | no | Names from the top-level `mcp_servers` block to attach. Each contributes its remote tools. |
 | `max_turns` | no | Tool-call iterations allowed in a single prompt. `0` uses a default. |

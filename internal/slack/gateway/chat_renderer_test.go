@@ -21,6 +21,7 @@ func newTestSectionRenderer(api *fakeStreamAPI, msgr *fakeStatusMessenger) *sect
 		func() *StatusLineWriter {
 			return NewStatusLineWriter(msgr, "C1", "100.0", time.Hour, discardLogger())
 		},
+		nil, "C1", "100.0",
 		discardLogger(),
 	)
 }

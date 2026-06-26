@@ -2,6 +2,7 @@ package native
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
@@ -62,6 +63,60 @@ func eventTask(id, title string, status agent.TaskStatus, output string) agent.E
 			Output: output,
 		},
 	}
+}
+
+// eventAttachment builds an agent.Event carrying a file the agent is delivering
+// to the user as part of its reply. The chat handler uploads it into the turn's
+// thread; it is never fed back to the model.
+func eventAttachment(a *agent.AttachmentEvent) agent.Event {
+	return agent.Event{Type: agent.EventAttachment, Attachment: a}
+}
+
+// attachmentsFromResult extracts the attachment(s) a tool returned, if any. A
+// tool that delivers a file returns *agent.AttachmentEvent (or a slice of them);
+// every other result yields nil and falls through to the normal text tool-result
+// path. A plain agent.AttachmentEvent value is tolerated too, so a tool need not
+// remember to return a pointer.
+func attachmentsFromResult(v any) []*agent.AttachmentEvent {
+	switch a := v.(type) {
+	case *agent.AttachmentEvent:
+		if a != nil {
+			return []*agent.AttachmentEvent{a}
+		}
+	case []*agent.AttachmentEvent:
+		out := make([]*agent.AttachmentEvent, 0, len(a))
+		for _, x := range a {
+			if x != nil {
+				out = append(out, x)
+			}
+		}
+		return out
+	case agent.AttachmentEvent:
+		cp := a
+		return []*agent.AttachmentEvent{&cp}
+	}
+	return nil
+}
+
+// attachmentAck is the tool-result text fed back to the model after a tool's
+// attachments were delivered to the user. The model never sees the bytes — only
+// that the files were sent — so it can continue or close the turn coherently.
+func attachmentAck(atts []*agent.AttachmentEvent) string {
+	names := make([]string, 0, len(atts))
+	for _, a := range atts {
+		name := a.Filename
+		if name == "" {
+			name = a.Title
+		}
+		if name == "" {
+			name = "file"
+		}
+		names = append(names, name)
+	}
+	if len(names) == 1 {
+		return fmt.Sprintf("Delivered attachment %q to the user.", names[0])
+	}
+	return fmt.Sprintf("Delivered %d attachments to the user: %s.", len(names), strings.Join(names, ", "))
 }
 
 // eventComplete builds the terminal success agent.Event, carrying the loop's

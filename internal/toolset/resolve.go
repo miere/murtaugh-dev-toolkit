@@ -2,7 +2,7 @@
 // from its agents.yaml `tools:` allowlist plus the remote tools of any MCP
 // servers it attaches. It is the join point where Murtaugh's three tool sources
 // converge onto one currency (tools.Tool): the synthesized native tools
-// (files/terminal/skills, rooted per agent), the in-process registry tools
+// (files/terminal/skills/attach, rooted per agent), the in-process registry tools
 // (slack/jobs/…, selected by the allowlist), and the external MCP tools.
 //
 // The native file/terminal tools are synthesized HERE, per agent, rather than
@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh-dev-toolkit/internal/tools/attach"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools/files"
 	fedit "github.com/miere/murtaugh-dev-toolkit/internal/tools/files/edit"
 	fls "github.com/miere/murtaugh-dev-toolkit/internal/tools/files/ls"
@@ -34,6 +35,7 @@ const (
 	GroupFiles    = "files"
 	GroupTerminal = "terminal"
 	GroupSkills   = "skills"
+	GroupAttach   = "attach"
 )
 
 // GroupManage is a capability grant that adds no tool of its own — it exists
@@ -68,7 +70,7 @@ type Deps struct {
 
 // Resolve builds the toolset for a native agent. allow is the agent's `tools:`
 // allowlist; mcpTools are the already-resolved remote tools from its attached
-// MCP servers (always included). Native groups (files/terminal/skills) are
+// MCP servers (always included). Native groups (files/terminal/skills/attach) are
 // synthesized; every other allowlist entry selects registry tools whose name
 // equals the entry or whose namespace (the part before the first '.') equals it
 // — so "slack" pulls in slack.send-msg, slack.fetch-msgs, … and "ping" pulls in
@@ -124,6 +126,14 @@ func Resolve(allow []string, mcpTools []tools.Tool, deps Deps) ([]tools.Tool, er
 				return nil, fmt.Errorf("toolset: workdir is required for the %q tool", GroupTerminal)
 			}
 			add(terminal.NewWithApproval(deps.WorkDir, deps.TerminalApproval))
+		case GroupAttach:
+			// attach delivers a workspace file to the user as a reply attachment;
+			// it shares the files tools' root so it cannot exfiltrate host files
+			// outside the agent's workdir.
+			if err := ensureFileRoot(); err != nil {
+				return nil, err
+			}
+			add(attach.New(root))
 		case GroupSkills:
 			if deps.ManagedSkillsFS == nil {
 				return nil, fmt.Errorf("toolset: managed skills FS is required for the %q tool", GroupSkills)

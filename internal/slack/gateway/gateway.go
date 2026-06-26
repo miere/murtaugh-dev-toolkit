@@ -312,7 +312,8 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		).WithIdleTimeout(cfg.ACP.EffectiveRequestTimeout()).WithSessionLogger(sessionLog).
 			WithProgressDisplay(cfg.EffectiveProgressDisplay).WithStatusMessenger(api).
 			WithBackfiller(NewThreadBackfiller(api, botUserID, logger)).
-			WithFileFetcher(api)
+			WithFileFetcher(api).
+			WithUploader(slackAttachmentUploader{api: api})
 	}
 	// One shared runner backs every delegate-to-agent surface (jobs, workflow
 	// triggers, unfurls). Each delegation spins its own isolated agent process,

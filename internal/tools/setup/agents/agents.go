@@ -57,7 +57,7 @@ func (t *Tool) InputSchema() *jsonschema.Schema {
 			"model":              {Type: "string", Description: "Native: provider model id (e.g. gemini-2.5-pro)."},
 			"base_url":           {Type: "string", Description: "Native: endpoint override for compat providers (Z.ai/DeepSeek/Kimi)."},
 			"api_key_env":        {Type: "string", Description: "Native: name of the .env variable holding the API key."},
-			"tools":              {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "Native: tool allowlist (files, terminal, skills, and registry namespaces)."},
+			"tools":              {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "Native: tool allowlist (files, terminal, skills, attach, and registry namespaces)."},
 			"mcp_servers":        {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "Native: names of mcp_servers entries to attach."},
 			"system_prompt_file": {Type: "string", Description: "Native: path (relative to config dir) to the system prompt file."},
 			"context_limit":      {Type: "integer", Description: "Native: token budget for compaction. 0 uses a per-family default."},

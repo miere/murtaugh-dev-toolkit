@@ -65,12 +65,26 @@ func TestResolve_NativeGroups(t *testing.T) {
 	}
 }
 
+func TestResolve_AttachGroup(t *testing.T) {
+	dir := t.TempDir()
+	got, err := Resolve([]string{"attach"}, nil, Deps{WorkDir: dir})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !names(got)["attach"] {
+		t.Fatalf("expected attach tool, got %v", names(got))
+	}
+}
+
 func TestResolve_MissingWorkdirForFiles(t *testing.T) {
 	if _, err := Resolve([]string{"files"}, nil, Deps{}); err == nil {
 		t.Fatal("expected error when files group requested without a workdir")
 	}
 	if _, err := Resolve([]string{"terminal"}, nil, Deps{}); err == nil {
 		t.Fatal("expected error when terminal requested without a workdir")
+	}
+	if _, err := Resolve([]string{"attach"}, nil, Deps{}); err == nil {
+		t.Fatal("expected error when attach requested without a workdir")
 	}
 	if _, err := Resolve([]string{"skills"}, nil, Deps{}); err == nil {
 		t.Fatal("expected error when skills requested without a skills_dir")

@@ -33,7 +33,7 @@ agents:
     # base_url:                 # set for Z.ai/DeepSeek/Kimi compat endpoints
     workdir: ${HOME}/work       # roots the files/terminal tools
     system_prompt_file: prompts/default.md   # or inline `system_prompt: |`
-    tools: [files, terminal, skills, slack, jobs, ask, present_plan]
+    tools: [files, terminal, skills, slack, jobs, ask, present_plan, attach]
     # `ask` lets the agent put a question (buttons, or a multi/free-text form) to
     # you and WAIT for the answer. `present_plan` shows a plan with Proceed /
     # Revise / Cancel and WAITS for sign-off before multi-step work.

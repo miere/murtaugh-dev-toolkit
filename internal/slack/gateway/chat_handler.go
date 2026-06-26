@@ -77,6 +77,10 @@ type ChatHandler struct {
 	// folded into the prompt. nil disables attachment handling (tests that do
 	// not wire Slack); the gateway always supplies it in production.
 	fileFetcher fileFetcher
+	// uploader delivers agent-produced attachments (EventAttachment) into the
+	// turn's thread. nil disables outbound attachments (tests that do not wire
+	// Slack); the gateway always supplies it in production.
+	uploader attachmentUploader
 }
 
 // threadBackfiller renders a Slack thread into a transcript block for a cold
@@ -169,6 +173,17 @@ func (h *ChatHandler) WithFileFetcher(f fileFetcher) *ChatHandler {
 	return h
 }
 
+// WithUploader wires the surface used to deliver agent-produced attachments into
+// the turn's thread. Returns the handler for chaining. nil (the default) disables
+// outbound attachments.
+func (h *ChatHandler) WithUploader(u attachmentUploader) *ChatHandler {
+	if u == nil {
+		return h
+	}
+	h.uploader = u
+	return h
+}
+
 // resolveProgressDisplay returns the configured mode for the agent, defaulting
 // to simplified when no resolver is wired or it returns an empty value.
 func (h *ChatHandler) resolveProgressDisplay(agent string) config.ProgressDisplay {
@@ -188,13 +203,16 @@ func (h *ChatHandler) resolveProgressDisplay(agent string) config.ProgressDispla
 func (h *ChatHandler) newChatRenderer(mode config.ProgressDisplay, channelID, threadTS string, opts StreamWriterOptions) chatRenderer {
 	if mode == config.ProgressDisplayTasks {
 		writer := NewStreamWriter(h.api, channelID, opts)
-		return newWovenRenderer(writer, NewTaskCardWriter(h.api, writer, 0, h.logger), h.logger)
+		return newWovenRenderer(writer, NewTaskCardWriter(h.api, writer, 0, h.logger), h.uploader, channelID, threadTS, h.logger)
 	}
 	return newSectionRenderer(
 		func() *StreamWriter { return NewStreamWriter(h.api, channelID, opts) },
 		func() *StatusLineWriter {
 			return NewStatusLineWriter(h.statusMessenger, channelID, threadTS, 0, h.logger)
 		},
+		h.uploader,
+		channelID,
+		threadTS,
 		h.logger,
 	)
 }
@@ -292,6 +310,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 		respBuf    strings.Builder
 		chunkSeen  int
 		byteSeen   int
+		attachSeen int
 		timedOut   bool
 		turnErr    error
 		sessionID  string
@@ -406,14 +425,16 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 	// legible. Shared by the explicit EventComplete and channel-closed paths.
 	finish := func() error {
 		emptyNote := ""
-		if byteSeen == 0 {
+		// A turn that delivered a file but no prose is not empty — suppress the
+		// note so an attachment-only reply does not look like a failed turn.
+		if byteSeen == 0 && attachSeen == 0 {
 			emptyNote = emptyReplyNote(stopReason)
 			h.logger.Warn("agent turn completed with no agent text", "source", req.Source, "channel", req.ChannelID, "stop_reason", stopReason)
 		}
 		if err := renderer.Finish(ctx, emptyNote); err != nil {
 			return err
 		}
-		h.logger.Info("completed agent chat response", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "chunks", chunkSeen, "bytes", byteSeen, "stop_reason", stopReason)
+		h.logger.Info("completed agent chat response", "source", req.Source, "channel", req.ChannelID, "duration", time.Since(startedAt), "chunks", chunkSeen, "bytes", byteSeen, "attachments", attachSeen, "stop_reason", stopReason)
 		return nil
 	}
 	// Idle watchdog: a turn is bounded by inactivity, not total wall-clock. Every
@@ -482,6 +503,20 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 				}
 				if err := renderer.Task(ctx, event.Task); err != nil {
 					return err
+				}
+			case agent.EventAttachment:
+				if event.Attachment == nil {
+					continue
+				}
+				// Best-effort: a failed upload is logged but never aborts the turn —
+				// the text reply still matters. attachSeen counts only successful
+				// deliveries, so a failed attachment-only turn still surfaces the
+				// empty-reply note rather than going silent.
+				if err := renderer.Attachment(ctx, event.Attachment); err != nil {
+					h.logger.Warn("failed to deliver agent attachment", "source", req.Source, "channel", req.ChannelID, "filename", event.Attachment.Filename, "error", err)
+				} else {
+					attachSeen++
+					h.logger.Info("delivered agent attachment", "source", req.Source, "channel", req.ChannelID, "filename", event.Attachment.Filename)
 				}
 			case agent.EventError:
 				// A caller interrupt (new message / /stop) surfaces here as a context

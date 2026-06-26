@@ -322,6 +322,19 @@ func (l *Loop) invokeTool(ctx context.Context, call llm.ToolCall, emit func(agen
 		return msg
 	}
 
+	// A tool that delivers a file (e.g. `attach`) returns attachment(s) rather
+	// than text: emit each as an EventAttachment for the chat handler to upload,
+	// and feed only an acknowledgement back to the model — the bytes are for the
+	// user, not the conversation array.
+	if atts := attachmentsFromResult(result); len(atts) > 0 {
+		for _, a := range atts {
+			emit(eventAttachment(a))
+		}
+		ack := attachmentAck(atts)
+		emit(eventTask(call.ID, call.Name, agent.TaskStatusComplete, ack))
+		return ack
+	}
+
 	out := toolResultString(result)
 	emit(eventTask(call.ID, call.Name, agent.TaskStatusComplete, out))
 	return out

@@ -55,17 +55,47 @@ type Event struct {
 	StopReason string
 	Error      error
 	Task       *TaskEvent
+	// Attachment carries a file the agent wants delivered to the user as a
+	// first-class part of its reply (EventAttachment), independent of the text
+	// stream. Both backends emit it: the native loop when a tool yields a file,
+	// the ACP client when an agent message carries a binary content block. The
+	// chat handler uploads it into the turn's thread.
+	Attachment *AttachmentEvent
 }
 
 type EventType string
 
 const (
-	EventText     EventType = "text"
-	EventStatus   EventType = "status"
-	EventComplete EventType = "complete"
-	EventError    EventType = "error"
-	EventTask     EventType = "task"
+	EventText       EventType = "text"
+	EventStatus     EventType = "status"
+	EventComplete   EventType = "complete"
+	EventError      EventType = "error"
+	EventTask       EventType = "task"
+	EventAttachment EventType = "attachment"
 )
+
+// AttachmentEvent is a file the agent is sending to the user as part of its
+// reply. It is the backend-neutral carrier consumed by the Slack chat handler,
+// which uploads it into the turn's thread. The bytes come from exactly one of
+// two sources: Path (a file on the daemon host, produced by an in-process
+// native tool) or Data (in-memory bytes decoded from an ACP content block).
+// When both are set Data wins; when neither is set the attachment is dropped.
+type AttachmentEvent struct {
+	// Filename is the suggested download name shown to the user. When empty the
+	// handler derives one from the path or mimetype.
+	Filename string
+	// Title is an optional display title; defaults to the filename when empty.
+	Title string
+	// Comment is an optional message posted alongside the file (the caption).
+	Comment string
+	// Mimetype is the optional content type, used to derive a filename extension
+	// when Filename is empty.
+	Mimetype string
+	// Path is a file on the daemon host to upload. Used by native tools.
+	Path string
+	// Data is the in-memory file content to upload. Used by ACP attachments.
+	Data []byte
+}
 
 type TaskStatus string
 

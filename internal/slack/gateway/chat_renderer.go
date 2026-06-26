@@ -29,6 +29,9 @@ type chatRenderer interface {
 	Text(ctx context.Context, text string) error
 	// Task renders a tool/task progress update.
 	Task(ctx context.Context, ev *agent.TaskEvent) error
+	// Attachment delivers a file the agent produced into the turn's thread, as a
+	// separate Slack upload alongside the streamed reply.
+	Attachment(ctx context.Context, a *agent.AttachmentEvent) error
 	// Note appends a non-reply notice (idle-timeout marker) to the reply surface.
 	Note(ctx context.Context, text string) error
 	// Finish finalises a successful turn, closing every open section. emptyNote,
@@ -50,21 +53,31 @@ type chatRenderer interface {
 // carrying both the reply text and the task cards (via TaskCardWriter). It is
 // used for the `tasks` progress mode.
 type wovenRenderer struct {
-	writer  *StreamWriter
-	tasks   progressRenderer
-	running map[string]agent.TaskStatus
-	logger  *slog.Logger
+	writer    *StreamWriter
+	tasks     progressRenderer
+	running   map[string]agent.TaskStatus
+	uploader  attachmentUploader
+	channelID string
+	threadTS  string
+	logger    *slog.Logger
 }
 
-func newWovenRenderer(writer *StreamWriter, tasks progressRenderer, logger *slog.Logger) *wovenRenderer {
+func newWovenRenderer(writer *StreamWriter, tasks progressRenderer, uploader attachmentUploader, channelID, threadTS string, logger *slog.Logger) *wovenRenderer {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &wovenRenderer{writer: writer, tasks: tasks, running: map[string]agent.TaskStatus{}, logger: logger}
+	return &wovenRenderer{writer: writer, tasks: tasks, running: map[string]agent.TaskStatus{}, uploader: uploader, channelID: channelID, threadTS: threadTS, logger: logger}
 }
 
 func (r *wovenRenderer) Text(ctx context.Context, text string) error {
 	return r.writer.Append(ctx, text)
+}
+
+// Attachment uploads the file as a separate Slack message. The woven reply lives
+// in one continuously-edited message, so a file is necessarily a sibling post; it
+// lands after the reply message's initial post.
+func (r *wovenRenderer) Attachment(ctx context.Context, a *agent.AttachmentEvent) error {
+	return deliverAttachment(ctx, r.uploader, r.channelID, r.threadTS, a)
 }
 
 func (r *wovenRenderer) Task(ctx context.Context, ev *agent.TaskEvent) error {
@@ -168,9 +181,12 @@ const (
 // messages, alternating between streamed text messages and in-place tool blocks
 // as the stream switches between text and tool activity.
 type sectionRenderer struct {
-	newText  func() *StreamWriter
-	newBlock func() *StatusLineWriter
-	logger   *slog.Logger
+	newText   func() *StreamWriter
+	newBlock  func() *StatusLineWriter
+	uploader  attachmentUploader
+	channelID string
+	threadTS  string
+	logger    *slog.Logger
 
 	mode   sectionMode
 	text   *StreamWriter
@@ -178,11 +194,19 @@ type sectionRenderer struct {
 	titles []string // distinct tool titles in the current block, for its summary
 }
 
-func newSectionRenderer(newText func() *StreamWriter, newBlock func() *StatusLineWriter, logger *slog.Logger) *sectionRenderer {
+func newSectionRenderer(newText func() *StreamWriter, newBlock func() *StatusLineWriter, uploader attachmentUploader, channelID, threadTS string, logger *slog.Logger) *sectionRenderer {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &sectionRenderer{newText: newText, newBlock: newBlock, logger: logger}
+	return &sectionRenderer{newText: newText, newBlock: newBlock, uploader: uploader, channelID: channelID, threadTS: threadTS, logger: logger}
+}
+
+// Attachment finalises the open text section first — so prose written before the
+// file is committed above it and later text opens a fresh message below it — then
+// uploads the file as its own message, preserving the agent's intended order.
+func (r *sectionRenderer) Attachment(ctx context.Context, a *agent.AttachmentEvent) error {
+	r.closeText(ctx)
+	return deliverAttachment(ctx, r.uploader, r.channelID, r.threadTS, a)
 }
 
 func (r *sectionRenderer) Text(ctx context.Context, text string) error {
@@ -288,6 +312,16 @@ func (r *sectionRenderer) closeBlock(ctx context.Context) {
 	if r.mode == sectionTools {
 		r.mode = sectionNone
 	}
+}
+
+// deliverAttachment uploads a as a separate Slack message in the turn's thread.
+// A nil uploader (tests, or no upload surface wired) or a nil attachment is a
+// silent no-op so the rest of the reply is unaffected.
+func deliverAttachment(ctx context.Context, up attachmentUploader, channelID, threadTS string, a *agent.AttachmentEvent) error {
+	if up == nil || a == nil {
+		return nil
+	}
+	return up.UploadAttachment(ctx, channelID, threadTS, a)
 }
 
 // containsString reports whether want is present in xs.
