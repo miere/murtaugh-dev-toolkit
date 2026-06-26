@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/miere/murtaugh-dev-toolkit/assets"
@@ -40,8 +41,7 @@ type BootstrapReport struct {
 }
 
 // Bootstrap ensures the config directory containing configPath exists and is
-// populated with the built-in defaults the first time the app runs, and keeps
-// the bundled agent skills in sync with the shipped binary on every run. The
+// populated with the built-in defaults the first time the app runs. The
 // returned report is discarded; callers that need it should use
 // BootstrapWithReport instead.
 func Bootstrap(configPath string) error {
@@ -60,19 +60,14 @@ func Bootstrap(configPath string) error {
 //     user's tokens and customisations and are never overwritten.
 //   - templates/ — the bundled Block Kit templates (ping/, unfurl/), also
 //     PRESERVED once on disk so workflow/unfurl edits survive.
-//   - .agents/skills/ — every bundled agent skill (SKILL.md + reference/ +
-//     examples/), mirrored recursively and REFRESHED on every run: the skills
-//     are documentation Murtaugh ships and maintains, so a newer binary keeps
-//     the workspace copies current. Files the user added under .agents/skills/
-//     that Murtaugh does not ship are left untouched (bootstrap only writes the
-//     files it embeds; it never deletes).
-//   - .claude/skills — a symlink to .agents/skills so Claude-based agents
-//     discover the same skills without a second copy.
+//   - .agents/skills/ — created (empty) as the home for the user's bespoke
+//     skills. The bundled murtaugh-* skills are served in-binary and are NOT
+//     mirrored here, which keeps them out of reach of the file/terminal tools;
+//     an agent's export_skills_to_fs (ReconcileExportedSkills) writes chosen
+//     ones into a workdir on demand.
+//   - .claude/skills — a symlink to .agents/skills so a filesystem-discovering
+//     agent finds whatever lands there (bespoke skills + any exports).
 //   - AGENTS.md and BOOTSTRAP.md, when those docs are embedded in assets/.
-//
-// Because skills are refreshed in place, a local edit to a shipped skill file
-// is overwritten on the next run; add a new skill directory instead of editing
-// one Murtaugh ships.
 func BootstrapWithReport(configPath string, force bool) (BootstrapReport, error) {
 	report := BootstrapReport{}
 	baseDir := filepath.Dir(configPath)
@@ -119,27 +114,25 @@ func BootstrapWithReport(configPath string, force bool) (BootstrapReport, error)
 	}
 	report.absorb(outcome, promptPath)
 
-	// Block Kit templates land at <workspace>/templates/...; the agent skills
-	// land at <workspace>/.agents/skills/... Templates are preserved once on
-	// disk (they're user-customisable workflow assets); skills are refreshed to
-	// the shipped version on every run so the workspace tracks the binary.
-	treeRoots := []struct {
-		src, dst string
-		policy   copyPolicy
-	}{
-		{"templates", filepath.Join(baseDir, "templates"), preserveExisting},
-		{"skills", filepath.Join(baseDir, ".agents", "skills"), refreshFromAssets},
+	// Block Kit templates land at <workspace>/templates/... and are preserved
+	// once on disk (they're user-customisable workflow assets).
+	outcomes, err := copyAssetTree("templates", filepath.Join(baseDir, "templates"), preserveExisting)
+	if err != nil {
+		return report, err
 	}
-	for _, root := range treeRoots {
-		outcomes, err := copyAssetTree(root.src, root.dst, root.policy)
-		if err != nil {
-			return report, err
-		}
-		for _, item := range outcomes {
-			report.absorb(item.outcome, item.path)
-		}
+	for _, item := range outcomes {
+		report.absorb(item.outcome, item.path)
 	}
 
+	// The bundled (murtaugh-*) skills are served in-binary and are NOT mirrored
+	// to disk — that's what keeps them out of reach of the file/terminal tools.
+	// We only ensure <workspace>/.agents/skills exists as the home for the user's
+	// own bespoke skills (and the target an agent's export_skills_to_fs writes
+	// into); the .claude/skills symlink lets filesystem-discovering agents find
+	// whatever lands there.
+	if err := os.MkdirAll(filepath.Join(baseDir, ".agents", "skills"), bootstrapDirPerm); err != nil {
+		return report, fmt.Errorf("create skills dir: %w", err)
+	}
 	link, err := linkClaudeSkills(baseDir)
 	if err != nil {
 		return report, err
@@ -147,6 +140,90 @@ func BootstrapWithReport(configPath string, force bool) (BootstrapReport, error)
 	report.absorb(link.outcome, link.path)
 
 	return report, nil
+}
+
+// ReconcileExportedSkills makes <workDir>/.agents/skills hold exactly the bundled
+// (murtaugh-*) skills named in list — an agent's export_skills_to_fs — copied
+// from the embed, alongside whatever bespoke skills already live there. Listed
+// skills are (re)written fresh; any bundled skill previously exported but no
+// longer listed is removed; bespoke (non-bundled) directories are never touched.
+// The sentinel "all" exports every bundled skill; an empty list removes all
+// exported bundled skills (the sealed default). When anything is exported it
+// ensures the .claude/skills symlink so filesystem-discovering agents find them.
+// It returns the sorted names left on disk. Callers should treat an error as
+// non-fatal (the agent still works; only filesystem discovery is affected).
+func ReconcileExportedSkills(workDir string, list []string) ([]string, error) {
+	skillsDir := filepath.Join(workDir, ".agents", "skills")
+	if err := os.MkdirAll(skillsDir, bootstrapDirPerm); err != nil {
+		return nil, fmt.Errorf("create skills dir: %w", err)
+	}
+
+	bundled := make(map[string]bool)
+	for _, n := range assets.SkillNames() {
+		bundled[n] = true
+	}
+	desired := expandExportList(list, assets.SkillNames())
+	want := make(map[string]bool, len(desired))
+	for _, n := range desired {
+		want[n] = true
+	}
+
+	// Remove bundled skills previously exported but no longer desired. Only ever
+	// touch the murtaugh-* namespace — bespoke skills are left alone.
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return nil, fmt.Errorf("read skills dir: %w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() && bundled[e.Name()] && !want[e.Name()] {
+			if err := os.RemoveAll(filepath.Join(skillsDir, e.Name())); err != nil {
+				return nil, fmt.Errorf("remove stale exported skill %q: %w", e.Name(), err)
+			}
+		}
+	}
+
+	// (Re)write each desired skill fresh, so a skill that lost files across a
+	// binary upgrade doesn't leave orphans behind.
+	for _, name := range desired {
+		dst := filepath.Join(skillsDir, name)
+		if err := os.RemoveAll(dst); err != nil {
+			return nil, fmt.Errorf("clear exported skill %q: %w", name, err)
+		}
+		if _, err := copyAssetTree("skills/"+name, dst, refreshFromAssets); err != nil {
+			return nil, fmt.Errorf("export skill %q: %w", name, err)
+		}
+	}
+
+	if len(desired) > 0 {
+		if _, err := linkClaudeSkills(workDir); err != nil {
+			return nil, err
+		}
+	}
+	sort.Strings(desired)
+	return desired, nil
+}
+
+// expandExportList resolves an export_skills_to_fs list to concrete bundled
+// skill names: the sentinel "all" expands to every known name; otherwise the
+// listed names, de-duplicated and order-preserving. Blanks are dropped. (Names
+// are validated at config load, so unknowns never reach here.)
+func expandExportList(list, known []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, raw := range list {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		if s == exportSkillsAll {
+			return append([]string(nil), known...)
+		}
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // copyOutcome describes what happened to a single destination path during a
@@ -237,8 +314,9 @@ func copyAssetTree(srcRoot, dstRoot string, policy copyPolicy) ([]skillCopyResul
 }
 
 // linkClaudeSkills creates <baseDir>/.claude/skills as a relative symlink to
-// the sibling .agents/skills directory, so Claude-based agents discover the
-// same bundled skills the ACP agents do without a duplicate copy. It is
+// the sibling .agents/skills directory, so a filesystem-discovering agent finds
+// whatever lands there (the user's bespoke skills plus any an agent exported via
+// export_skills_to_fs) without a duplicate copy. It is
 // non-destructive and idempotent: when anything already exists at the link
 // path (a prior symlink, a real directory, a file) it is preserved untouched.
 func linkClaudeSkills(baseDir string) (skillCopyResult, error) {

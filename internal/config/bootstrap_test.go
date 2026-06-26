@@ -69,13 +69,23 @@ func TestBootstrapFreshInstall(t *testing.T) {
 		t.Fatalf("agents.yaml content mismatch")
 	}
 
-	// Every embedded template and skill file must be mirrored into the
-	// workspace: templates under templates/, skills under .agents/skills/.
+	// Templates are mirrored into the workspace.
 	assertEmbeddedTreeCopied(t, "templates", filepath.Join(baseDir, "templates"))
-	assertEmbeddedTreeCopied(t, "skills", filepath.Join(baseDir, ".agents", "skills"))
 
-	// .claude/skills is a relative symlink to .agents/skills so Claude-based
-	// agents discover the same bundled skills.
+	// The bundled (murtaugh-*) skills are served in-binary and must NOT be
+	// written to disk by bootstrap — only an agent's export_skills_to_fs does
+	// that. The skills dir exists (home for the user's bespoke skills) but holds
+	// no bundled skill.
+	skillsDir := filepath.Join(baseDir, ".agents", "skills")
+	if info, err := os.Stat(skillsDir); err != nil || !info.IsDir() {
+		t.Fatalf("expected %s to exist as a dir: %v", skillsDir, err)
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, "murtaugh-slack")); !os.IsNotExist(err) {
+		t.Fatalf("bundled skill was mirrored to disk by bootstrap (stat err=%v)", err)
+	}
+
+	// .claude/skills is a relative symlink to .agents/skills so a
+	// filesystem-discovering agent finds whatever lands there (bespoke + exports).
 	link := filepath.Join(baseDir, ".claude", "skills")
 	target, err := os.Readlink(link)
 	if err != nil {
@@ -83,10 +93,6 @@ func TestBootstrapFreshInstall(t *testing.T) {
 	}
 	if want := filepath.Join("..", ".agents", "skills"); target != want {
 		t.Fatalf("symlink target = %q, want %q", target, want)
-	}
-	// The symlink must resolve to the real skill tree.
-	if _, err := os.Stat(filepath.Join(link, "murtaugh-slack", "SKILL.md")); err != nil {
-		t.Fatalf("skill not reachable through .claude/skills symlink: %v", err)
 	}
 
 	// AGENTS.md is embedded, so it is seeded on a fresh install.
@@ -107,25 +113,20 @@ func TestBootstrapFreshInstall(t *testing.T) {
 	}
 }
 
-func TestBootstrapPreservesConfigButRefreshesShippedSkills(t *testing.T) {
+// TestBootstrapDoesNotMirrorBundledSkills confirms bootstrap seals the bundled
+// skills (never writes murtaugh-* to disk) while preserving config and any
+// bespoke skill the user authored.
+func TestBootstrapDoesNotMirrorBundledSkills(t *testing.T) {
 	baseDir := filepath.Join(t.TempDir(), "murtaugh")
 	configPath := filepath.Join(baseDir, "slack.yaml")
-	skillDir := filepath.Join(baseDir, ".agents", "skills", "murtaugh-slack")
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		t.Fatalf("seed dirs: %v", err)
-	}
 
 	// Config carries the user's secrets and must never be overwritten.
 	const customConfig = "oauth:\n  app_token: keep-me\n"
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(configPath, []byte(customConfig), 0o644); err != nil {
 		t.Fatalf("seed slack.yaml: %v", err)
-	}
-
-	// A shipped skill file edited locally must be refreshed back to the
-	// version Murtaugh ships, so workspaces track the binary.
-	shippedSkill := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(shippedSkill, []byte("stale local edit"), 0o644); err != nil {
-		t.Fatalf("seed shipped skill: %v", err)
 	}
 
 	// A skill the user authored (not shipped by Murtaugh) must be left alone.
@@ -145,13 +146,9 @@ func TestBootstrapPreservesConfigButRefreshesShippedSkills(t *testing.T) {
 	if got, _ := os.ReadFile(configPath); string(got) != customConfig {
 		t.Fatalf("slack.yaml was overwritten: got %q", got)
 	}
-	// The shipped skill is now the embedded version, not the stale edit.
-	wantSkill, err := assets.FS.ReadFile("skills/murtaugh-slack/SKILL.md")
-	if err != nil {
-		t.Fatalf("read embedded skill: %v", err)
-	}
-	if got, _ := os.ReadFile(shippedSkill); string(got) != string(wantSkill) {
-		t.Fatalf("shipped skill was not refreshed to the embedded version")
+	// No bundled skill was written to disk.
+	if _, err := os.Stat(filepath.Join(baseDir, ".agents", "skills", "murtaugh-slack")); !os.IsNotExist(err) {
+		t.Fatalf("bootstrap mirrored a bundled skill to disk (stat err=%v)", err)
 	}
 	// The user's own skill is untouched.
 	if got, _ := os.ReadFile(customSkill); string(got) != customSkillBody {
@@ -159,38 +156,70 @@ func TestBootstrapPreservesConfigButRefreshesShippedSkills(t *testing.T) {
 	}
 }
 
-// TestBootstrapReportClassifiesSkillRefresh verifies the report buckets: a
-// drifted shipped skill is reported as Updated, while an unchanged second run
-// reports it under neither Created nor Updated.
-func TestBootstrapReportClassifiesSkillRefresh(t *testing.T) {
-	baseDir := filepath.Join(t.TempDir(), "murtaugh")
-	configPath := filepath.Join(baseDir, "slack.yaml")
-	skillDir := filepath.Join(baseDir, ".agents", "skills", "murtaugh-slack")
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		t.Fatalf("seed dirs: %v", err)
+// TestReconcileExportedSkills covers the export reconcile: listed skills are
+// written, "all" expands, an empty list (or removal from the list) cleans up the
+// bundled namespace only, and bespoke skills are never touched.
+func TestReconcileExportedSkills(t *testing.T) {
+	workDir := t.TempDir()
+	skillsDir := filepath.Join(workDir, ".agents", "skills")
+
+	// A bespoke skill must survive every reconcile.
+	bespoke := filepath.Join(skillsDir, "my-custom", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(bespoke), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	shippedSkill := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(shippedSkill, []byte("stale"), 0o644); err != nil {
-		t.Fatalf("seed shipped skill: %v", err)
+	if err := os.WriteFile(bespoke, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	first, err := BootstrapWithReport(configPath, false)
+	// Export one bundled skill.
+	got, err := ReconcileExportedSkills(workDir, []string{"murtaugh-slack"})
 	if err != nil {
-		t.Fatalf("first BootstrapWithReport: %v", err)
+		t.Fatalf("export one: %v", err)
 	}
-	if !contains(first.Updated, shippedSkill) {
-		t.Fatalf("expected %q in Updated, got Updated=%v", shippedSkill, first.Updated)
+	if len(got) != 1 || got[0] != "murtaugh-slack" {
+		t.Fatalf("exported = %v, want [murtaugh-slack]", got)
 	}
-	if contains(first.Created, shippedSkill) {
-		t.Fatalf("drifted skill should not be reported as Created")
+	if _, err := os.Stat(filepath.Join(skillsDir, "murtaugh-slack", "SKILL.md")); err != nil {
+		t.Fatalf("murtaugh-slack not exported: %v", err)
+	}
+	// The .claude/skills symlink is created once anything is exported.
+	if _, err := os.Lstat(filepath.Join(workDir, ".claude", "skills")); err != nil {
+		t.Fatalf(".claude/skills symlink missing after export: %v", err)
 	}
 
-	second, err := BootstrapWithReport(configPath, false)
-	if err != nil {
-		t.Fatalf("second BootstrapWithReport: %v", err)
+	// Re-reconcile with a different single skill: the old one is removed, the new
+	// one written, bespoke untouched.
+	if _, err := ReconcileExportedSkills(workDir, []string{"murtaugh-jobs"}); err != nil {
+		t.Fatalf("export jobs: %v", err)
 	}
-	if contains(second.Updated, shippedSkill) || contains(second.Created, shippedSkill) {
-		t.Fatalf("unchanged skill should be neither Updated nor Created on re-run")
+	if _, err := os.Stat(filepath.Join(skillsDir, "murtaugh-slack")); !os.IsNotExist(err) {
+		t.Fatalf("murtaugh-slack should have been removed when no longer listed")
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, "murtaugh-jobs", "SKILL.md")); err != nil {
+		t.Fatalf("murtaugh-jobs not exported: %v", err)
+	}
+
+	// "all" exports every bundled skill.
+	all, err := ReconcileExportedSkills(workDir, []string{"all"})
+	if err != nil {
+		t.Fatalf("export all: %v", err)
+	}
+	if len(all) != len(assets.SkillNames()) {
+		t.Fatalf("export all wrote %d skills, want %d", len(all), len(assets.SkillNames()))
+	}
+
+	// Empty list seals: every bundled skill removed, bespoke preserved.
+	if _, err := ReconcileExportedSkills(workDir, nil); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	for _, n := range assets.SkillNames() {
+		if _, err := os.Stat(filepath.Join(skillsDir, n)); !os.IsNotExist(err) {
+			t.Fatalf("bundled skill %q not removed on empty export", n)
+		}
+	}
+	if got, _ := os.ReadFile(bespoke); string(got) != "mine" {
+		t.Fatalf("bespoke skill was touched by reconcile: %q", got)
 	}
 }
 

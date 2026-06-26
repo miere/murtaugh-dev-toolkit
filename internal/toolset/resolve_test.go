@@ -2,6 +2,7 @@ package toolset
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -53,7 +54,7 @@ func TestResolve_RegistrySelectionByNameAndNamespace(t *testing.T) {
 
 func TestResolve_NativeGroups(t *testing.T) {
 	dir := t.TempDir()
-	got, err := Resolve([]string{"files", "terminal", "skills"}, nil, Deps{WorkDir: dir, SkillsDir: dir})
+	got, err := Resolve([]string{"files", "terminal", "skills"}, nil, Deps{WorkDir: dir, ManagedSkillsFS: os.DirFS(dir)})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}

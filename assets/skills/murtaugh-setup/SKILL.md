@@ -17,10 +17,10 @@ daemon afterward, see the `murtaugh-operations` skill.
 
 Every `setup_*` tool is idempotent, so re-running is safe. The config writers
 (`setup_slack`, `setup_env`, `setup_agents`, `setup_launchd`, `setup_mcp-register`)
-back up any file they replace (`<file>.bak.<timestamp>`). `setup_bootstrap` is the one
-exception that **refreshes in place**: it keeps the bundled agent skills in sync
-with the shipped binary on every run (config files and templates stay
-preserved) — see `reference/config-tools.md`.
+back up any file they replace (`<file>.bak.<timestamp>`). `setup_bootstrap` seeds
+the workspace and is safe to re-run (config files and templates are preserved).
+The bundled agent skills are served in-binary (not written to disk), so there's
+no on-disk skill copy to keep in sync — see `reference/config-tools.md`.
 
 ## Install order (the workflow)
 

@@ -841,6 +841,32 @@ func TestValidateRejectsUnknownAgentInChannelGlob(t *testing.T) {
 	}
 }
 
+func TestValidateExportSkillsToFS(t *testing.T) {
+	base := func(list []string) Config {
+		return Config{
+			OAuth:  OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"},
+			ACP:    ACPConfig{Enabled: true},
+			Agents: map[string]AgentProfile{"coding": {Command: "/bin/agent", ExportSkillsToFS: list}},
+			Chat:   ChatConfig{DefaultAgent: "coding"},
+		}
+	}
+	if err := base(nil).Validate(); err != nil {
+		t.Fatalf("empty export list should be valid: %v", err)
+	}
+	if err := base([]string{"all"}).Validate(); err != nil {
+		t.Fatalf("'all' should be valid: %v", err)
+	}
+	if err := base([]string{"murtaugh-slack"}).Validate(); err != nil {
+		t.Fatalf("known skill should be valid: %v", err)
+	}
+	if err := base([]string{"murtaugh-nope"}).Validate(); err == nil || !strings.Contains(err.Error(), "unknown skill") {
+		t.Fatalf("expected unknown-skill validation error (fail-closed), got: %v", err)
+	}
+	if err := base([]string{"  "}).Validate(); err == nil || !strings.Contains(err.Error(), "must not be blank") {
+		t.Fatalf("expected blank-entry error, got: %v", err)
+	}
+}
+
 // noMentionValidationConfig builds a minimal ACP-enabled config whose only
 // variable is the chat.channel_do_not_require_mention map, so a test can
 // exercise its glob-key validation in isolation.

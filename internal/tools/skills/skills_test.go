@@ -56,7 +56,7 @@ func TestInvoke_List(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := New(root).Invoke(context.Background(), nil)
+	got, err := New(os.DirFS(root), nil).Invoke(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Invoke list: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestInvoke_ReadWithFrontmatter(t *testing.T) {
 	mustWrite(t, filepath.Join(dir, "reference", "sub", "b.md"), "b")
 	mustWrite(t, filepath.Join(dir, "examples", "ex.yaml"), "y")
 
-	got, err := New(root).Invoke(context.Background(), map[string]any{"name": "alpha"})
+	got, err := New(os.DirFS(root), nil).Invoke(context.Background(), map[string]any{"name": "alpha"})
 	if err != nil {
 		t.Fatalf("Invoke read: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestInvoke_ReadNoFrontmatter(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "beta", noFrontmatter)
 
-	got, err := New(root).Invoke(context.Background(), map[string]any{"name": "beta"})
+	got, err := New(os.DirFS(root), nil).Invoke(context.Background(), map[string]any{"name": "beta"})
 	if err != nil {
 		t.Fatalf("Invoke read: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestInvoke_ReadErrors(t *testing.T) {
 	mustWrite(t, filepath.Join(outside, "SKILL.md"), "secret")
 	t.Cleanup(func() { os.RemoveAll(outside) })
 
-	tool := New(root)
+	tool := New(os.DirFS(root), nil)
 	tests := []struct {
 		name string
 		arg  string
@@ -168,13 +168,13 @@ func TestInvoke_ReadErrors(t *testing.T) {
 
 func TestInvoke_ListMissingDir(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope")
-	if _, err := New(missing).Invoke(context.Background(), nil); err == nil {
+	if _, err := New(os.DirFS(missing), nil).Invoke(context.Background(), nil); err == nil {
 		t.Fatal("Invoke list on missing dir = nil error, want error")
 	}
 }
 
 func TestStaticContract(t *testing.T) {
-	tool := New(t.TempDir())
+	tool := New(os.DirFS(t.TempDir()), nil)
 	if tool.Name() != "skills" {
 		t.Errorf("Name() = %q, want skills", tool.Name())
 	}
@@ -278,7 +278,7 @@ requires: [manage]
 body`)
 
 	// A slack-only agent sees the ungated skill, not the manage-gated one.
-	res, err := New(root, "slack").Invoke(context.Background(), nil)
+	res, err := New(os.DirFS(root), nil, "slack").Invoke(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ body`)
 	}
 
 	// A manage agent sees both.
-	res2, _ := New(root, "slack", "manage").Invoke(context.Background(), nil)
+	res2, _ := New(os.DirFS(root), nil, "slack", "manage").Invoke(context.Background(), nil)
 	if _, ok := skillNames(res2.(ListResult))["ops"]; !ok {
 		t.Errorf("manage agent should see the ops skill")
 	}
@@ -303,7 +303,7 @@ func TestRead_TemplatedRendersVisibleRowsOnly(t *testing.T) {
 
 	// slack-only: frontmatter stripped, only the messaging row in the table,
 	// no mention of the workflow-rules file, inventory hides it.
-	got, err := New(root, "slack").Invoke(context.Background(), map[string]any{"name": "gated"})
+	got, err := New(os.DirFS(root), nil, "slack").Invoke(context.Background(), map[string]any{"name": "gated"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestRead_TemplatedRendersVisibleRowsOnly(t *testing.T) {
 	}
 
 	// manage agent sees both rows and both files.
-	got2, _ := New(root, "slack", "manage").Invoke(context.Background(), map[string]any{"name": "gated"})
+	got2, _ := New(os.DirFS(root), nil, "slack", "manage").Invoke(context.Background(), map[string]any{"name": "gated"})
 	res2 := got2.(ReadResult)
 	if !strings.Contains(res2.Content, "workflow-rules.md") {
 		t.Errorf("manage agent should see the workflow-rules row:\n%s", res2.Content)
@@ -343,7 +343,7 @@ func TestReadFile_GatedServe(t *testing.T) {
 	writeGated(t, root)
 
 	// Visible file serves its body.
-	got, err := New(root, "slack").Invoke(context.Background(), map[string]any{"name": "gated", "file": "reference/messaging.md"})
+	got, err := New(os.DirFS(root), nil, "slack").Invoke(context.Background(), map[string]any{"name": "gated", "file": "reference/messaging.md"})
 	if err != nil {
 		t.Fatalf("serve visible file: %v", err)
 	}
@@ -352,19 +352,19 @@ func TestReadFile_GatedServe(t *testing.T) {
 	}
 
 	// Gated file is refused (as "not found") for a slack-only agent.
-	if _, err := New(root, "slack").Invoke(context.Background(), map[string]any{"name": "gated", "file": "reference/workflow-rules.md"}); err == nil {
+	if _, err := New(os.DirFS(root), nil, "slack").Invoke(context.Background(), map[string]any{"name": "gated", "file": "reference/workflow-rules.md"}); err == nil {
 		t.Error("manage-gated file served to a slack-only agent")
 	}
 
 	// The manage agent can read it.
-	got2, err := New(root, "slack", "manage").Invoke(context.Background(), map[string]any{"name": "gated", "file": "reference/workflow-rules.md"})
+	got2, err := New(os.DirFS(root), nil, "slack", "manage").Invoke(context.Background(), map[string]any{"name": "gated", "file": "reference/workflow-rules.md"})
 	if err != nil || got2.(FileResult).Content != "WORKFLOW BODY" {
 		t.Errorf("manage agent could not read the gated file: %v / %v", err, got2)
 	}
 
 	// Path traversal / outside reference|examples is refused.
 	for _, bad := range []string{"../../etc/passwd", "/etc/passwd", "SKILL.md", "reference/../../x"} {
-		if _, err := New(root, "manage").Invoke(context.Background(), map[string]any{"name": "gated", "file": bad}); err == nil {
+		if _, err := New(os.DirFS(root), nil, "manage").Invoke(context.Background(), map[string]any{"name": "gated", "file": bad}); err == nil {
 			t.Errorf("readFile(%q) = nil error, want refusal", bad)
 		}
 	}

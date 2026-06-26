@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -60,7 +61,8 @@ type Client struct {
 	skillsIndex      string
 	maxTurns         int
 	workDir          string
-	skillsDir        string
+	managedSkillsFS  fs.FS
+	bespokeSkillsDir string
 	registry         *tools.Registry
 	toolAllow        []string
 	serverCfgs       []mcpclient.ServerConfig
@@ -163,10 +165,13 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 	// its allowlist. Read once here; skills change rarely and a restart re-reads,
 	// which keeps the index stable across turns so the system prompt stays
 	// cacheable.
-	skillsDir := filepath.Join(deps.BaseDir, ".agents", "skills")
+	// Managed (murtaugh-*) skills are served from the embedded FS, never disk;
+	// the on-disk dir holds only the user's bespoke skills, layered in.
+	managedSkillsFS := assets.Skills()
+	bespokeSkillsDir := filepath.Join(deps.BaseDir, ".agents", "skills")
 	var skillsIndex string
 	if containsString(profile.Tools, toolset.GroupSkills) {
-		skillsIndex = renderSkillsIndex(skillsDir, profile.Tools)
+		skillsIndex = renderSkillsIndex(managedSkillsFS, bespokeSkillsDir, profile.Tools)
 	}
 
 	return &Client{
@@ -177,7 +182,8 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 		skillsIndex:      skillsIndex,
 		maxTurns:         profile.MaxTurns,
 		workDir:          workDir,
-		skillsDir:        skillsDir,
+		managedSkillsFS:  managedSkillsFS,
+		bespokeSkillsDir: bespokeSkillsDir,
 		registry:         deps.Registry,
 		toolAllow:        profile.Tools,
 		serverCfgs:       serverCfgs,
@@ -206,7 +212,8 @@ func (c *Client) Initialize(ctx context.Context) error {
 	ts, err := toolset.Resolve(c.toolAllow, c.mcp.Tools(), toolset.Deps{
 		Registry:         c.registry,
 		WorkDir:          c.workDir,
-		SkillsDir:        c.skillsDir,
+		ManagedSkillsFS:  c.managedSkillsFS,
+		BespokeSkillsDir: c.bespokeSkillsDir,
 		TerminalApproval: c.terminalApproval,
 	})
 	if err != nil {
@@ -398,8 +405,8 @@ func readAgentsDoc(workDir string) string {
 // static profile tokens keeps the index stable per profile, so the system prompt
 // stays cacheable. Returns "" when there are no visible skills or the directory
 // is unreadable (the index is best-effort advertising, never a hard dependency).
-func renderSkillsIndex(skillsDir string, have []string) string {
-	summaries, err := skills.ListVisible(skillsDir, have)
+func renderSkillsIndex(managed fs.FS, bespokeDir string, have []string) string {
+	summaries, err := skills.ListVisible(managed, toolset.BespokeSkillsFS(bespokeDir), have)
 	if err != nil || len(summaries) == 0 {
 		return ""
 	}
