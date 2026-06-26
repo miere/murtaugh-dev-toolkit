@@ -216,3 +216,104 @@ func TestServer_PanicsOnNameCollision(t *testing.T) {
 	}()
 	_ = New(reg).Server()
 }
+
+// gatedTool opts into approval and records whether Invoke ran.
+type gatedTool struct {
+	name     string
+	requires bool
+	summary  string
+	invoked  *bool
+}
+
+func (g *gatedTool) Name() string                          { return g.name }
+func (g *gatedTool) Description() string                   { return "gated tool" }
+func (g *gatedTool) InputSchema() *jsonschema.Schema       { return nil }
+func (g *gatedTool) RequiresApproval(map[string]any) bool  { return g.requires }
+func (g *gatedTool) ApprovalSummary(map[string]any) string { return g.summary }
+func (g *gatedTool) Invoke(context.Context, map[string]any) (any, error) {
+	if g.invoked != nil {
+		*g.invoked = true
+	}
+	return "ran", nil
+}
+
+// fakeApprover answers Approve with a fixed verdict and records the summary it saw.
+type fakeApprover struct {
+	allow      bool
+	note       string
+	gotTool    string
+	gotSummary string
+}
+
+func (a *fakeApprover) Approve(_ context.Context, toolName, summary string) (bool, string) {
+	a.gotTool, a.gotSummary = toolName, summary
+	return a.allow, a.note
+}
+
+func callTool(t *testing.T, session *mcpsdk.ClientSession, name string) *mcpsdk.CallToolResult {
+	t.Helper()
+	res, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: name})
+	if err != nil {
+		t.Fatalf("CallTool(%q): %v", name, err)
+	}
+	return res
+}
+
+func textOf(t *testing.T, res *mcpsdk.CallToolResult) string {
+	t.Helper()
+	if len(res.Content) == 0 {
+		t.Fatalf("result has no content: %+v", res)
+	}
+	tc, ok := res.Content[0].(*mcpsdk.TextContent)
+	if !ok {
+		t.Fatalf("first content is not text: %T", res.Content[0])
+	}
+	return tc.Text
+}
+
+func TestAggregator_GateDeniesAndSkipsInvoke(t *testing.T) {
+	invoked := false
+	tool := &gatedTool{name: "jobs.run", requires: true, summary: "run nightly job", invoked: &invoked}
+	approver := &fakeApprover{allow: false, note: "denied by human"}
+
+	session := newConnectedClient(t, NewFromTools([]tools.Tool{tool}, approver))
+	res := callTool(t, session, "jobs_run")
+
+	if invoked {
+		t.Fatal("Invoke ran despite the call being denied")
+	}
+	if got := textOf(t, res); got != "denied by human" {
+		t.Fatalf("denial result = %q, want the approver note", got)
+	}
+	if approver.gotTool != "jobs.run" || approver.gotSummary != "run nightly job" {
+		t.Fatalf("approver saw tool=%q summary=%q, want the unsanitised name and the ApprovalSummary", approver.gotTool, approver.gotSummary)
+	}
+}
+
+func TestAggregator_GateAllowsAndInvokes(t *testing.T) {
+	invoked := false
+	tool := &gatedTool{name: "jobs.run", requires: true, summary: "run", invoked: &invoked}
+	approver := &fakeApprover{allow: true}
+
+	session := newConnectedClient(t, NewFromTools([]tools.Tool{tool}, approver))
+	res := callTool(t, session, "jobs_run")
+
+	if !invoked {
+		t.Fatal("Invoke did not run after approval")
+	}
+	if got := textOf(t, res); got != "ran" {
+		t.Fatalf("result = %q, want the tool output", got)
+	}
+}
+
+func TestAggregator_NoApproverNeverGates(t *testing.T) {
+	invoked := false
+	tool := &gatedTool{name: "jobs.run", requires: true, invoked: &invoked}
+
+	session := newConnectedClient(t, NewFromTools([]tools.Tool{tool}, nil))
+	_ = callTool(t, session, "jobs_run")
+
+	if !invoked {
+		t.Fatal("Invoke did not run when no approver is configured")
+	}
+}

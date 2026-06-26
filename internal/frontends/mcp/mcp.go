@@ -26,37 +26,59 @@ const ServerName = "murtaugh-mcp"
 // ServerVersion is advertised to MCP clients.
 const ServerVersion = "0.1.0"
 
-// Frontend is the MCP adapter.
+// Approver gates a tool call before it runs. It mirrors the native loop's
+// Approver (internal/agent/native), so the same *interaction.GateApprover
+// satisfies both — the aggregator reuses the exact Slack approval gate the
+// native loop uses, rather than reinventing one. A nil Approver means no
+// gating. The returned note is surfaced to the agent as the tool's result on
+// denial, and may carry an explanation on approval.
+type Approver interface {
+	Approve(ctx context.Context, toolName, summary string) (allowed bool, note string)
+}
+
+// Frontend is the MCP adapter. It serves a fixed set of tools — the shared
+// registry (via New) for the standalone `murtaugh mcp` frontend, or a resolved
+// per-agent toolset (via NewFromTools) for the ACP aggregator.
 type Frontend struct {
-	registry *tools.Registry
+	tools    []tools.Tool
+	approver Approver
 }
 
-// New constructs an MCP Frontend backed by the given registry.
+// New constructs an MCP Frontend backed by the given registry, ungated. This is
+// the standalone stdio frontend exposing every built-in tool.
 func New(reg *tools.Registry) *Frontend {
-	return &Frontend{registry: reg}
+	return &Frontend{tools: reg.All()}
 }
 
-// Server builds an *mcpsdk.Server with every registered tool wired in. It is
-// exposed so tests can inspect the resulting server without touching stdio.
+// NewFromTools constructs an MCP Frontend serving an explicit resolved toolset,
+// optionally gated by approver. This is the per-agent aggregator surface: the
+// toolset is whatever toolset.Resolve produced for the agent (built-ins plus
+// proxied external MCP tools), and approver applies the same human-in-the-loop
+// gate the native loop applies.
+func NewFromTools(ts []tools.Tool, approver Approver) *Frontend {
+	return &Frontend{tools: ts, approver: approver}
+}
+
+// Server builds an *mcpsdk.Server with every tool wired in. It is exposed so
+// tests can inspect the resulting server without touching stdio.
 func (f *Frontend) Server() *mcpsdk.Server {
 	s := mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    ServerName,
 		Version: ServerVersion,
 	}, nil)
-	// Guard against two registry keys collapsing onto the same published name
+	// Guard against two tool names collapsing onto the same published name
 	// (e.g. "a.b" and "a-b" would both sanitise to "a_b"). The MCP SDK silently
 	// shadows a duplicate rather than erroring, so we fail loudly at startup —
-	// a collision is a programming error in the tool registry, not a runtime
-	// condition. None exist today; this keeps it that way.
-	all := f.registry.All()
-	seen := make(map[string]string, len(all))
-	for _, t := range all {
+	// a collision is a programming error (registry keys, or a proxied MCP server
+	// whose tools collide with a built-in), not a runtime condition.
+	seen := make(map[string]string, len(f.tools))
+	for _, t := range f.tools {
 		published := mcpToolName(t.Name())
 		if prior, dup := seen[published]; dup {
 			panic(fmt.Sprintf("mcp: tool name collision: %q and %q both publish as %q", prior, t.Name(), published))
 		}
 		seen[published] = t.Name()
-		registerTool(s, t)
+		registerTool(s, t, f.approver)
 	}
 	return s
 }
@@ -88,8 +110,11 @@ func (f *Frontend) Serve(ctx context.Context) error {
 
 // registerTool wires a single tools.Tool into the MCP server using the
 // low-level Server.AddTool, so we can publish the tool's own InputSchema and
-// dispatch dynamic map[string]any arguments.
-func registerTool(s *mcpsdk.Server, t tools.Tool) {
+// dispatch dynamic map[string]any arguments. When approver is non-nil and the
+// tool opts into approval (implements ApprovalClassifier and requires it for
+// this call), the human gate runs before Invoke — the same ordering as the
+// native loop (internal/agent/native/loop.go).
+func registerTool(s *mcpsdk.Server, t tools.Tool, approver Approver) {
 	schema := t.InputSchema()
 	if schema == nil {
 		schema = emptyObjectSchema()
@@ -98,6 +123,14 @@ func registerTool(s *mcpsdk.Server, t tools.Tool) {
 		args, err := decodeArgs(req.Params.Arguments)
 		if err != nil {
 			return errorResult(err), nil
+		}
+		if denied, note := gate(ctx, t, args, approver); denied {
+			// Mirror the native loop: a denial is not an error abort. The note
+			// is fed back as the tool's result so the agent can react and pick
+			// another path, rather than the whole call failing.
+			return &mcpsdk.CallToolResult{
+				Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: note}},
+			}, nil
 		}
 		result, err := t.Invoke(ctx, args)
 		if err != nil {
@@ -116,6 +149,31 @@ func registerTool(s *mcpsdk.Server, t tools.Tool) {
 		Description: t.Description(),
 		InputSchema: schema,
 	}, handler)
+}
+
+// gate runs the approval check for a tool call. It returns (true, note) when the
+// call is denied and must be skipped; (false, "") when it may proceed (no
+// approver, the tool does not require approval for these args, or the human
+// allowed it). This is the aggregator's port of the native loop's pre-Invoke
+// gate, using the same optional ApprovalClassifier/ApprovalSummarizer tool
+// interfaces.
+func gate(ctx context.Context, t tools.Tool, args map[string]any, approver Approver) (denied bool, note string) {
+	if approver == nil {
+		return false, ""
+	}
+	classifier, ok := t.(tools.ApprovalClassifier)
+	if !ok || !classifier.RequiresApproval(args) {
+		return false, ""
+	}
+	summary := mcpToolName(t.Name())
+	if summarizer, ok := t.(tools.ApprovalSummarizer); ok {
+		summary = summarizer.ApprovalSummary(args)
+	}
+	allowed, n := approver.Approve(ctx, t.Name(), summary)
+	if !allowed {
+		return true, n
+	}
+	return false, ""
 }
 
 // emptyObjectSchema returns the canonical {"type":"object"} schema the SDK
