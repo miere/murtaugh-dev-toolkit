@@ -15,6 +15,8 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent/native"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh-dev-toolkit/internal/frontends/mcp"
+	"github.com/miere/murtaugh-dev-toolkit/internal/mcpbridge"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 )
 
@@ -35,6 +37,12 @@ type Deps struct {
 	// agent's acp_permission policy still applies (auto-allow/auto-deny work;
 	// "ask" denies). Ignored for native agents.
 	ACPPermissionAsker agent.PermissionAsker
+	// Bridge is the gateway's shared MCP aggregator server. When set, an ACP
+	// agent is given a per-agent aggregator over it so it can reach Murtaugh's
+	// own tools through `murtaugh mcp-bridge`. nil (CLI/delegate paths) leaves an
+	// ACP agent with no Murtaugh tools, as before. Ignored for native agents,
+	// which hold their toolset in-process.
+	Bridge *mcpbridge.Server
 }
 
 // Client builds the backend for profile. It does no network/process I/O — both
@@ -58,6 +66,18 @@ func Client(profile config.AgentProfile, deps Deps) (agent.Client, error) {
 		if workDir == "" {
 			workDir = deps.BaseDir
 		}
+		var aggregator agent.Aggregator
+		if deps.Bridge != nil {
+			var approver mcp.Approver
+			if deps.Approver != nil {
+				approver = mcpApprover{inner: deps.Approver}
+			}
+			aggr, err := newACPAggregator(deps.Bridge, deps.Registry, profile.Tools, approver)
+			if err != nil {
+				return nil, fmt.Errorf("agentbuild: build ACP aggregator: %w", err)
+			}
+			aggregator = aggr
+		}
 		return agent.NewProcessClient(agent.ProcessOptions{
 			Command:          profile.Command,
 			Args:             profile.Args,
@@ -66,6 +86,7 @@ func Client(profile config.AgentProfile, deps Deps) (agent.Client, error) {
 			Logger:           logger,
 			PermissionPolicy: profile.ResolvedACPPermission(),
 			PermissionAsker:  deps.ACPPermissionAsker,
+			Aggregator:       aggregator,
 		}), nil
 	default:
 		return nil, fmt.Errorf("agentbuild: unknown agent kind %q", profile.ResolvedKind())
