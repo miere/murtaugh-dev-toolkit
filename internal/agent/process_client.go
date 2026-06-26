@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +37,10 @@ type ProcessOptions struct {
 	// PermissionAsker resolves "ask" permission requests via a human (Slack
 	// buttons). nil on headless/CLI paths, where "ask" falls back to deny.
 	PermissionAsker PermissionAsker
+	// Aggregator, when set, registers each session with Murtaugh's per-agent MCP
+	// aggregator and supplies the stdio bridge server advertised in session/new,
+	// so the agent can reach Murtaugh's own tools. nil leaves mcpServers empty.
+	Aggregator Aggregator
 }
 
 type ProcessClient struct {
@@ -60,6 +65,8 @@ type ProcessClient struct {
 	// caps records what the agent advertised in its initialize response. Set once
 	// by Initialize before any prompt runs, then read-only; guarded by mu.
 	caps AgentCapabilities
+	// releases holds each registered session's aggregator cleanup, run on Close.
+	releases []func()
 }
 
 // AgentCapabilities captures the parts of an ACP agent's initialize response
@@ -231,12 +238,16 @@ func parseAgentCapabilities(result json.RawMessage) AgentCapabilities {
 	}
 }
 
-func (c *ProcessClient) NewSession(ctx context.Context, _ SessionMetadata) (Session, error) {
+func (c *ProcessClient) NewSession(ctx context.Context, meta SessionMetadata) (Session, error) {
+	mcpServers, release := c.aggregatorServers(meta)
 	result, err := c.call(ctx, "session/new", map[string]any{
 		"cwd":        c.sessionCWD(),
-		"mcpServers": []any{},
+		"mcpServers": mcpServers,
 	})
 	if err != nil {
+		if release != nil {
+			release()
+		}
 		return Session{}, err
 	}
 	var decoded struct {
@@ -245,6 +256,9 @@ func (c *ProcessClient) NewSession(ctx context.Context, _ SessionMetadata) (Sess
 	}
 	if len(result) > 0 {
 		if err := json.Unmarshal(result, &decoded); err != nil {
+			if release != nil {
+				release()
+			}
 			return Session{}, fmt.Errorf("decode session/new response: %w", err)
 		}
 	}
@@ -253,9 +267,50 @@ func (c *ProcessClient) NewSession(ctx context.Context, _ SessionMetadata) (Sess
 		id = decoded.ID
 	}
 	if id == "" {
+		if release != nil {
+			release()
+		}
 		return Session{}, errors.New("session/new response did not include sessionId")
 	}
+	if release != nil {
+		c.mu.Lock()
+		c.releases = append(c.releases, release)
+		c.mu.Unlock()
+	}
 	return Session{ID: id}, nil
+}
+
+// aggregatorServers asks the aggregator (if any) to register this session and
+// returns the mcpServers value for session/new plus a release to run if the
+// session fails to open. An empty list (and nil release) when no aggregator is
+// configured or registration fails — the agent then simply gets no Murtaugh
+// tools, which is logged loudly rather than failing the session.
+func (c *ProcessClient) aggregatorServers(meta SessionMetadata) ([]any, func()) {
+	if c.opts.Aggregator == nil {
+		return []any{}, nil
+	}
+	spec, release, err := c.opts.Aggregator.RegisterSession(meta)
+	if err != nil {
+		c.log.Warn("aggregator registration failed; ACP agent will have no Murtaugh tools", "error", err)
+		return []any{}, nil
+	}
+	// ACP's env shape is an array of {name,value}; emit in stable key order.
+	keys := make([]string, 0, len(spec.Env))
+	for k := range spec.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	env := make([]map[string]string, 0, len(keys))
+	for _, k := range keys {
+		env = append(env, map[string]string{"name": k, "value": spec.Env[k]})
+	}
+	server := map[string]any{
+		"name":    spec.Name,
+		"command": spec.Command,
+		"args":    spec.Args,
+		"env":     env,
+	}
+	return []any{server}, release
 }
 
 func (c *ProcessClient) sessionCWD() string {
@@ -404,7 +459,14 @@ func (c *ProcessClient) Close() error {
 	if c.cmd != nil && c.cmd.Process != nil {
 		_ = c.cmd.Process.Kill()
 	}
+	releases := c.releases
+	c.releases = nil
 	c.mu.Unlock()
+	// Drop every aggregator session this client registered so its tokens can no
+	// longer be claimed.
+	for _, release := range releases {
+		release()
+	}
 	c.failAll(errors.New("ACP client closed"))
 	return nil
 }

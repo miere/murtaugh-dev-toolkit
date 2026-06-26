@@ -22,6 +22,32 @@ type SessionMetadata struct {
 	Source    string `json:"source,omitempty"`
 }
 
+// Aggregator hands an ACP session the MCP server it should connect to in order
+// to reach Murtaugh's own tools (built-ins plus proxied external MCP). The
+// concrete implementation lives above this package (it needs the tool registry,
+// the MCP client, and the bridge); ProcessClient only knows this seam, so the
+// agent package stays free of those dependencies. nil means the agent is told
+// about no Murtaugh MCP server (the prior behaviour).
+type Aggregator interface {
+	// RegisterSession binds a session (its Slack location drives where approval
+	// prompts are asked) and returns the MCP server spec to advertise in
+	// session/new, plus a release to call when the session ends. An error means
+	// no server is advertised; the agent simply gets no Murtaugh tools.
+	RegisterSession(meta SessionMetadata) (server MCPServerSpec, release func(), err error)
+}
+
+// MCPServerSpec is the stdio MCP server an ACP agent is asked to spawn — the
+// `murtaugh mcp-bridge` proxy. It maps onto ACP's stdio McpServer shape in
+// session/new (name + command + args + env).
+type MCPServerSpec struct {
+	Name    string
+	Command string
+	Args    []string
+	// Env are the KEY=VALUE pairs the agent sets on the spawned bridge. Rendered
+	// to ACP's [{name,value}] env shape in stable key order.
+	Env map[string]string
+}
+
 type PromptRequest struct {
 	Text string `json:"text"`
 
