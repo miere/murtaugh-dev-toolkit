@@ -19,6 +19,7 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
+	"github.com/miere/murtaugh-dev-toolkit/internal/mcpbridge"
 	slackclient "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
 	askbroker "github.com/miere/murtaugh-dev-toolkit/internal/slack/interaction"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
@@ -58,7 +59,11 @@ type Gateway struct {
 	// interactions routes broker prompt clicks (the `ask` tool, later the
 	// approval gate) back to the blocked turn. nil leaves broker prompts
 	// unrouted (CLI/MCP, or a gateway built without it).
-	interactions    *askbroker.Broker
+	interactions *askbroker.Broker
+	// bridge is the shared per-agent MCP aggregator. ACP agents are handed a
+	// `murtaugh mcp-bridge` stdio server that proxies to it, so they can reach
+	// Murtaugh's own tools. nil when ACP chat is disabled. Started in Run.
+	bridge          *mcpbridge.Server
 	chat            *ChatHandler
 	chatSessions    map[string]ChatSessionManager
 	chatWarmTimeout time.Duration
@@ -210,8 +215,13 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 	if !cfg.ACP.Enabled {
 		logger.Warn("ACP chat disabled: set agent.enabled: true in agents.yaml to enable DM and app_mention replies")
 	}
+	var bridge *mcpbridge.Server
 	if cfg.ACP.Enabled {
 		sessions = make(map[string]ChatSessionManager)
+		// The aggregator lets ACP agents reach Murtaugh's own tools over a private
+		// socket; built here, bound and torn down in Run. ACP agents that fail to
+		// reach it simply get no Murtaugh tools.
+		bridge = mcpbridge.NewServer(bridgeSocketPath(), logger)
 		// Chat agents are gated: a side-effecting tool call asks the user for
 		// approval in the thread. nil broker leaves them ungated. Headless and
 		// delegated agents (built elsewhere) never get an approver.
@@ -249,6 +259,7 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 				Logger:             logger.With("agent", name),
 				Approver:           approver,
 				ACPPermissionAsker: acpPermissionAsker,
+				Bridge:             bridge,
 			})
 			if err != nil {
 				logger.Error("agent disabled: could not build client", "agent", name, "kind", profile.ResolvedKind(), "error", err)
@@ -345,6 +356,7 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		handler:         NewDefaultSlashCommandHandler(cfg.Commands),
 		workflow:        workflow.NewEngine(cfg, workflow.Options{Logger: logger, Delegator: workflowDelegator, Recorder: recorder}),
 		interactions:    broker,
+		bridge:          bridge,
 		chat:            chat,
 		chatSessions:    sessions,
 		chatRouting:     cfg.Chat,
@@ -455,6 +467,7 @@ func (a *Gateway) Run(ctx context.Context) error {
 		return fmt.Errorf("resolve allowed users: %w", err)
 	}
 
+	a.startBridge(ctx)
 	a.logStartupRouting(ctx)
 	a.warmChat(ctx)
 	a.startChannelCache(ctx)
@@ -467,6 +480,27 @@ func (a *Gateway) Run(ctx context.Context) error {
 	// recycles a wedged (half-open) connection via a heartbeat watchdog, rather
 	// than running socketmode.RunContext once and giving up when it returns.
 	return a.superviseSocket(ctx)
+}
+
+// startBridge binds the MCP aggregator socket and tears it down when ctx ends.
+// A bind failure is logged and degrades to ACP agents having no Murtaugh tools,
+// never blocking gateway startup.
+func (a *Gateway) startBridge(ctx context.Context) {
+	if a.bridge == nil {
+		return
+	}
+	go func() {
+		if err := a.bridge.Start(ctx); err != nil {
+			a.logger.Warn("mcp aggregator disabled: could not start", "error", err)
+		}
+	}()
+}
+
+// bridgeSocketPath returns the per-process aggregator socket path. It lives under
+// the temp dir (kept short — unix socket paths are length-capped) and carries the
+// pid so concurrent gateways do not collide.
+func bridgeSocketPath() string {
+	return filepath.Join(os.TempDir(), "murtaugh", fmt.Sprintf("mcp-agg-%d.sock", os.Getpid()))
 }
 
 func (a *Gateway) warmChat(ctx context.Context) {
