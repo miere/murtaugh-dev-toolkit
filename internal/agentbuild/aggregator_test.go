@@ -79,7 +79,7 @@ func TestBridgeUnsafe(t *testing.T) {
 func TestACPAggregatorRegisterSession(t *testing.T) {
 	reg := registryWith("ask")
 	srv := mcpbridge.NewServer("/tmp/murtaugh-test-agg.sock", nil)
-	aggr, err := newACPAggregator(srv, reg, []string{"ask"}, nil)
+	aggr, err := newACPAggregator(srv, reg, []string{"ask"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("newACPAggregator: %v", err)
 	}
@@ -101,4 +101,26 @@ func TestACPAggregatorRegisterSession(t *testing.T) {
 		t.Fatal("expected a non-nil release")
 	}
 	release() // must not panic; drops the token
+}
+
+func TestACPAggregatorToolsetAndClose(t *testing.T) {
+	reg := registryWith("ask", "slack.send-msg")
+	srv := mcpbridge.NewServer("/tmp/murtaugh-test-agg2.sock", nil)
+	// No external MCP servers configured: the toolset is just the built-ins.
+	aggr, err := newACPAggregator(srv, reg, []string{"ask", "slack"}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("newACPAggregator: %v", err)
+	}
+	// Close before any session opened the manager must be a safe no-op.
+	if err := aggr.Close(); err != nil {
+		t.Fatalf("Close before use: %v", err)
+	}
+	got := toolNames(aggr.resolvedToolset())
+	if len(got) != 2 || !slices.Contains(got, "ask") || !slices.Contains(got, "slack.send-msg") {
+		t.Fatalf("resolved toolset = %v, want the two built-ins", got)
+	}
+	// Close after the (empty) manager opened must also succeed.
+	if err := aggr.Close(); err != nil {
+		t.Fatalf("Close after use: %v", err)
+	}
 }

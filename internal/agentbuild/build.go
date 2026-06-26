@@ -72,7 +72,7 @@ func Client(profile config.AgentProfile, deps Deps) (agent.Client, error) {
 			if deps.Approver != nil {
 				approver = mcpApprover{inner: deps.Approver}
 			}
-			aggr, err := newACPAggregator(deps.Bridge, deps.Registry, profile.Tools, approver)
+			aggr, err := newACPAggregator(deps.Bridge, deps.Registry, profile.Tools, approver, native.MCPServerConfigs(deps.MCPServers), logger)
 			if err != nil {
 				return nil, fmt.Errorf("agentbuild: build ACP aggregator: %w", err)
 			}

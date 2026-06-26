@@ -467,6 +467,10 @@ func (c *ProcessClient) Close() error {
 	for _, release := range releases {
 		release()
 	}
+	// Tear down the aggregator's proxied MCP connections, if it holds any.
+	if closer, ok := c.opts.Aggregator.(io.Closer); ok {
+		_ = closer.Close()
+	}
 	c.failAll(errors.New("ACP client closed"))
 	return nil
 }

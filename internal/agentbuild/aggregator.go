@@ -3,36 +3,47 @@ package agentbuild
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
 	"github.com/miere/murtaugh-dev-toolkit/internal/agent/native"
 	"github.com/miere/murtaugh-dev-toolkit/internal/frontends/mcp"
 	"github.com/miere/murtaugh-dev-toolkit/internal/mcpbridge"
+	"github.com/miere/murtaugh-dev-toolkit/internal/mcpclient"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 	"github.com/miere/murtaugh-dev-toolkit/internal/toolset"
 )
 
 // acpAggregator is the concrete agent.Aggregator for an ACP agent. It serves the
-// agent's resolved built-in toolset (its tools: allowlist, minus the native-only
-// synthesized groups and the host-config-mutating tools) over the gateway's
-// shared bridge socket, gated by the same human approver the native loop uses.
-//
-// Proxying the agent's external MCP servers through the aggregator lands with the
-// authoritative-MCP work (spec 015 §4); for now the surface is Murtaugh's own
-// built-ins, which is the headline parity win (ask, present_plan, slack.*, ...).
+// agent's resolved toolset over the gateway's shared bridge socket, gated by the
+// same human approver the native loop uses. The toolset is the agent's built-ins
+// (its tools: allowlist, minus the native-only synthesized groups and the
+// host-config-mutating tools) plus the proxied tools of every authoritative
+// external MCP server — so the ACP agent sees the same Murtaugh surface a native
+// agent would, with third-party credentials staying inside the gateway.
 type acpAggregator struct {
 	server   *mcpbridge.Server
 	binary   string
-	toolset  []tools.Tool
+	builtins []tools.Tool
 	approver mcp.Approver
+	mcpCfgs  []mcpclient.ServerConfig
+	logger   *slog.Logger
+
+	// The external MCP servers are opened lazily on first use (it is network I/O,
+	// kept out of gateway startup) and their tools merged with the built-ins once.
+	once    sync.Once
+	mgr     *mcpclient.Manager
+	toolset []tools.Tool
 }
 
-// newACPAggregator resolves the agent's built-in toolset once and returns an
-// aggregator bound to server. allow is the agent's tools: allowlist; approver
-// (may be nil) gates side-effecting calls.
-func newACPAggregator(server *mcpbridge.Server, registry *tools.Registry, allow []string, approver mcp.Approver) (*acpAggregator, error) {
+// newACPAggregator resolves the agent's built-in toolset and records the
+// authoritative external MCP servers to proxy. allow is the agent's tools:
+// allowlist; approver (may be nil) gates side-effecting calls; mcpCfgs is the
+// global, authoritative MCP server set (native.MCPServerConfigs).
+func newACPAggregator(server *mcpbridge.Server, registry *tools.Registry, allow []string, approver mcp.Approver, mcpCfgs []mcpclient.ServerConfig, logger *slog.Logger) (*acpAggregator, error) {
 	ts, err := resolveBuiltins(registry, allow)
 	if err != nil {
 		return nil, err
@@ -41,7 +52,34 @@ func newACPAggregator(server *mcpbridge.Server, registry *tools.Registry, allow 
 	if err != nil {
 		return nil, fmt.Errorf("resolve murtaugh binary for bridge: %w", err)
 	}
-	return &acpAggregator{server: server, binary: binary, toolset: ts, approver: approver}, nil
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &acpAggregator{server: server, binary: binary, builtins: ts, approver: approver, mcpCfgs: mcpCfgs, logger: logger}, nil
+}
+
+// resolvedToolset opens the external MCP servers once (lazily) and returns the
+// full served toolset: built-ins followed by the proxied MCP tools.
+func (a *acpAggregator) resolvedToolset() []tools.Tool {
+	a.once.Do(func() {
+		a.mgr = mcpclient.Open(context.Background(), a.mcpCfgs, a.logger)
+		mcpTools := a.mgr.Tools()
+		merged := make([]tools.Tool, 0, len(a.builtins)+len(mcpTools))
+		merged = append(merged, a.builtins...)
+		merged = append(merged, mcpTools...)
+		a.toolset = merged
+		a.logger.Info("acp aggregator toolset resolved", "builtins", len(a.builtins), "mcp_tools", len(mcpTools), "mcp_servers", len(a.mcpCfgs))
+	})
+	return a.toolset
+}
+
+// Close tears down the proxied MCP connections. Safe to call when none were ever
+// opened (no session used the aggregator).
+func (a *acpAggregator) Close() error {
+	if a.mgr != nil {
+		return a.mgr.Close()
+	}
+	return nil
 }
 
 // RegisterSession registers this session's toolset under a fresh token and
@@ -51,7 +89,7 @@ func newACPAggregator(server *mcpbridge.Server, registry *tools.Registry, allow 
 func (a *acpAggregator) RegisterSession(meta agent.SessionMetadata) (agent.MCPServerSpec, func(), error) {
 	decorate := locationDecorator(meta)
 	token, err := a.server.Register(mcpbridge.Session{
-		Tools:       a.toolset,
+		Tools:       a.resolvedToolset(),
 		Approver:    a.approver,
 		WithContext: decorate,
 	})
