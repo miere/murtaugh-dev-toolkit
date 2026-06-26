@@ -26,6 +26,7 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/help"
 	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
+	"github.com/miere/murtaugh-dev-toolkit/internal/mcpbridge"
 )
 
 var version = "dev"
@@ -44,6 +45,14 @@ func run(rawArgs []string) error {
 	if len(rawArgs) > 0 && rawArgs[0] == "version" {
 		fmt.Println(version)
 		return nil
+	}
+	// `murtaugh mcp-bridge` is the transparent stdio↔socket proxy the gateway
+	// hands an ACP agent to reach Murtaugh's per-agent MCP aggregator. It is
+	// spawned by the agent (not a user), needs no config, and must keep stdout
+	// clean for MCP — so it is dispatched here, before any config bootstrap or
+	// logging is wired.
+	if len(rawArgs) > 0 && rawArgs[0] == mcpbridge.Subcommand {
+		return runMCPBridge()
 	}
 	defaultPath, err := config.DefaultPath()
 	if err != nil {
@@ -140,6 +149,22 @@ func run(rawArgs []string) error {
 		return errors.New(application.SlackUsageLine())
 	}
 	return application.Run(ctx)
+}
+
+// runMCPBridge runs the `murtaugh mcp-bridge` subcommand: a transparent pipe
+// between the spawning agent's stdio and the gateway's aggregator socket. The
+// socket path and session token arrive via the environment so no argument
+// parsing (which could collide with config flags) is needed. It blocks until the
+// agent closes the pipe or the process is signalled.
+func runMCPBridge() error {
+	socket := os.Getenv(mcpbridge.EnvSocket)
+	token := os.Getenv(mcpbridge.EnvToken)
+	if socket == "" || token == "" {
+		return fmt.Errorf("%s requires %s and %s in the environment", mcpbridge.Subcommand, mcpbridge.EnvSocket, mcpbridge.EnvToken)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return mcpbridge.RunBridge(ctx, socket, token, os.Stdin, os.Stdout)
 }
 
 // extractConfigFlag pulls the global --config flag out of args, supporting

@@ -36,6 +36,17 @@ import (
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 )
 
+// Subcommand is the argv[1] that runs the bridge: `murtaugh mcp-bridge`.
+const Subcommand = "mcp-bridge"
+
+// EnvSocket and EnvToken name the environment variables the gateway sets on the
+// Stdio McpServer it hands the agent, and that the bridge subcommand reads. Both
+// sides reference these constants so the contract stays in one place.
+const (
+	EnvSocket = "MURTAUGH_BRIDGE_SOCKET"
+	EnvToken  = "MURTAUGH_BRIDGE_TOKEN"
+)
+
 // handshake is the single newline-delimited JSON line the bridge sends before
 // any MCP traffic. It authenticates the connection to a registered session.
 type handshake struct {
