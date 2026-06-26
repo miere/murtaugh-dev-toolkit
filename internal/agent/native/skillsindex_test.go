@@ -36,7 +36,7 @@ func TestRenderSkillsIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	idx := renderSkillsIndex(dir, nil)
+	idx := renderSkillsIndex(nil, dir, nil)
 	if !strings.Contains(idx, "- alpha: Do alpha things") {
 		t.Errorf("index missing alpha entry:\n%s", idx)
 	}
@@ -55,7 +55,7 @@ func TestRenderSkillsIndex_GatedByRequires(t *testing.T) {
 	mustWriteSkill(t, dir, "ops", "---\nname: ops\ndescription: Operator only.\nrequires: [manage]\n---\n# Ops")
 
 	// A slack/ask agent (no manage) sees only the ungated skill.
-	idx := renderSkillsIndex(dir, []string{"slack", "ask"})
+	idx := renderSkillsIndex(nil, dir, []string{"slack", "ask"})
 	if !strings.Contains(idx, "- chat:") {
 		t.Errorf("ungated skill missing from index:\n%s", idx)
 	}
@@ -64,7 +64,7 @@ func TestRenderSkillsIndex_GatedByRequires(t *testing.T) {
 	}
 
 	// A manage agent sees both.
-	idxOp := renderSkillsIndex(dir, []string{"slack", "manage"})
+	idxOp := renderSkillsIndex(nil, dir, []string{"slack", "manage"})
 	if !strings.Contains(idxOp, "- ops:") {
 		t.Errorf("manage agent's index should include ops:\n%s", idxOp)
 	}
@@ -83,10 +83,10 @@ func mustWriteSkill(t *testing.T, skillsDir, name, content string) {
 }
 
 func TestRenderSkillsIndex_EmptyWhenNoSkills(t *testing.T) {
-	if got := renderSkillsIndex(t.TempDir(), nil); got != "" {
+	if got := renderSkillsIndex(nil, t.TempDir(), nil); got != "" {
 		t.Errorf("expected empty index for an empty dir, got %q", got)
 	}
-	if got := renderSkillsIndex(filepath.Join(t.TempDir(), "does-not-exist"), nil); got != "" {
+	if got := renderSkillsIndex(nil, filepath.Join(t.TempDir(), "does-not-exist"), nil); got != "" {
 		t.Errorf("expected empty index for a missing dir, got %q", got)
 	}
 }

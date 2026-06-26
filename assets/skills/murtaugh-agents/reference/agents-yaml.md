@@ -91,7 +91,8 @@ the `murtaugh-setup` skill's `setup_env`).
 | `workdir` | no | Working directory that roots the files/terminal tools. Defaults to the workspace (`~/.config/murtaugh`) when unset. |
 | `system_prompt` | no | Inline system prompt. Mutually exclusive with `system_prompt_file`; when both are empty a built-in default is used. |
 | `system_prompt_file` | no | Path (resolved against the config dir) to a file holding the system prompt. Mutually exclusive with `system_prompt`. |
-| `tools` | no | Allowlist of tool groups the agent may use — native groups (`files`, `terminal`) plus registry namespaces (`skills`, `slack`, `jobs`, `ask`, `present_plan`, …). Empty means only the always-on set. |
+| `tools` | no | Allowlist of tool groups the agent may use — native groups (`files`, `terminal`) plus registry namespaces (`skills`, `slack`, `jobs`, `ask`, `present_plan`, …) and the `manage` skills-visibility grant. Empty means only the always-on set. |
+| `export_skills_to_fs` | no | Bundled (`murtaugh-*`) skills to write into this agent's `workdir` so a filesystem-discovering backend (e.g. a Claude-based ACP agent) can load them. Empty (default) keeps the bundled skills in-binary only — readable solely through the gated `skills` tool, never by `files`/`terminal`. `[all]` exports every bundled skill. See below. |
 | `mcp_servers` | no | Names from the top-level `mcp_servers` block to attach. Each contributes its remote tools. |
 | `max_turns` | no | Tool-call iterations allowed in a single prompt. `0` uses a default. |
 | `context_limit` | no | Conversation token budget that drives compaction. `0` uses a per-provider-family default. |
@@ -103,6 +104,36 @@ the `murtaugh-setup` skill's `setup_env`).
 A workspace `AGENTS.md` (in the agent's `workdir`) is auto-loaded into the system
 prompt as project guidelines — no config needed. The agent's **name and voice**
 are conventionally set there.
+
+### `export_skills_to_fs` — making bundled skills filesystem-discoverable
+
+The bundled `murtaugh-*` skills live **in the binary** and are served only
+through the gated `skills` tool — they never touch disk, so the `files`/`terminal`
+tools (and a shell) can't read them. That's the default and the secure posture.
+
+Some backends discover skills from the **filesystem** instead (a Claude-based ACP
+agent reads `.claude/skills/`). For those, list the skills to mirror into the
+agent's `workdir`:
+
+```yaml
+agents:
+  claude:
+    command: claude-code-acp
+    workdir: ${HOME}/work/claude     # gets its own .agents/skills + .claude/skills
+    export_skills_to_fs: [all]        # or e.g. [murtaugh-slack, murtaugh-jobs]
+```
+
+- The list is the **source of truth**, reconciled on every gateway start: listed
+  skills are (re)written, and any `murtaugh-*` skill no longer listed is removed —
+  so upgrades and edits self-heal. **Bespoke skills are never touched.**
+- Names are validated **fail-closed**: an unknown skill name (anything other than a
+  bundled `murtaugh-*` name or `all`) makes the gateway refuse to start.
+- **Exporting a skill opts it out of the in-binary blind for that agent** — once on
+  disk it's readable by that agent's file/terminal tools. Export only what a
+  filesystem-discovering backend actually needs.
+- Agents that **share a `workdir`** should agree on their export lists; they
+  reconcile the same `.agents/skills`, so the last one wins. Give agents with
+  different export needs distinct `workdir`s.
 
 ### `approval:` — the terminal approval gate
 

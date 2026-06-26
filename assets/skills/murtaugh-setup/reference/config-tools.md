@@ -20,10 +20,11 @@ can run it by hand). What it touches:
 
 - `slack.yaml`, `agents.yaml`, `jobs.yaml` and `templates/` — **created once,
   then preserved**: your tokens and edits are never overwritten.
-- `.agents/skills/<skill>/…` (the bundled agent skills) plus a `.claude/skills`
-  symlink — **refreshed to the shipped version on every run**, so the workspace
-  skills stay in sync with the binary. Skills you add yourself are left alone;
-  edits to a skill Murtaugh ships are overwritten (add a new skill instead).
+- `.agents/skills/` (the home for your **bespoke** skills) plus a `.claude/skills`
+  symlink to it — **created if absent**. The bundled `murtaugh-*` skills are
+  served in-binary and are **not** written here; an agent's `export_skills_to_fs`
+  is what mirrors chosen ones into a workdir (see the `murtaugh-agents` skill).
+  Skills you add yourself are left alone.
 
 Returns a report of which files were **created**, **updated** (refreshed), and
 **preserved**. Run it first on a fresh install; safe to re-run any time.

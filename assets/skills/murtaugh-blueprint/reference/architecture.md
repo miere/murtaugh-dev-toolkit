@@ -47,7 +47,7 @@ capability skill — defer to them for flag/tool details:
 ├── slack-*.yaml              # additional Slack identities (e.g. a second workspace bot)
 ├── automations/              # the automation routines (see below)
 ├── templates/                # static Block Kit templates (see below)
-├── skills/                   # skills, incl. Murtaugh-managed ones (see below)
+├── .agents/skills/           # your bespoke skills (bundled murtaugh-* are in-binary; see below)
 └── temp/                     # scratch space; throwaway scripts live in temp/scripts
 ```
 
@@ -139,17 +139,23 @@ a message's *shape* depends on runtime logic (conditional blocks, loops over a
 variable number of items), build the blocks in the automation code instead — see
 how `pull_request` renders its self-updating plan cards in Python.
 
-## Skills (`skills/`)
+## Skills
 
-`skills/` contains skills, each a folder with a `SKILL.md`. Two kinds live here:
+A skill is a folder with a `SKILL.md`. Two kinds, with two different homes:
 
 - **Murtaugh-managed skills** (the `murtaugh-*` ones, e.g. `murtaugh-slack`,
-  `murtaugh-jobs`, and this one). These ship with Murtaugh and are **overwritten
-  every time Murtaugh is updated**. Do **not** edit them or store anything you
-  want to keep there — your changes will be lost on the next update.
-- **Bespoke / ad-hoc skills.** You may create custom skills here when the user
-  asks. To keep them safe from being clobbered, **do not use the `murtaugh-`
-  prefix** for bespoke skills — that namespace belongs to Murtaugh.
+  `murtaugh-jobs`, and this one). These ship **inside the binary** and are served
+  only through the gated `skills` tool — they are **not** on disk by default, so
+  the file/terminal tools can't read them (and an agent can't accidentally edit
+  them; they always reflect the shipped binary). An agent's
+  `export_skills_to_fs` can mirror chosen ones into its workdir for a
+  filesystem-discovering backend — see the `murtaugh-agents` skill.
+- **Bespoke / ad-hoc skills.** You author these on disk under
+  `<workspace>/.agents/skills/`; they're layered in alongside the managed ones and
+  may use the same `requires:` / `templated:` frontmatter for capability gating.
+  **Do not use the `murtaugh-` prefix** for bespoke skills — that namespace belongs
+  to Murtaugh (the export reconcile manages it and will remove stray `murtaugh-*`
+  dirs it doesn't recognise).
 
 ## Keeping docs in sync
 

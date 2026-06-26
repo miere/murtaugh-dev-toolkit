@@ -228,8 +228,20 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		for name, profile := range cfg.Agents {
 			// Default an agent's working directory to the workspace (the
 			// config dir, e.g. ~/.config/murtaugh) when it leaves workdir
-			// unset, so agents start where the bundled skills and templates
-			// live and can auto-discover them.
+			// unset, so agents start where the templates live.
+			agentWorkDir := strings.TrimSpace(profile.WorkDir)
+			if agentWorkDir == "" {
+				agentWorkDir = cfg.BaseDir
+			}
+			// Mirror the bundled skills this agent opted to export into its
+			// workdir so a filesystem-discovering backend can load them; the
+			// default (empty) leaves them in-binary only. Non-fatal: a failure
+			// just means no filesystem skills for this agent.
+			if exported, err := config.ReconcileExportedSkills(agentWorkDir, profile.ExportSkillsToFS); err != nil {
+				logger.Warn("skill export failed", "agent", name, "error", err)
+			} else if len(exported) > 0 {
+				logger.Info("exported bundled skills to workdir", "agent", name, "skills", exported, "dir", filepath.Join(agentWorkDir, ".agents", "skills"))
+			}
 			client, err := agentbuild.Client(profile, agentbuild.Deps{
 				Registry:           registry,
 				MCPServers:         cfg.MCPServers,

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/miere/murtaugh-dev-toolkit/assets"
 	"gopkg.in/yaml.v3"
 )
 
@@ -192,6 +193,16 @@ type AgentProfile struct {
 	// agent (e.g. "files", "terminal", "skills", "slack", "jobs"). Empty means
 	// no tools beyond the always-on set the toolset resolver decides.
 	Tools []string `yaml:"tools"`
+	// ExportSkillsToFS lists bundled (murtaugh-*) skills to write into this
+	// agent's workdir so an external, filesystem-discovering agent (e.g. a
+	// Claude-based ACP backend) can load them. Empty (the default) keeps the
+	// bundled skills in-binary only — readable solely through the gated `skills`
+	// tool, never by the file/terminal tools. The sentinel "all" exports every
+	// bundled skill. The list is the source of truth: on each build, listed
+	// skills are (re)written and any previously-exported murtaugh-* skill not
+	// listed is removed (bespoke skills are never touched). Exporting a skill
+	// opts it out of the in-binary blind for this agent.
+	ExportSkillsToFS []string `yaml:"export_skills_to_fs"`
 	// MCPServers lists names from the top-level mcp_servers block to attach to
 	// this agent. Each contributes its remote tools to the agent's toolset.
 	MCPServers []string `yaml:"mcp_servers"`
@@ -578,6 +589,7 @@ func (c Config) Validate() error {
 				errs = append(errs, fmt.Errorf("agents[%s].env key %q must not contain '='", name, key))
 			}
 		}
+		errs = append(errs, validateExportSkills(name, profile.ExportSkillsToFS)...)
 		if profile.ResolvedKind() == AgentKindNative {
 			errs = append(errs, validateNativeAgent(name, profile, c.MCPServers)...)
 		} else if err := profile.Validate(); err != nil {
@@ -977,6 +989,38 @@ func validateDelegate(d *DelegateToAgentConfig, agents map[string]AgentProfile) 
 		return fmt.Errorf("delegate-to-agent references unknown agent %q", d.Agent)
 	}
 	return nil
+}
+
+// exportSkillsAll is the sentinel that exports every bundled skill to the
+// agent's workdir.
+const exportSkillsAll = "all"
+
+// validateExportSkills checks an agent's export_skills_to_fs list: every entry
+// must be the sentinel "all" or the name of a bundled skill. Fail-closed — an
+// unknown name is a config error, so a typo can't silently export nothing (or
+// the wrong thing).
+func validateExportSkills(agent string, list []string) []error {
+	if len(list) == 0 {
+		return nil
+	}
+	known := make(map[string]bool)
+	for _, n := range assets.SkillNames() {
+		known[n] = true
+	}
+	var errs []error
+	for i, raw := range list {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			errs = append(errs, fmt.Errorf("agents[%s].export_skills_to_fs[%d] must not be blank", agent, i))
+			continue
+		}
+		if s == exportSkillsAll || known[s] {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("agents[%s].export_skills_to_fs[%d]: unknown skill %q (valid: %q or one of %s)",
+			agent, i, s, exportSkillsAll, strings.Join(assets.SkillNames(), ", ")))
+	}
+	return errs
 }
 
 // nativeProviders is the set of litellm provider families a native agent may

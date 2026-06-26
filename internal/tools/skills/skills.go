@@ -1,30 +1,31 @@
 // Package skills implements the `skills` tool: it lets a native agent discover
-// and read the skills bundled into its workspace.
+// and read the skills available to it.
 //
-// Murtaugh's bootstrap mirrors the embedded skills/ tree to
-// <workspace>/.agents/skills/, where each skill is a directory containing a
-// SKILL.md plus optional reference/ and examples/ subtrees. This tool lists
-// those skills (name + description) when invoked with no name, returns a single
-// skill's SKILL.md body plus its file inventory when given a name, and serves a
-// single reference/example file's body when given name + file.
+// Two sources, merged. Murtaugh's own skills (the `murtaugh-*` namespace) are
+// served from an embedded filesystem baked into the binary — they never touch
+// disk by default, so neither the file tools nor a terminal can read them; the
+// gated `skills` tool is the only reader. The user's own bespoke skills live on
+// disk (an optional second source) and are layered in. The managed source is
+// authoritative: a name present in the embed is always served from the embed,
+// so an on-disk copy (e.g. one exported for an external Claude agent to
+// discover) never shadows or supersedes it.
 //
 // Capability gating. A skill (and each of its files) may declare a `requires:`
 // list of capability tokens in SKILL.md frontmatter. The tool is constructed
 // with the agent's granted tokens (its agents.yaml `tools:` allowlist); a unit
 // is visible iff the agent holds at least one of its required tokens (any-of),
 // and a unit with no `requires` is always visible. This is the same allowlist
-// currency `toolset.Resolve` uses for tools — so the skill surface is a
-// projection of the agent's capabilities, just like the tool surface. Three
-// layers cooperate: the listing/index filter (L1), the templated SKILL.md body
-// render that drops out-of-scope rows (L2, opt-in via `templated: true`), and
-// the per-file gate on the inventory and file-serve path (L3).
+// currency `toolset.Resolve` uses for tools. Three layers cooperate: the
+// listing/index filter (L1), the templated SKILL.md body render that drops
+// out-of-scope rows (L2, opt-in via `templated: true`), and the per-file gate on
+// the inventory and file-serve path (L3).
 package skills
 
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
+	"path"
 	"sort"
 	"strings"
 
@@ -41,20 +42,21 @@ const skillFile = "SKILL.md"
 // open; a body without the marker is returned unchanged.
 const filesMarker = "{{FILES}}"
 
-// Tool is the skills capability. It is rooted at skillsDir, the directory that
-// holds one subdirectory per skill, and carries the reading agent's granted
-// capability tokens (`have`) for gating.
+// Tool is the skills capability. It reads from a managed source (the embedded
+// murtaugh-* skills) and an optional bespoke source (the user's on-disk skills),
+// carrying the reading agent's granted capability tokens (`have`) for gating.
 type Tool struct {
-	skillsDir string
-	have      map[string]bool
+	managed fs.FS
+	bespoke fs.FS // may be nil
+	have    map[string]bool
 }
 
-// New constructs a Tool rooted at skillsDir — the directory holding skill
-// subdirectories (e.g. <workspace>/.agents/skills). have is the agent's granted
-// capability tokens (its agents.yaml `tools:` allowlist); pass none for an
-// ungated view (only skills/files with no `requires:` are then visible).
-func New(skillsDir string, have ...string) *Tool {
-	return &Tool{skillsDir: skillsDir, have: toSet(have)}
+// New constructs a Tool from the managed skills FS (the embedded murtaugh-*
+// tree) and an optional bespoke FS (the user's on-disk skills; nil for none).
+// have is the agent's granted capability tokens (its agents.yaml `tools:`
+// allowlist); pass none for an ungated view.
+func New(managed, bespoke fs.FS, have ...string) *Tool {
+	return &Tool{managed: managed, bespoke: bespoke, have: toSet(have)}
 }
 
 // Name returns the registry key.
@@ -62,9 +64,9 @@ func (t *Tool) Name() string { return "skills" }
 
 // Description returns the human-facing summary used by MCP clients.
 func (t *Tool) Description() string {
-	return "Discover and read bundled skills. Call with no arguments to list all " +
-		"skills (name + description); pass name to read that skill's SKILL.md and " +
-		"file inventory; pass name and file to read one reference/example file."
+	return "Discover and read available skills. Call with no arguments to list " +
+		"all skills (name + description); pass name to read that skill's SKILL.md " +
+		"and file inventory; pass name and file to read one reference/example file."
 }
 
 // InputSchema returns the JSON Schema for the tool's arguments. `name` switches
@@ -172,12 +174,26 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 	return t.read(name)
 }
 
+// sourceFor returns the FS that owns name: the managed source if it has the
+// skill (authoritative), else the bespoke source. ok is false if neither does.
+func (t *Tool) sourceFor(name string) (fs.FS, bool) {
+	if t.managed != nil && isSkillDir(t.managed, name) {
+		return t.managed, true
+	}
+	if t.bespoke != nil && isSkillDir(t.bespoke, name) {
+		return t.bespoke, true
+	}
+	return nil, false
+}
+
 // list returns the skills visible to this agent (sorted), filtered by each
-// skill's top-level `requires:` (L1).
+// skill's top-level `requires:` (L1). Managed skills are listed first and a
+// bespoke skill whose name collides with a managed one is dropped (managed
+// authoritative).
 func (t *Tool) list() (ListResult, error) {
-	infos, err := listInfos(t.skillsDir)
+	infos, err := t.listInfos()
 	if err != nil {
-		return ListResult{}, fmt.Errorf("Error: cannot read skills directory: %w", err)
+		return ListResult{}, fmt.Errorf("Error: cannot read skills: %w", err)
 	}
 	var out []SkillSummary
 	for _, in := range infos {
@@ -194,65 +210,67 @@ type skillInfo struct {
 	requires []string
 }
 
-// listInfos scans skillsDir for skills (subdirectories with a SKILL.md) and
-// returns each one's summary + top-level `requires:`, sorted by name. A missing
-// skillsDir returns the os error; callers decide whether that is fatal.
-func listInfos(skillsDir string) ([]skillInfo, error) {
-	entries, err := os.ReadDir(skillsDir)
-	if err != nil {
+// listInfos scans both sources and returns each skill's summary + top-level
+// `requires:`, sorted by name. Managed names win; a bespoke skill with the same
+// name as a managed one is skipped.
+func (t *Tool) listInfos() ([]skillInfo, error) {
+	seen := make(map[string]bool)
+	var out []skillInfo
+	collect := func(fsys fs.FS) error {
+		if fsys == nil {
+			return nil
+		}
+		entries, err := fs.ReadDir(fsys, ".")
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if !e.IsDir() || seen[e.Name()] {
+				continue
+			}
+			data, err := fs.ReadFile(fsys, path.Join(e.Name(), skillFile))
+			if err != nil {
+				continue // not a skill directory
+			}
+			seen[e.Name()] = true
+			meta := parseMetadata(string(data))
+			desc := meta.description
+			if desc == "" {
+				desc = meta.summary
+			}
+			name := meta.name
+			if name == "" {
+				name = e.Name()
+			}
+			out = append(out, skillInfo{SkillSummary{Name: name, Description: desc}, meta.requires})
+		}
+		return nil
+	}
+	// Managed first so it wins on name collisions; a missing managed source is
+	// not fatal (tests may pass only bespoke).
+	if err := collect(t.managed); err != nil {
 		return nil, err
 	}
-	var out []skillInfo
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(skillsDir, e.Name(), skillFile))
-		if err != nil {
-			continue // not a skill directory
-		}
-		meta := parseMetadata(string(data))
-		desc := meta.description
-		if desc == "" {
-			desc = meta.summary
-		}
-		name := meta.name
-		if name == "" {
-			name = e.Name()
-		}
-		out = append(out, skillInfo{SkillSummary{Name: name, Description: desc}, meta.requires})
+	if err := collect(t.bespoke); err != nil && t.managed == nil {
+		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
-// List scans skillsDir and returns an (unfiltered) sorted summary per skill. It
-// is the shared lister behind the agent's system-prompt index and tooling that
-// wants every skill regardless of capability.
-func List(skillsDir string) ([]SkillSummary, error) {
-	infos, err := listInfos(skillsDir)
+// ListVisible returns the skills an agent holding `have` may use across the
+// managed + bespoke sources — the L1 gate for the system-prompt skills index.
+// Filtering by the static profile tokens keeps the index stable per profile (and
+// so cache-safe). bespoke may be nil.
+func ListVisible(managed, bespoke fs.FS, have []string) ([]SkillSummary, error) {
+	t := New(managed, bespoke, have...)
+	infos, err := t.listInfos()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]SkillSummary, len(infos))
-	for i, in := range infos {
-		out[i] = in.SkillSummary
-	}
-	return out, nil
-}
-
-// ListVisible is List filtered to the skills an agent holding `have` may use —
-// the L1 gate for the system-prompt skills index. Filtering by the static
-// profile tokens keeps the index stable per profile (and so cache-safe).
-func ListVisible(skillsDir string, have []string) ([]SkillSummary, error) {
-	infos, err := listInfos(skillsDir)
-	if err != nil {
-		return nil, err
-	}
-	hv := toSet(have)
 	var out []SkillSummary
 	for _, in := range infos {
-		if visible(in.requires, hv) {
+		if visible(in.requires, t.have) {
 			out = append(out, in.SkillSummary)
 		}
 	}
@@ -263,13 +281,11 @@ func ListVisible(skillsDir string, have []string) ([]SkillSummary, error) {
 // For a templated skill the frontmatter is stripped and the body is rendered to
 // the agent's capabilities (L2); the file inventory is filtered per-file (L3).
 func (t *Tool) read(name string) (ReadResult, error) {
-	dir, err := t.skillDir(name)
+	fsys, err := t.skillFS(name)
 	if err != nil {
 		return ReadResult{}, err
 	}
-
-	mdPath := filepath.Join(dir, skillFile)
-	data, err := os.ReadFile(mdPath)
+	data, err := fs.ReadFile(fsys, path.Join(name, skillFile))
 	if err != nil {
 		return ReadResult{}, fmt.Errorf("Error: skill %q not found", name)
 	}
@@ -297,7 +313,7 @@ func (t *Tool) read(name string) (ReadResult, error) {
 		Name:        displayName,
 		Description: desc,
 		Content:     body,
-		Files:       t.filterFiles(listSkillFiles(dir), meta.files),
+		Files:       t.filterFiles(listSkillFiles(fsys, name), meta.files),
 	}, nil
 }
 
@@ -305,22 +321,25 @@ func (t *Tool) read(name string) (ReadResult, error) {
 // `requires:` in the skill manifest (L3). A hidden or absent file is reported
 // identically ("not found") so gating doesn't disclose that a file exists.
 func (t *Tool) readFile(name, rel string) (FileResult, error) {
-	dir, err := t.skillDir(name)
+	fsys, err := t.skillFS(name)
 	if err != nil {
 		return FileResult{}, err
 	}
-	clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(rel)))
+	clean := path.Clean(strings.TrimSpace(rel))
 	// Confine to the skill's reference/ and examples/ subtrees.
-	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "../") ||
-		(!strings.HasPrefix(clean, "reference/") && !strings.HasPrefix(clean, "examples/")) {
+	if !strings.HasPrefix(clean, "reference/") && !strings.HasPrefix(clean, "examples/") {
+		return FileResult{}, fmt.Errorf("Error: file %q not found in skill %q", rel, name)
+	}
+	full := path.Join(name, clean)
+	if !fs.ValidPath(full) {
 		return FileResult{}, fmt.Errorf("Error: file %q not found in skill %q", rel, name)
 	}
 	// Gate by the manifest entry, if any.
-	meta := readMeta(dir)
+	meta := readMeta(fsys, name)
 	if reqs, ok := fileRequires(meta.files, clean); ok && !visible(reqs, t.have) {
 		return FileResult{}, fmt.Errorf("Error: file %q not found in skill %q", rel, name)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(clean)))
+	data, err := fs.ReadFile(fsys, full)
 	if err != nil {
 		return FileResult{}, fmt.Errorf("Error: file %q not found in skill %q", rel, name)
 	}
@@ -371,46 +390,45 @@ func renderFiles(body string, files []FileMeta, have map[string]bool) string {
 	return body
 }
 
-// skillDir resolves name to a direct child directory of skillsDir, rejecting
-// any name that contains path separators or escapes skillsDir.
-func (t *Tool) skillDir(name string) (string, error) {
-	// A skill name must be a single path element — no separators, no traversal.
-	if name != filepath.Base(name) || name == "." || name == ".." || strings.ContainsRune(name, os.PathSeparator) || strings.ContainsRune(name, '/') {
-		return "", fmt.Errorf("Error: invalid skill name %q", name)
+// skillFS resolves the source FS that owns a valid skill name, rejecting names
+// that aren't a single path element or aren't a skill directory.
+func (t *Tool) skillFS(name string) (fs.FS, error) {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+		return nil, fmt.Errorf("Error: invalid skill name %q", name)
 	}
-	dir := filepath.Join(t.skillsDir, name)
-
-	// Defense in depth: confirm the cleaned path is a direct child of skillsDir.
-	parent := filepath.Clean(t.skillsDir)
-	if filepath.Dir(filepath.Clean(dir)) != parent {
-		return "", fmt.Errorf("Error: invalid skill name %q", name)
+	if fsys, ok := t.sourceFor(name); ok {
+		return fsys, nil
 	}
-
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return "", fmt.Errorf("Error: skill %q not found", name)
-	}
-	return dir, nil
+	return nil, fmt.Errorf("Error: skill %q not found", name)
 }
 
-// listSkillFiles returns relative paths (slash-separated) of regular files
-// under the skill's reference/ and examples/ subdirectories, sorted.
-func listSkillFiles(dir string) []string {
+// isSkillDir reports whether fsys has a skill directory named name (a directory
+// containing a SKILL.md).
+func isSkillDir(fsys fs.FS, name string) bool {
+	if info, err := fs.Stat(fsys, name); err != nil || !info.IsDir() {
+		return false
+	}
+	if _, err := fs.Stat(fsys, path.Join(name, skillFile)); err != nil {
+		return false
+	}
+	return true
+}
+
+// listSkillFiles returns relative paths (slash-separated) of regular files under
+// the skill's reference/ and examples/ subdirectories, sorted.
+func listSkillFiles(fsys fs.FS, name string) []string {
 	var files []string
 	for _, sub := range []string{"reference", "examples"} {
-		root := filepath.Join(dir, sub)
-		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		root := path.Join(name, sub)
+		_ = fs.WalkDir(fsys, root, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil // subdir absent — skip
 			}
 			if d.IsDir() {
 				return nil
 			}
-			rel, relErr := filepath.Rel(dir, path)
-			if relErr != nil {
-				return nil
-			}
-			files = append(files, filepath.ToSlash(rel))
+			rel := strings.TrimPrefix(p, name+"/")
+			files = append(files, rel)
 			return nil
 		})
 	}
@@ -437,9 +455,10 @@ type metadata struct {
 	files       []FileMeta
 }
 
-// readMeta parses the SKILL.md at dir, returning a zero metadata if unreadable.
-func readMeta(dir string) metadata {
-	data, err := os.ReadFile(filepath.Join(dir, skillFile))
+// readMeta parses the SKILL.md of name in fsys, returning a zero metadata if
+// unreadable.
+func readMeta(fsys fs.FS, name string) metadata {
+	data, err := fs.ReadFile(fsys, path.Join(name, skillFile))
 	if err != nil {
 		return metadata{}
 	}
@@ -451,15 +470,15 @@ func readMeta(dir string) metadata {
 // ending in "/"). ok is false when nothing matches (the file is then visible by
 // default). Directory entries let one line gate a whole subtree (e.g.
 // `examples/unfurl/`).
-func fileRequires(manifest []FileMeta, path string) ([]string, bool) {
+func fileRequires(manifest []FileMeta, p string) ([]string, bool) {
 	var bestReq []string
 	var bestLen int
 	found := false
 	for _, f := range manifest {
-		if f.Path == path {
+		if f.Path == p {
 			return f.Requires, true
 		}
-		if strings.HasSuffix(f.Path, "/") && strings.HasPrefix(path, f.Path) && len(f.Path) > bestLen {
+		if strings.HasSuffix(f.Path, "/") && strings.HasPrefix(p, f.Path) && len(f.Path) > bestLen {
 			bestReq, bestLen, found = f.Requires, len(f.Path), true
 		}
 	}

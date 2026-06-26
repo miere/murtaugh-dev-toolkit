@@ -14,6 +14,8 @@ package toolset
 
 import (
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
@@ -51,9 +53,14 @@ type Deps struct {
 	// WorkDir roots the files/terminal tools. Required when the allowlist
 	// includes "files" or "terminal".
 	WorkDir string
-	// SkillsDir backs the skills tool. Required when the allowlist includes
-	// "skills".
-	SkillsDir string
+	// ManagedSkillsFS is the embedded murtaugh-* skills source the skills tool
+	// serves from (in-binary; never on disk). Required when the allowlist
+	// includes "skills".
+	ManagedSkillsFS fs.FS
+	// BespokeSkillsDir is the on-disk directory holding the user's own skills,
+	// layered into the skills tool alongside the managed source. Optional —
+	// empty means managed-only.
+	BespokeSkillsDir string
 	// TerminalApproval is the approval policy applied to the terminal tool. The
 	// zero value (empty Mode) leaves NewWithApproval's default (allowlist).
 	TerminalApproval terminal.ApprovalPolicy
@@ -118,12 +125,12 @@ func Resolve(allow []string, mcpTools []tools.Tool, deps Deps) ([]tools.Tool, er
 			}
 			add(terminal.NewWithApproval(deps.WorkDir, deps.TerminalApproval))
 		case GroupSkills:
-			if strings.TrimSpace(deps.SkillsDir) == "" {
-				return nil, fmt.Errorf("toolset: skills_dir is required for the %q tool", GroupSkills)
+			if deps.ManagedSkillsFS == nil {
+				return nil, fmt.Errorf("toolset: managed skills FS is required for the %q tool", GroupSkills)
 			}
 			// Pass the whole allowlist so the skills tool gates what it lists,
 			// reads, and serves to the same capability set that selects tools.
-			add(skills.New(deps.SkillsDir, allow...))
+			add(skills.New(deps.ManagedSkillsFS, BespokeSkillsFS(deps.BespokeSkillsDir), allow...))
 		default:
 			for _, t := range registryMatches(deps.Registry, entry) {
 				add(t)
@@ -135,6 +142,20 @@ func Resolve(allow []string, mcpTools []tools.Tool, deps Deps) ([]tools.Tool, er
 		add(t)
 	}
 	return out, nil
+}
+
+// BespokeSkillsFS returns an fs.FS over the on-disk bespoke skills dir, or nil
+// when dir is empty or absent — the skills tool then serves the managed source
+// only. A non-existent dir is not an error (the user simply has no own skills).
+func BespokeSkillsFS(dir string) fs.FS {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return nil
+	}
+	return os.DirFS(dir)
 }
 
 // registryMatches returns the registry tools selected by a single allowlist
