@@ -22,6 +22,9 @@ configuration:
   debug: false
 
 chat:
+  # enabled gates the Slack chat surface (DM + @mention replies). Agent
+  # delegation (jobs, workflow rules, unfurls) runs regardless of this flag.
+  enabled: false
   default_agent: default
   # Per-channel version of configuration.do_not_require_mention_from. Keys use
   # the same channel-ID / channel-NAME glob syntax as channel_agents (below);

@@ -66,6 +66,10 @@ type ConfigurationConfig struct {
 }
 
 type ChatConfig struct {
+	// Enabled gates the Slack chat surface: DM and @mention replies. It does NOT
+	// gate agent delegation (jobs, workflow rules, unfurls) — those run whenever
+	// the target agent is defined, independent of the chat surface.
+	Enabled bool `yaml:"enabled"`
 	// ChannelAgents routes a channel to a specific agent. Each key is either an
 	// exact Slack channel ID (C…/G…, for back-compat) or a channel-NAME glob
 	// that may contain `*` (e.g. "feature-*", "*-prod"), matched against the
@@ -88,8 +92,6 @@ type ChatConfig struct {
 // RuntimeDefaults are the agent-runtime defaults applied to every agent, split
 // by the concern each knob serves. Parsed from the agents.yaml `defaults:` block.
 type RuntimeDefaults struct {
-	// Enabled gates the Slack chat surface (DMs + @mentions → agent).
-	Enabled   bool              `yaml:"enabled"`
 	Session   SessionDefaults   `yaml:"session"`
 	Rendering RenderingDefaults `yaml:"rendering"`
 	ACP       ACPDefaults       `yaml:"acp"`
@@ -637,7 +639,7 @@ func (c Config) Validate() error {
 		}
 	}
 
-	if c.Defaults.Enabled {
+	if c.Chat.Enabled {
 		if len(c.Agents) == 0 {
 			errs = append(errs, errors.New("chat is enabled but no agents are defined in agents.yaml"))
 		}

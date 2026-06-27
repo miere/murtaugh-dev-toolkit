@@ -11,7 +11,6 @@ import (
 
 type loaded struct {
 	Defaults struct {
-		Enabled bool `yaml:"enabled"`
 		Session struct {
 			IdleTimeout    string `yaml:"idle_timeout"`
 			RequestTimeout string `yaml:"request_timeout"`
@@ -78,10 +77,10 @@ func TestInvoke_NoCommandDisablesACP(t *testing.T) {
 	if !r.Created {
 		t.Fatal("Created must be true on fresh write")
 	}
-	doc := load(t, path)
-	if doc.Defaults.Enabled {
-		t.Fatal("defaults.enabled must be false when no command is supplied")
+	if r.Enabled {
+		t.Fatal("Enabled must be false when no agent is configured")
 	}
+	doc := load(t, path)
 	if len(doc.Agents) != 0 {
 		t.Fatalf("agents must be empty when no command is supplied, got %+v", doc.Agents)
 	}
@@ -95,17 +94,17 @@ func TestInvoke_WithCommandRegistersAgentAndEnablesACP(t *testing.T) {
 	path := filepath.Join(dir, "agents.yaml")
 	tl := New(func() string { return path })
 
-	_, err := tl.Invoke(context.Background(), map[string]any{
+	res, err := tl.Invoke(context.Background(), map[string]any{
 		"command": "/usr/local/bin/auggie",
 		"args":    []any{"--acp", "--allow-indexing"},
 	})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
 	}
-	doc := load(t, path)
-	if !doc.Defaults.Enabled {
-		t.Fatal("acp.enabled must be true when a command is provided")
+	if !res.(Result).Enabled {
+		t.Fatal("Enabled must be true when an agent is configured")
 	}
+	doc := load(t, path)
 	agent, ok := doc.Agents["default"]
 	if !ok {
 		t.Fatalf("default agent missing in %+v", doc.Agents)
@@ -184,9 +183,6 @@ func TestInvoke_NativeAgent(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", r)
 	}
 	doc := load(t, path)
-	if !doc.Defaults.Enabled {
-		t.Fatal("runtime block must be enabled for a native agent")
-	}
 	a, ok := doc.Agents["emily"]
 	if !ok {
 		t.Fatalf("native agent missing: %+v", doc.Agents)
