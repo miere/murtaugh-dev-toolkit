@@ -414,7 +414,7 @@ func TestHandleSlashCommandRestartPostsNoticeBeforeTrigger(t *testing.T) {
 	app := &Gateway{
 		handler:     &recordingSlashHandler{},
 		logger:      newSilentLogger(),
-		cfg:         config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:         config.AccessConfig{AdminUser: "UADMIN00"},
 		restart:     restart,
 		resumeStore: store,
 		messaging:   msg,

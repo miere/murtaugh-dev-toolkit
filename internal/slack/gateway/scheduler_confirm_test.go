@@ -53,7 +53,7 @@ func newConfirmGateway(t *testing.T) (*Gateway, *signalingSlackAPI, *interaction
 		logger:       discardLogger(),
 		interactions: broker,
 		messaging:    &dmMessaging{dm: "DADMIN"},
-		cfg:          config.ConfigurationConfig{AdminUser: "UADMIN"},
+		cfg:          config.AccessConfig{AdminUser: "UADMIN"},
 	}
 	return a, sig, broker
 }
@@ -101,7 +101,7 @@ func TestConfirmHeldJob_DeniedDoesNotRun(t *testing.T) {
 }
 
 func TestConfirmHeldJob_NoBrokerDoesNotRun(t *testing.T) {
-	a := &Gateway{logger: discardLogger(), cfg: config.ConfigurationConfig{AdminUser: "UADMIN"}}
+	a := &Gateway{logger: discardLogger(), cfg: config.AccessConfig{AdminUser: "UADMIN"}}
 	if a.confirmHeldJob(context.Background(), "myjob", heldJob()) {
 		t.Fatal("with no broker wired, a held job must not be confirmed")
 	}

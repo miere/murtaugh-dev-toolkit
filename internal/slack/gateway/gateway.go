@@ -93,7 +93,7 @@ type Gateway struct {
 	// (admin_user, allowed_users) start out as configured (IDs or handles) and
 	// are mutated in place by resolveAllowSet at the start of Run so the rest
 	// of the Gateway can rely on ID-only comparisons via cfg.IsAllowedUser.
-	cfg config.ConfigurationConfig
+	cfg config.AccessConfig
 	// restart is the optional graceful-restart trigger. nil in CLI/MCP and
 	// in tests that do not need to exercise the restart path; the slash
 	// handler reports "not available" when nil.
@@ -180,9 +180,12 @@ type Gateway struct {
 	// bot replies to without an @mention. Captured from cfg.Chat at construction;
 	// any handle entries are resolved to IDs by resolveAllowSet at the start of
 	// Run, so the runtime membership test in handleEventsAPI is ID-only. The
-	// effective no-mention set for a channel is the UNION of cfg.DoNotRequireMentionFrom
+	// effective no-mention set for a channel is the UNION of noMentionEverywhere
 	// and the values of every pattern whose glob matches the channel.
 	noMentionPerChannel map[string][]string
+	// noMentionEverywhere is the global no-mention list (chat.no_mention.everywhere).
+	// Captured from cfg.Chat at construction and resolved to IDs by resolveAllowSet.
+	noMentionEverywhere []string
 }
 
 func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recorder journal.Recorder, broker *askbroker.Broker) *Gateway {
@@ -193,8 +196,8 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		recorder = journal.NopRecorder{}
 	}
 	api := slack.New(cfg.OAuth.BotToken, slack.OptionAppLevelToken(cfg.OAuth.AppToken))
-	socket := socketmode.New(api, socketmode.OptionDebug(cfg.Configuration.Debug))
-	startupNotifier, err := NewSlackStartupNotifier(api, cfg.Configuration.AdminUser, logger)
+	socket := socketmode.New(api, socketmode.OptionDebug(cfg.Access.Debug))
+	startupNotifier, err := NewSlackStartupNotifier(api, cfg.Access.AdminUser, logger)
 	if err != nil {
 		logger.Error("startup Slack ping disabled", "error", err)
 	}
@@ -373,15 +376,16 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		unfurlTimeout:   2 * time.Minute,
 		startupNotifier: startupNotifier,
 		logger:          logger,
-		cfg:             cfg.Configuration,
+		cfg:             cfg.Access,
 		messaging:       api,
 		scheduledJobs:   cfg.Jobs,
 		recorder:        recorder,
 		botToken:        cfg.OAuth.BotToken,
 		channelCache:    channelCache,
-		// Captured here so the no-mention check in handleEventsAPI can run without
-		// re-importing the full cfg; the global list lives on cfg (a.cfg) already.
-		noMentionPerChannel: cfg.Chat.ChannelDoNotRequireMention,
+		// Captured here so the no-mention check in handleEventsAPI runs without
+		// re-importing the full cfg.
+		noMentionPerChannel: cfg.Chat.NoMention.ByChannel,
+		noMentionEverywhere: cfg.Chat.NoMention.Everywhere,
 	}
 }
 
@@ -653,12 +657,12 @@ func (a *Gateway) resolveAllowSet(ctx context.Context) error {
 	}
 	sort.Strings(channelKeys)
 
-	refs := make([]string, 0, 1+len(a.cfg.AllowedUsers)+len(a.cfg.DoNotRequireMentionFrom))
+	refs := make([]string, 0, 1+len(a.cfg.AllowedUsers)+len(a.noMentionEverywhere))
 	if hasAdmin {
 		refs = append(refs, a.cfg.AdminUser)
 	}
 	refs = append(refs, a.cfg.AllowedUsers...)
-	refs = append(refs, a.cfg.DoNotRequireMentionFrom...)
+	refs = append(refs, a.noMentionEverywhere...)
 	for _, key := range channelKeys {
 		refs = append(refs, a.noMentionPerChannel[key]...)
 	}
@@ -680,8 +684,8 @@ func (a *Gateway) resolveAllowSet(ctx context.Context) error {
 	}
 	a.cfg.AllowedUsers = ids[cursor : cursor+len(a.cfg.AllowedUsers)]
 	cursor += len(a.cfg.AllowedUsers)
-	a.cfg.DoNotRequireMentionFrom = ids[cursor : cursor+len(a.cfg.DoNotRequireMentionFrom)]
-	cursor += len(a.cfg.DoNotRequireMentionFrom)
+	a.noMentionEverywhere = ids[cursor : cursor+len(a.noMentionEverywhere)]
+	cursor += len(a.noMentionEverywhere)
 	if len(channelKeys) > 0 {
 		resolvedPerChannel := make(map[string][]string, len(channelKeys))
 		for _, key := range channelKeys {
@@ -1132,7 +1136,7 @@ func (a *Gateway) handleChannelMessage(eventsAPI slackevents.EventsAPIEvent, inn
 	if !known {
 		a.channelCache.refreshAsync(context.Background())
 	}
-	allowed := usersAllowedWithoutMention(inner.Channel, channelName, a.cfg.DoNotRequireMentionFrom, a.noMentionPerChannel)
+	allowed := usersAllowedWithoutMention(inner.Channel, channelName, a.noMentionEverywhere, a.noMentionPerChannel)
 	if !allowed[inner.User] {
 		a.logger.Debug("ignored channel message: author not waived from mention requirement", "user", inner.User, "channel", inner.Channel)
 		return

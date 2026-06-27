@@ -54,7 +54,7 @@ func TestSuggestRestartFallsBackToAdminDM(t *testing.T) {
 	app := &Gateway{
 		logger:    newSilentLogger(),
 		messaging: msg,
-		cfg:       config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:       config.AccessConfig{AdminUser: "UADMIN00"},
 	}
 	channel, _, err := app.SuggestRestart(context.Background(), "", "stuck on boot")
 	if err != nil {
@@ -120,7 +120,7 @@ func TestHandleRestartSuggestionConfirmAdminFiresTrigger(t *testing.T) {
 	restart := &recordingRestart{accept: true}
 	app := &Gateway{
 		logger:      newSilentLogger(),
-		cfg:         config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:         config.AccessConfig{AdminUser: "UADMIN00"},
 		messaging:   msg,
 		resumeStore: store,
 		restart:     restart.trigger,
@@ -164,7 +164,7 @@ func TestHandleRestartSuggestionConfirmDeniesNonAdmin(t *testing.T) {
 	restart := &recordingRestart{accept: true}
 	app := &Gateway{
 		logger:    newSilentLogger(),
-		cfg:       config.ConfigurationConfig{AdminUser: "UADMIN00", AllowedUsers: []string{"UALICE00"}},
+		cfg:       config.AccessConfig{AdminUser: "UADMIN00", AllowedUsers: []string{"UALICE00"}},
 		messaging: msg,
 		restart:   restart.trigger,
 	}
@@ -185,7 +185,7 @@ func TestHandleRestartSuggestionConfirmReportsUnavailableWhenTriggerMissing(t *t
 	msg := &recordingMessaging{}
 	app := &Gateway{
 		logger:    newSilentLogger(),
-		cfg:       config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:       config.AccessConfig{AdminUser: "UADMIN00"},
 		messaging: msg,
 	}
 	app.handleRestartSuggestionInteraction(context.Background(),
@@ -204,7 +204,7 @@ func TestHandleRestartSuggestionConfirmSurfacesCooldown(t *testing.T) {
 	restart := &recordingRestart{accept: false}
 	app := &Gateway{
 		logger:      newSilentLogger(),
-		cfg:         config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:         config.AccessConfig{AdminUser: "UADMIN00"},
 		messaging:   msg,
 		resumeStore: store,
 		restart:     restart.trigger,
@@ -224,7 +224,7 @@ func TestHandleRestartSuggestionDismiss(t *testing.T) {
 	restart := &recordingRestart{accept: true}
 	app := &Gateway{
 		logger:    newSilentLogger(),
-		cfg:       config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:       config.AccessConfig{AdminUser: "UADMIN00"},
 		messaging: msg,
 		restart:   restart.trigger,
 	}
@@ -240,7 +240,7 @@ func TestHandleRestartSuggestionDismiss(t *testing.T) {
 
 func TestHandleRestartSuggestionIgnoresMissingContext(t *testing.T) {
 	msg := &recordingMessaging{}
-	app := &Gateway{logger: newSilentLogger(), cfg: config.ConfigurationConfig{AdminUser: "UADMIN00"}, messaging: msg}
+	app := &Gateway{logger: newSilentLogger(), cfg: config.AccessConfig{AdminUser: "UADMIN00"}, messaging: msg}
 	app.handleRestartSuggestionInteraction(context.Background(),
 		suggestionInteraction("UADMIN00", "", "", restartcard.ActionConfirm, "x"))
 	if msg.updateCalls != 0 || msg.postCalls != 0 {
@@ -269,7 +269,7 @@ func TestHandleInteractiveRoutesSuggestionAwayFromWorkflow(t *testing.T) {
 	app := &Gateway{
 		workflow:    wf,
 		logger:      newSilentLogger(),
-		cfg:         config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:         config.AccessConfig{AdminUser: "UADMIN00"},
 		messaging:   msg,
 		resumeStore: NewFileResumeMarkerStore(filepathJoin(t, "restart.json")),
 		restart:     restart.trigger,

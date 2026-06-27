@@ -52,7 +52,7 @@ func loadWithAgentAndRules(t *testing.T, name, content string) (Config, error) {
 }
 
 func TestParseValidConfig(t *testing.T) {
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   admin_user: '@admin'
 chat:
   default_agent: default
@@ -66,7 +66,7 @@ chat:
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate returned error: %v", err)
 	}
-	if cfg.OAuth.AppToken != "xapp-test" || cfg.OAuth.BotToken != "xoxb-test" || cfg.Configuration.AdminUser != "@admin" {
+	if cfg.OAuth.AppToken != "xapp-test" || cfg.OAuth.BotToken != "xoxb-test" || cfg.Access.AdminUser != "@admin" {
 		t.Fatalf("unexpected Slack config parsed")
 	}
 	if cfg.Chat.DefaultAgent != "default" || cfg.Chat.DMAgent != "default" || cfg.Chat.ChannelAgents["C12345"] != "coding" {
@@ -577,7 +577,7 @@ func TestEmbeddedExampleConfigValidates(t *testing.T) {
 }
 
 func TestParseAllowedUsers(t *testing.T) {
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   admin_user: U0ADMIN00
   allowed_users:
     - U0ALICE00
@@ -589,13 +589,13 @@ func TestParseAllowedUsers(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate returned error: %v", err)
 	}
-	if got, want := cfg.Configuration.AllowedUsers, []string{"U0ALICE00", "U0BOB0000"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	if got, want := cfg.Access.AllowedUsers, []string{"U0ALICE00", "U0BOB0000"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("unexpected allowed_users parsed: %#v", got)
 	}
 }
 
 func TestValidateAllowedUsersRejectsBlankEntries(t *testing.T) {
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   allowed_users:
     - ""
     - "   "
@@ -615,7 +615,7 @@ func TestValidateAllowedUsersRejectsBlankEntries(t *testing.T) {
 func TestValidateAllowedUsersAcceptsHandlesAndIDs(t *testing.T) {
 	// Validation must accept both Slack user IDs and handles; resolution from
 	// handles to IDs happens at startup in the gateway layer.
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   allowed_users:
     - "@alice"
     - "bob"
@@ -630,47 +630,47 @@ func TestValidateAllowedUsersAcceptsHandlesAndIDs(t *testing.T) {
 }
 
 func TestIsAllowedUserMatchesAdminWhenConfiguredAsUserID(t *testing.T) {
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   admin_user: U0ADMIN00
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	if !cfg.Configuration.IsAllowedUser("U0ADMIN00") {
+	if !cfg.Access.IsAllowedUser("U0ADMIN00") {
 		t.Fatal("expected admin user ID to be allowed")
 	}
-	if cfg.Configuration.IsAllowedUser("U0OTHER00") {
+	if cfg.Access.IsAllowedUser("U0OTHER00") {
 		t.Fatal("expected non-admin user to be denied with empty allowed_users")
 	}
 }
 
 func TestIsAllowedUserHandlesAdminPrefixedHandle(t *testing.T) {
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   admin_user: "@U0ADMIN00"
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	if !cfg.Configuration.IsAllowedUser("U0ADMIN00") {
+	if !cfg.Access.IsAllowedUser("U0ADMIN00") {
 		t.Fatal("expected admin user ID to be allowed when admin_user is prefixed with @")
 	}
 }
 
 func TestIsAllowedUserSkipsAdminConfiguredAsHandle(t *testing.T) {
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   admin_user: murtaugh-admin
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	// admin_user is a handle, not a user ID — helper cannot match by ID alone.
-	if cfg.Configuration.IsAllowedUser("U0ADMIN00") {
+	if cfg.Access.IsAllowedUser("U0ADMIN00") {
 		t.Fatal("expected helper to skip handle-based admin_user matching")
 	}
 }
 
 func TestIsAllowedUserMatchesAllowedList(t *testing.T) {
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   admin_user: U0ADMIN00
   allowed_users:
     - U0ALICE00
@@ -680,29 +680,29 @@ func TestIsAllowedUserMatchesAllowedList(t *testing.T) {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	for _, id := range []string{"U0ADMIN00", "U0ALICE00", "U0BOB0000"} {
-		if !cfg.Configuration.IsAllowedUser(id) {
+		if !cfg.Access.IsAllowedUser(id) {
 			t.Errorf("expected %q to be allowed", id)
 		}
 	}
-	if cfg.Configuration.IsAllowedUser("U0EVE0000") {
+	if cfg.Access.IsAllowedUser("U0EVE0000") {
 		t.Fatal("expected non-listed user to be denied")
 	}
 }
 
 func TestIsAllowedUserRejectsBlankInput(t *testing.T) {
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   admin_user: U0ADMIN00
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	if cfg.Configuration.IsAllowedUser("") || cfg.Configuration.IsAllowedUser("   ") {
+	if cfg.Access.IsAllowedUser("") || cfg.Access.IsAllowedUser("   ") {
 		t.Fatal("expected blank user ID to be denied")
 	}
 }
 
 func TestIsAdminUserMatchesAdminID(t *testing.T) {
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   admin_user: U0ADMIN00
   allowed_users:
     - U0ALICE00
@@ -710,25 +710,25 @@ func TestIsAdminUserMatchesAdminID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	if !cfg.Configuration.IsAdminUser("U0ADMIN00") {
+	if !cfg.Access.IsAdminUser("U0ADMIN00") {
 		t.Fatal("expected admin user ID to be recognized as admin")
 	}
-	if cfg.Configuration.IsAdminUser("U0ALICE00") {
+	if cfg.Access.IsAdminUser("U0ALICE00") {
 		t.Fatal("expected allowed-but-non-admin user to be rejected by IsAdminUser")
 	}
-	if cfg.Configuration.IsAdminUser("") || cfg.Configuration.IsAdminUser("   ") {
+	if cfg.Access.IsAdminUser("") || cfg.Access.IsAdminUser("   ") {
 		t.Fatal("expected blank input to be rejected")
 	}
 }
 
 func TestIsAdminUserSkipsHandleConfiguredAdmin(t *testing.T) {
-	cfg, err := Parse(testConfig(`configuration:
+	cfg, err := Parse(testConfig(`access:
   admin_user: murtaugh-admin
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	if cfg.Configuration.IsAdminUser("U0ADMIN00") {
+	if cfg.Access.IsAdminUser("U0ADMIN00") {
 		t.Fatal("expected helper to refuse handle-shaped admin_user matching")
 	}
 }
@@ -847,7 +847,7 @@ func noMentionValidationConfig(perChannel map[string][]string) Config {
 		Agents: map[string]AgentProfile{
 			"coding": {ACP: &ACPProfile{Command: "/bin/agent"}},
 		},
-		Chat: ChatConfig{Enabled: true, DefaultAgent: "coding", ChannelDoNotRequireMention: perChannel},
+		Chat: ChatConfig{Enabled: true, DefaultAgent: "coding", NoMention: NoMentionConfig{ByChannel: perChannel}},
 	}
 }
 
@@ -865,7 +865,7 @@ func TestValidateAcceptsNoMentionChannelGlobs(t *testing.T) {
 func TestValidateRejectsMalformedNoMentionChannelGlob(t *testing.T) {
 	cfg := noMentionValidationConfig(map[string][]string{"feature-[a-*": {"U1"}})
 	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "chat.channel_do_not_require_mention") || !strings.Contains(err.Error(), "not a valid channel-name glob") {
+	if err == nil || !strings.Contains(err.Error(), "chat.no_mention.by_channel") || !strings.Contains(err.Error(), "not a valid channel-name glob") {
 		t.Fatalf("expected malformed no-mention glob validation error, got: %v", err)
 	}
 }

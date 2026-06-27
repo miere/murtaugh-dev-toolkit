@@ -93,9 +93,9 @@ func (r Result) String() string {
 // document mirrors the on-disk YAML shape produced by the bash installer so
 // existing fixtures and the running daemon see identical input.
 type document struct {
-	OAuth         oauthBlock         `yaml:"oauth"`
-	Configuration configurationBlock `yaml:"configuration"`
-	Chat          chatBlock          `yaml:"chat"`
+	OAuth  oauthBlock  `yaml:"oauth"`
+	Access accessBlock `yaml:"access"`
+	Chat   chatBlock   `yaml:"chat"`
 }
 
 type chatBlock struct {
@@ -109,7 +109,7 @@ type oauthBlock struct {
 	BotToken string `yaml:"bot_token"`
 }
 
-type configurationBlock struct {
+type accessBlock struct {
 	AdminUser string `yaml:"admin_user"`
 	Debug     bool   `yaml:"debug"`
 }
@@ -152,8 +152,8 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 	}
 
 	doc := document{
-		OAuth:         oauthBlock{AppToken: "${" + appTokenVar + "}", BotToken: "${" + botTokenVar + "}"},
-		Configuration: configurationBlock{AdminUser: adminUser, Debug: false},
+		OAuth:  oauthBlock{AppToken: "${" + appTokenVar + "}", BotToken: "${" + botTokenVar + "}"},
+		Access: accessBlock{AdminUser: adminUser, Debug: false},
 	}
 	// A configured default agent is what makes the chat surface useful, so
 	// enable it in the same step; with no agent, chat stays off.

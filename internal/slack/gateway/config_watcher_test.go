@@ -189,7 +189,7 @@ func TestOnConfigFileChangedPostsRestartSuggestion(t *testing.T) {
 	msg := &recordingMessaging{postReturnedTS: "1700000000.000700", openChannelID: "DADMIN00"}
 	app := &Gateway{
 		logger:    newSilentLogger(),
-		cfg:       config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:       config.AccessConfig{AdminUser: "UADMIN00"},
 		messaging: msg,
 	}
 	app.onConfigFileChanged(context.Background(), path, time.Unix(1700000000, 0).UTC())
@@ -216,7 +216,7 @@ func TestOnConfigFileChangedSilentWhenNoAdminOrChannel(t *testing.T) {
 	msg := &recordingMessaging{}
 	app := &Gateway{
 		logger:    newSilentLogger(),
-		cfg:       config.ConfigurationConfig{},
+		cfg:       config.AccessConfig{},
 		messaging: msg,
 	}
 	app.onConfigFileChanged(context.Background(), path, time.Unix(1700000000, 0).UTC())

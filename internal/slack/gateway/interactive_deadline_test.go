@@ -39,7 +39,7 @@ func TestInteractiveCallbackImposesNoTotalDeadline(t *testing.T) {
 		workflow: wf,
 		socket:   nil, // a.ack is a no-op when socket is nil
 		logger:   discardLogger(),
-		cfg:      config.ConfigurationConfig{AllowedUsers: []string{"UALICE00"}},
+		cfg:      config.AccessConfig{AllowedUsers: []string{"UALICE00"}},
 	}
 
 	app.handleInteractive(socketmode.Event{
