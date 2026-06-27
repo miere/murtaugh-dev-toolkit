@@ -8,8 +8,8 @@ files:
   reference/asking.md:         { requires: [ask, present_plan], summary: "ask the user a question / get plan sign-off and block for the answer" }
   reference/blocks.md:         { requires: [slack, manage],    summary: "compose Block Kit (sections, actions, plan, card)" }
   reference/automations.md:    { requires: [manage],           summary: "conventions for scheduled clock-tick scripts that post to Slack" }
-  reference/workflow-rules.md: { requires: [manage],           summary: "wire what happens on a button click in slack.yaml" }
-  reference/unfurl.md:         { requires: [manage],           summary: "turn posted links into rich previews in slack.yaml" }
+  reference/workflow-rules.md: { requires: [manage],           summary: "wire what happens on a button click in workflow-rules.yaml" }
+  reference/unfurl.md:         { requires: [manage],           summary: "turn posted links into rich previews in unfurl-rules.yaml" }
   examples/unfurl/:            { requires: [manage] }
 ---
 
@@ -22,7 +22,8 @@ the file your task needs:
 {{FILES}}
 
 > If a task needs something not listed above, it's outside what you can do here —
-> often an operator config change in `slack.yaml`. Say so and stop; don't try to
+> often an operator config change in `gateway.yaml` (or a sibling like
+> `workflow-rules.yaml` / `unfurl-rules.yaml`). Say so and stop; don't try to
 > edit config files yourself.
 
 ## Guidelines (defaults — follow unless the user says otherwise)

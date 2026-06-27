@@ -3,7 +3,7 @@
 How Murtaugh turns a button click into a response — the *reactive* half of Slack.
 For composing and sending the message that carries the buttons, see
 `messaging.md`; for the blocks themselves, see `blocks.md`. This is operator
-config (it edits `slack.yaml`).
+config (it edits `workflow-rules.yaml`).
 
 > **`workflow-rules` are buttons-only.** A `workflow-rules` entry can only match
 > `block_actions` interactions; it **cannot** trigger on a modal `view_submission`.
@@ -33,8 +33,8 @@ config (it edits `slack.yaml`).
 ## Stable routing keys
 
 Give every actionable element a stable `action_id` (and its block a `block_id`) so
-rules can target it precisely. **Check `slack.yaml` for keys that already exist and
-reuse them** — e.g. the code-review flow already uses `block_id: github_pull_request`
+rules can target it precisely. **Check `workflow-rules.yaml` for keys that already
+exist and reuse them** — e.g. the code-review flow already uses `block_id: github_pull_request`
 with `action_id`s `approve_only` and `approve_merge`. Inventing parallel keys for
 the same behaviour leaves your buttons unwired.
 
@@ -140,7 +140,7 @@ ephemeral, scope `allowed_users`, gate destructive actions) rather than ship-and
 
 ## Related
 
-- A worked, wired example lives in `slack.yaml` (`workflow-rules.code-review-approval`)
-  with its template at `templates/code-review/02-approved.json` — see `examples/`.
+- A worked, wired example lives in `workflow-rules.yaml` (the `code-review-approval`
+  rule) with its template at `templates/code-review/02-approved.json` — see `examples/`.
 - Unfurling bare URLs into rich previews is a *different* mechanism (`unfurl-rules`
   + `link_shared`), covered by `unfurl.md` in this skill.

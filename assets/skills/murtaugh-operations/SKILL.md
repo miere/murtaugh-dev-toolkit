@@ -53,6 +53,6 @@ job runs, and errors are all there.
   the **chat** and **unfurl** handlers (see `murtaugh-agents` and the
   `murtaugh-slack` skill's `unfurl.md`).
 - **The daemon takes no tool flags** — only the global `--config PATH`
-  (`murtaugh --config /path/slack.yaml slack gateway`). Run
+  (`murtaugh --config /path/gateway.yaml slack gateway`). Run
   `murtaugh help slack gateway` for the full reference, or `murtaugh help` to
   list every command.

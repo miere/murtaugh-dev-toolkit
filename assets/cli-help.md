@@ -26,9 +26,10 @@ Run `murtaugh help` for this full document, or `murtaugh help <command>`
 These rules apply to **every** CLI command. Read them once; the per-command
 sections below assume them.
 
-- **Global flag `--config PATH`** — path to `slack.yaml`. Default
-  `~/.config/murtaugh/slack.yaml`. Accepts `--config PATH` or `--config=PATH`.
-  Its sibling files `agents.yaml` and `jobs.yaml` are resolved from the same
+- **Global flag `--config PATH`** — path to `gateway.yaml`. Default
+  `~/.config/murtaugh/gateway.yaml`. Accepts `--config PATH` or `--config=PATH`.
+  Its sibling files `agents.yaml`, `jobs.yaml`, `journal.yaml`,
+  `workflow-rules.yaml`, and `unfurl-rules.yaml` are resolved from the same
   directory.
 - **Flags take values; there are no positional arguments.** Every flag is
   `--flag value`. There is no `--flag=value` form for tool flags (only the
@@ -192,7 +193,7 @@ murtaugh journal prune
 ## murtaugh slack send-msg
 
 Post a message (or upload a file) to a Slack channel or user. Uses the bot
-token from `oauth.bot_token` in `slack.yaml`.
+token from `oauth.bot_token` in `gateway.yaml`.
 
 | Flag                | Required | Type   | Notes                                                                       |
 |---------------------|----------|--------|-----------------------------------------------------------------------------|
@@ -212,7 +213,7 @@ murtaugh slack send-msg --to "#status" --body "Status" --blocks ./status-blocks.
 ## murtaugh slack create-channel
 
 Create a public or private Slack channel, optionally inviting users and setting
-a topic/purpose. Uses the bot token from `oauth.bot_token` in `slack.yaml`. The
+a topic/purpose. Uses the bot token from `oauth.bot_token` in `gateway.yaml`. The
 bot needs the `channels:manage` scope for public channels and `groups:write`
 for private ones (those scopes also cover the invites).
 
@@ -284,12 +285,13 @@ Start the Slack gateway: the long-running Socket Mode daemon. It responds to
 slash commands, runs YAML workflow rules against interactive payloads, bridges
 Slack conversations to an ACP agent with live streaming, renders custom link
 unfurls, and fires scheduled jobs. Configuration comes entirely from the config
-files (`slack.yaml`, `agents.yaml`, `jobs.yaml`); there are no tool flags. Stop
-it with SIGINT/SIGTERM. Normally run under launchd (see `setup launchd`).
+files (`gateway.yaml`, `agents.yaml`, `jobs.yaml`, `workflow-rules.yaml`,
+`unfurl-rules.yaml`); there are no tool flags. Stop it with SIGINT/SIGTERM.
+Normally run under launchd (see `setup launchd`).
 
 ```
 murtaugh slack gateway
-murtaugh --config /etc/murtaugh/slack.yaml slack gateway
+murtaugh --config /etc/murtaugh/gateway.yaml slack gateway
 ```
 
 ## murtaugh mcp
@@ -305,16 +307,18 @@ murtaugh mcp
 
 ## murtaugh setup bootstrap
 
-Seed the Murtaugh config directory with embedded defaults (`slack.yaml`,
-`agents.yaml`, `jobs.yaml`, `system-prompt.md`, Block Kit templates, bundled
-skills). Runs on every Murtaugh start, not just the first.
+Seed the Murtaugh config directory with embedded defaults (`gateway.yaml`,
+`agents.yaml`, `jobs.yaml`, `workflow-rules.yaml`, `unfurl-rules.yaml`,
+`system-prompt.md`, Block Kit templates, bundled skills). Runs on every Murtaugh
+start, not just the first.
 
 | Flag      | Required | Type    | Notes                                                              |
 |-----------|----------|---------|-------------------------------------------------------------------|
 | `--force` | no       | boolean | Refresh the bundled default `system-prompt.md` to the shipped version. |
 
-- **Config files and templates** (`slack.yaml`, `agents.yaml`, `jobs.yaml`,
-  `templates/`) and **`AGENTS.md`** (the agent's identity) are created once and
+- **Config files and templates** (`gateway.yaml`, `agents.yaml`, `jobs.yaml`,
+  `workflow-rules.yaml`, `unfurl-rules.yaml`, `templates/`) and **`AGENTS.md`**
+  (the agent's identity) are created once and
   then **preserved** — your tokens, edits, and chosen persona are never
   overwritten, even with `--force`.
 - **`system-prompt.md`** (the default base prompt) is created once and preserved,
@@ -333,10 +337,10 @@ murtaugh setup bootstrap --force true   # refresh the default system prompt
 
 ## murtaugh setup slack
 
-Write `slack.yaml` (admin user and the `/murtaugh` slash command) and store the
+Write `gateway.yaml` (admin user and the `/murtaugh` slash command) and store the
 Slack tokens in `~/.config/murtaugh/.env`. The YAML references them as
 `${SLACK_APP_TOKEN}` / `${SLACK_BOT_TOKEN}`, so the tokens never live in a file
-the troubleshoot bundler collects. Both `slack.yaml` and `.env` are backed up
+the troubleshoot bundler collects. Both `gateway.yaml` and `.env` are backed up
 before being replaced/merged.
 
 | Flag              | Required | Type   | Notes                                                       |

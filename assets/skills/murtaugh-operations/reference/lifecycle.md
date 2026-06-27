@@ -14,7 +14,8 @@ What `murtaugh slack gateway` does, in order, when it starts:
    subprocess to handshake with — so they aren't warmed here. (See the
    `murtaugh-agents` skill.)
 4. **Start the config watcher** (if config-watch paths are set) — polls
-   `slack.yaml`, `agents.yaml`, `jobs.yaml`. → `reference/config-and-restart.md`
+   `gateway.yaml`, `agents.yaml`, `jobs.yaml`, and the rule-file siblings
+   `workflow-rules.yaml` / `unfurl-rules.yaml`. → `reference/config-and-restart.md`
 5. **Start the job scheduler** — registers cron/`every` jobs from `jobs.yaml`
    (manual jobs are ignored here). (See the `murtaugh-jobs` skill.)
 6. **Run the event loop** — dispatch slash commands, interactions, mentions,

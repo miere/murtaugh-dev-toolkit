@@ -18,11 +18,11 @@ capability skill — defer to them for flag/tool details:
 | Surface | What it is | Deep-dive skill |
 |---|---|---|
 | `automations/` | Python (or shell) routines that do the work | — (rules below) |
-| `slack.yaml` | Slack workflow rules: reply / run / unfurl / interactive (buttons) | `murtaugh-slack` (`workflow-rules.md`) |
+| `workflow-rules.yaml` | Slack workflow rules: reply / run / interactive (buttons) | `murtaugh-slack` (`workflow-rules.md`) |
 | active Slack actions | post / update / read messages from code | `murtaugh-slack` (`messaging.md`) |
 | `agents.yaml` | agent definitions: provider/model, tools, `approval:` gate, context/cache | `murtaugh-agents` |
 | `templates/` | static Block Kit payloads | `murtaugh-slack` (`blocks.md`) |
-| link previews | URL unfurling | `murtaugh-slack` (`unfurl.md`) |
+| `unfurl-rules.yaml` | link previews: URL unfurling | `murtaugh-slack` (`unfurl.md`) |
 | `jobs.yaml` | scheduled / on-demand job execution | `murtaugh-jobs` |
 
 > **`agents.yaml` carries an `approval:` block** (per agent) that gates side-effecting
@@ -30,7 +30,7 @@ capability skill — defer to them for flag/tool details:
 > auto-run recognized read-only commands, ask for anything else), `prompt` (ask for
 > every command), or `off` (never ask), plus `allow: [...]` to extend the read-only set
 > with your own commands. This gate, and the agent's `ask` / `present_plan` tools, are
-> Murtaugh's **native interactivity** — a path **separate from `slack.yaml`**. They open
+> Murtaugh's **native interactivity** — a path **separate from `workflow-rules.yaml`**. They open
 > their prompts (buttons and real modals) through the gateway's interaction broker and
 > block the agent's turn for the answer; they do **not** go through `workflow-rules`. See
 > `murtaugh-agents`.
@@ -43,8 +43,10 @@ capability skill — defer to them for flag/tool details:
 ├── agents.yaml               # agent definitions
 ├── jobs.yaml                 # scheduled jobs (cron/interval) -> commands
 ├── journal.yaml              # journal configuration
-├── slack.yaml                # Slack workflow rules: reply / run / unfurl / interactive
-├── slack-*.yaml              # additional Slack identities (e.g. a second workspace bot)
+├── gateway.yaml              # connection / access / chat (oauth tokens, admin, default agent)
+├── gateway-*.yaml            # additional Slack identities (e.g. a second workspace bot)
+├── workflow-rules.yaml       # Slack workflow rules: reply / run / interactive
+├── unfurl-rules.yaml         # link-unfurl rules: custom URL previews
 ├── automations/              # the automation routines (see below)
 ├── templates/                # static Block Kit templates (see below)
 ├── .agents/skills/           # your bespoke skills (bundled murtaugh-* are in-binary; see below)
@@ -53,7 +55,7 @@ capability skill — defer to them for flag/tool details:
 
 ## Automations (`automations/`)
 
-The routines Murtaugh runs (wired from `jobs.yaml` and `slack.yaml`). The
+The routines Murtaugh runs (wired from `jobs.yaml` and `workflow-rules.yaml`). The
 catalogue of *which* automations exist lives in `automations/AGENTS.md`; the
 *rules* for how they are structured are here.
 
@@ -80,7 +82,7 @@ Everything the routine needs lives inside it, so it can be reasoned about — an
 moved — as one unit. Within that folder:
 
 - **Exactly one entrypoint: `main.py`.** Nothing else in the folder is invoked
-  directly by `jobs.yaml` / `slack.yaml`. If a routine performs several
+  directly by `jobs.yaml` / `workflow-rules.yaml`. If a routine performs several
   independent operations, `main.py` is a thin **router** that dispatches to them
   by subcommand and holds no business logic itself. Each operation lives in its
   own module exposing `main(argv) -> int`, wired as `main.py <subcommand> [args]`
@@ -115,7 +117,7 @@ Routines are registered where Murtaugh invokes them, by their **deployed**
 absolute path under `~/.config/murtaugh/automations/...`:
 
 - Scheduled / on-demand jobs → `jobs.yaml` (see `murtaugh-jobs`).
-- Slack interaction / workflow triggers → `slack.yaml` (see `murtaugh-slack`,
+- Slack interaction / workflow triggers → `workflow-rules.yaml` (see `murtaugh-slack`,
   `workflow-rules.md`).
 
 When you move or rename a routine, update those references too. Changes take
@@ -130,7 +132,7 @@ Murtaugh renders and sends. Reach for a template **any time you want to render a
 static Block Kit payload** rather than build blocks dynamically in code:
 
 - Reply / run acks and fixed responses → referenced by `template:` in a
-  `slack.yaml` rule (e.g. `templates/github/approved.json`).
+  `workflow-rules.yaml` rule (e.g. `templates/github/approved.json`).
 - Link unfurls → `templates/unfurl/...` (e.g. `templates/unfurl/github-pr.json`;
   see the `murtaugh-slack` skill's `unfurl.md`).
 
