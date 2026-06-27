@@ -86,14 +86,19 @@ func run(rawArgs []string) error {
 		return nil
 	}
 	mode, rest := selectMode(args)
+	setupInvocation := isSetupInvocation(mode, rest)
 
 	// Convert a legacy config directory to the current schema before bootstrap
 	// seeds a fresh template. Each step is backup/validate/rollback-guarded, so a
-	// failure here leaves the original config intact.
-	if applied, err := migrate.Run(filepath.Dir(configPath)); err != nil {
-		return fmt.Errorf("config migration failed: %w", err)
-	} else if len(applied) > 0 {
-		fmt.Fprintf(os.Stderr, "murtaugh: migrated config to schema v%d\n", applied[len(applied)-1])
+	// failure here leaves the original config intact. Skipped for setup tools:
+	// they are actively constructing the config (it may be partial / token-less),
+	// which is not a state to migrate or validate.
+	if !setupInvocation {
+		if applied, err := migrate.Run(filepath.Dir(configPath)); err != nil {
+			return fmt.Errorf("config migration failed: %w", err)
+		} else if len(applied) > 0 {
+			fmt.Fprintf(os.Stderr, "murtaugh: migrated config to schema v%d\n", applied[len(applied)-1])
+		}
 	}
 
 	if err := config.Bootstrap(configPath); err != nil {
@@ -105,7 +110,7 @@ func run(rawArgs []string) error {
 	// empty Config — every setup.* tool resolves its target path from the
 	// config dir alone.
 	var cfg config.Config
-	if !isSetupInvocation(mode, rest) {
+	if !setupInvocation {
 		loaded, err := config.Load(configPath)
 		if err != nil {
 			return err

@@ -172,12 +172,12 @@ func TestInstallerConfiguresAuggieAndBacksUpMCPSettings(t *testing.T) {
 		t.Fatalf("agents.yaml unexpectedly set workspace root:\n%s", agentsText)
 	}
 
-	slackData, err := os.ReadFile(filepath.Join(home, ".config", "murtaugh", "slack.yaml"))
+	slackData, err := os.ReadFile(filepath.Join(home, ".config", "murtaugh", "gateway.yaml"))
 	if err != nil {
-		t.Fatalf("read slack.yaml: %v", err)
+		t.Fatalf("read gateway.yaml: %v", err)
 	}
 	if !strings.Contains(string(slackData), "default_agent: default") {
-		t.Fatalf("slack.yaml missing default_agent:\n%s", slackData)
+		t.Fatalf("gateway.yaml missing default_agent:\n%s", slackData)
 	}
 
 	if _, err := os.Stat(filepath.Join(home, "Library", "LaunchAgents", "dev.murtaugh.plist")); err != nil {
@@ -245,7 +245,7 @@ func TestInstallerConfiguresNativeAgent(t *testing.T) {
 	configDir := filepath.Join(home, ".config", "murtaugh")
 
 	agentsText := readFileString(t, filepath.Join(configDir, "agents.yaml"))
-	for _, want := range []string{"kind: native", "provider: gemini", "model: gemini-2.5-pro", "api_key_env: GEMINI_API_KEY"} {
+	for _, want := range []string{"native:", "provider: gemini", "model: gemini-2.5-pro", "api_key_env: GEMINI_API_KEY"} {
 		if !strings.Contains(agentsText, want) {
 			t.Fatalf("agents.yaml missing %q:\n%s", want, agentsText)
 		}
@@ -259,12 +259,12 @@ func TestInstallerConfiguresNativeAgent(t *testing.T) {
 	if !strings.Contains(envText, "GEMINI_API_KEY=test-gemini-key-123") {
 		t.Fatalf(".env missing the provider key:\n%s", envText)
 	}
-	slackText := readFileString(t, filepath.Join(configDir, "slack.yaml"))
+	slackText := readFileString(t, filepath.Join(configDir, "gateway.yaml"))
 	if strings.Contains(slackText, "test-gemini-key-123") || strings.Contains(slackText, "xapp-test-token") {
-		t.Fatalf("a secret leaked into slack.yaml:\n%s", slackText)
+		t.Fatalf("a secret leaked into gateway.yaml:\n%s", slackText)
 	}
 	if !strings.Contains(slackText, "default_agent: default") {
-		t.Fatalf("slack.yaml missing default_agent:\n%s", slackText)
+		t.Fatalf("gateway.yaml missing default_agent:\n%s", slackText)
 	}
 	// Slack tokens also went to .env.
 	if !strings.Contains(envText, "SLACK_APP_TOKEN=xapp-test-token") {
@@ -301,8 +301,8 @@ func TestInstallerFailsBeforeWritingConfigWhenAgentMissing(t *testing.T) {
 	if !strings.Contains(out, "goose is not installed") {
 		t.Fatalf("expected missing goose error, got:\n%s", out)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".config", "murtaugh", "slack.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("slack.yaml should not have been written, stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(home, ".config", "murtaugh", "gateway.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("gateway.yaml should not have been written, stat err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "murtaugh", "agents.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("agents.yaml should not have been written, stat err=%v", err)
@@ -396,8 +396,8 @@ func TestInstallerSkipConfigUpdatesBinaryOnly(t *testing.T) {
 	if !strings.Contains(out, "Binary updated; config untouched") {
 		t.Fatalf("expected skip config message, got:\n%s", out)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".config", "murtaugh", "slack.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("slack.yaml should not have been written, stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(home, ".config", "murtaugh", "gateway.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("gateway.yaml should not have been written, stat err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "murtaugh", "agents.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("agents.yaml should not have been written, stat err=%v", err)
@@ -417,8 +417,8 @@ func TestInstallerPreservesConfigByDefault(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "slack.yaml"), []byte("existing: true\n"), 0o644); err != nil {
-		t.Fatalf("write existing slack.yaml: %v", err)
+	if err := os.WriteFile(filepath.Join(configDir, "gateway.yaml"), []byte("existing: true\n"), 0o644); err != nil {
+		t.Fatalf("write existing gateway.yaml: %v", err)
 	}
 
 	out, err := runInstaller(t, []string{
@@ -436,12 +436,12 @@ func TestInstallerPreservesConfigByDefault(t *testing.T) {
 	if !strings.Contains(out, "Preserving Slack and agent configs by default") {
 		t.Fatalf("expected preserve config message, got:\n%s", out)
 	}
-	content, err := os.ReadFile(filepath.Join(configDir, "slack.yaml"))
+	content, err := os.ReadFile(filepath.Join(configDir, "gateway.yaml"))
 	if err != nil {
-		t.Fatalf("read slack.yaml: %v", err)
+		t.Fatalf("read gateway.yaml: %v", err)
 	}
 	if string(content) != "existing: true\n" {
-		t.Fatalf("slack.yaml was overwritten unexpectedly: %s", content)
+		t.Fatalf("gateway.yaml was overwritten unexpectedly: %s", content)
 	}
 }
 
@@ -459,8 +459,8 @@ func TestInstallerReconfiguresWhenRequested(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "slack.yaml"), []byte("existing: true\n"), 0o644); err != nil {
-		t.Fatalf("write existing slack.yaml: %v", err)
+	if err := os.WriteFile(filepath.Join(configDir, "gateway.yaml"), []byte("existing: true\n"), 0o644); err != nil {
+		t.Fatalf("write existing gateway.yaml: %v", err)
 	}
 
 	out, err := runInstaller(t, []string{
@@ -482,15 +482,15 @@ func TestInstallerReconfiguresWhenRequested(t *testing.T) {
 	if strings.Contains(out, "Preserving Slack and agent configs by default") {
 		t.Fatalf("should not have preserved config when --reconfigure, got:\n%s", out)
 	}
-	content, err := os.ReadFile(filepath.Join(configDir, "slack.yaml"))
+	content, err := os.ReadFile(filepath.Join(configDir, "gateway.yaml"))
 	if err != nil {
-		t.Fatalf("read slack.yaml: %v", err)
+		t.Fatalf("read gateway.yaml: %v", err)
 	}
 	if strings.Contains(string(content), "existing: true") {
-		t.Fatalf("slack.yaml was not reconfigured as expected: %s", content)
+		t.Fatalf("gateway.yaml was not reconfigured as expected: %s", content)
 	}
 	if !strings.Contains(string(content), "app_token") {
-		t.Fatalf("slack.yaml was not rewritten with new config: %s", content)
+		t.Fatalf("gateway.yaml was not rewritten with new config: %s", content)
 	}
 }
 

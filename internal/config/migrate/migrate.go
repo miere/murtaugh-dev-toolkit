@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 // schemaVersionFile is the machine-managed sidecar holding the integer schema
@@ -129,19 +130,37 @@ func Run(dir string) ([]int, error) {
 	return applied, nil
 }
 
-// validateDir loads the migrated config as the daemon would (gateway.yaml plus
-// its siblings, with full Validate). When the dir has no gateway.yaml at all —
-// a non-chat deployment — there is nothing to load, so it is accepted.
+// validateDir checks that the migrated files are STRUCTURALLY sound: each parses
+// into the config types without a YAML/type error. It deliberately does not run
+// the full business Validate (which requires e.g. resolvable oauth tokens) —
+// completeness is the operator's concern, not the migration's; the migration is
+// only responsible for producing a well-formed rewrite. A type mismatch (the
+// real risk of a botched transform — a value landing in the wrong shape) fails
+// here and triggers rollback.
 func validateDir(dir string) error {
-	gw := filepath.Join(dir, "gateway.yaml")
-	if _, err := os.Stat(gw); err != nil {
-		if os.IsNotExist(err) {
-			return nil
+	if data, err := os.ReadFile(filepath.Join(dir, "gateway.yaml")); err == nil {
+		var c config.Config
+		if err := yaml.Unmarshal(data, &c); err != nil {
+			return fmt.Errorf("gateway.yaml: %w", err)
 		}
-		return err
 	}
-	if _, err := config.Load(gw); err != nil {
-		return err
+	if data, err := os.ReadFile(filepath.Join(dir, "agents.yaml")); err == nil {
+		var a struct {
+			Defaults   config.RuntimeDefaults            `yaml:"defaults"`
+			Agents     map[string]config.AgentProfile    `yaml:"agents"`
+			MCPServers map[string]config.MCPServerConfig `yaml:"mcp_servers"`
+		}
+		if err := yaml.Unmarshal(data, &a); err != nil {
+			return fmt.Errorf("agents.yaml: %w", err)
+		}
+	}
+	for _, name := range []string{"workflow-rules.yaml", "unfurl-rules.yaml"} {
+		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+			var m map[string]any
+			if err := yaml.Unmarshal(data, &m); err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+		}
 	}
 	return nil
 }

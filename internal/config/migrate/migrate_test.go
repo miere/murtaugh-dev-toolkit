@@ -197,16 +197,21 @@ func TestRunFreshDirStampsWithoutMigrating(t *testing.T) {
 }
 
 func TestRunRollsBackOnInvalidResult(t *testing.T) {
-	// A legacy config missing its oauth tokens cannot validate after migration;
+	// A structurally broken legacy config (agents as a scalar, not a map) survives
+	// into a malformed agents.yaml that fails to parse into the config types;
 	// Run must roll back and leave slack.yaml in place.
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "slack.yaml"),
-		[]byte("configuration:\n  admin_user: U0ADMIN00\n"), 0o644); err != nil {
+		[]byte("oauth:\n  app_token: xapp-x\n  bot_token: xoxb-x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agents.yaml"),
+		[]byte("acp:\n  enabled: true\nagents: not-a-map\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Run(dir)
 	if err == nil {
-		t.Fatal("expected migration to fail validation (no oauth tokens)")
+		t.Fatal("expected migration to fail structural validation (agents is not a map)")
 	}
 	if !fileExists(filepath.Join(dir, "slack.yaml")) {
 		t.Fatal("slack.yaml must be restored after a rolled-back migration")

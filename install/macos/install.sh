@@ -7,7 +7,7 @@
 # downloading + version-comparing + atomically replacing the binary, and
 # restarting the LaunchAgent when one was previously loaded.
 #
-# Everything else — writing slack.yaml, agents.yaml, dev.murtaugh.plist, and
+# Everything else — writing gateway.yaml, agents.yaml, dev.murtaugh.plist, and
 # MCP client config — is delegated to the freshly-installed binary via
 # `murtaugh setup ...` tools, which share the exact same code path the CLI
 # and MCP frontends use. See internal/tools/setup/* for the implementations.
@@ -504,7 +504,7 @@ restart_launch_agent_if_needed() {
   log "Restarted LaunchAgent dev.murtaugh"
 }
 
-# write_slack_config delegates slack.yaml writing to `murtaugh setup slack`.
+# write_slack_config delegates gateway.yaml writing to `murtaugh setup slack`.
 # The agents.yaml write is paired here so the daemon never sees an
 # inconsistent intermediate state where one file points at an agent the other
 # doesn't define.
@@ -607,12 +607,12 @@ main() {
     die "the installed Murtaugh (${installed_bin}) does not support 'setup' yet. Upgrade to a release that includes the setup tools, or pass --skip-config to update the binary only."
   fi
 
-  local config_dir slack_yaml agents_yaml has_config
+  local config_dir gateway_yaml agents_yaml has_config
   config_dir="$HOME/.config/murtaugh"
-  slack_yaml="$config_dir/slack.yaml"
+  gateway_yaml="$config_dir/gateway.yaml"
   agents_yaml="$config_dir/agents.yaml"
   has_config=0
-  [[ -f "$slack_yaml" || -f "$agents_yaml" ]] && has_config=1
+  [[ -f "$gateway_yaml" || -f "$agents_yaml" ]] && has_config=1
 
   local app_token bot_token admin_user chat_choice chat_command=""
   local -a chat_args=()
@@ -652,7 +652,7 @@ main() {
     chmod 700 "$config_dir" 2>/dev/null || true
 
     if [[ "$DRY_RUN" -eq 1 ]]; then
-      log "[DRY-RUN] Would write ${slack_yaml} and ${agents_yaml}"
+      log "[DRY-RUN] Would write ${gateway_yaml} and ${agents_yaml}"
     else
       # Seed embedded defaults first so skills/ + docs land before the
       # user-provided slack/agents writes overlay on top. On --reconfigure also
@@ -662,7 +662,7 @@ main() {
       [[ "$RECONFIGURE" -eq 1 ]] && boot_args+=(--force true)
       "$installed_bin" "${boot_args[@]}" >&2
       write_slack_config "$installed_bin" "$app_token" "$bot_token" "$admin_user" "$chat_choice" "$chat_command" ${chat_args[@]+"${chat_args[@]}"}
-      log "Wrote Slack config to ${slack_yaml}"
+      log "Wrote Slack config to ${gateway_yaml}"
       log "Wrote agent config to ${agents_yaml}"
     fi
   fi
