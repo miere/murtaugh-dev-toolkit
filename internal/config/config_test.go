@@ -18,6 +18,39 @@ func testConfig(extra string) []byte {
 	return []byte(baseSlackYAML + extra)
 }
 
+// loadWithRules writes a minimal slack.yaml plus a sibling rules file (e.g.
+// workflow-rules.yaml) and returns the fully loaded + validated config, as the
+// daemon would see it.
+func loadWithRules(t *testing.T, name, content string) (Config, error) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "slack.yaml"), testConfig(""), 0o644); err != nil {
+		t.Fatalf("write slack.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return Load(filepath.Join(dir, "slack.yaml"))
+}
+
+// loadWithAgentAndRules is loadWithRules plus a default ACP agent in agents.yaml,
+// for rules whose delegate-to-agent blocks reference it.
+func loadWithAgentAndRules(t *testing.T, name, content string) (Config, error) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "slack.yaml"), testConfig(""), 0o644); err != nil {
+		t.Fatalf("write slack.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agents.yaml"),
+		[]byte("agents:\n  default:\n    acp:\n      command: /bin/agent\n"), 0o644); err != nil {
+		t.Fatalf("write agents.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return Load(filepath.Join(dir, "slack.yaml"))
+}
+
 func TestParseValidConfig(t *testing.T) {
 	cfg, err := Parse(testConfig(`configuration:
   admin_user: '@admin'
@@ -116,7 +149,7 @@ func TestParseRequiresSlackTokens(t *testing.T) {
 }
 
 func TestParseWorkflowRules(t *testing.T) {
-	cfg, err := Parse(testConfig(`workflow-rules:
+	cfg, err := loadWithRules(t, "workflow-rules.yaml", `workflow-rules:
   code-review-approval:
     request_event: interactive
     match:
@@ -130,12 +163,9 @@ func TestParseWorkflowRules(t *testing.T) {
       - run:
           cmd: /path/to/cmd
           args: [param1, param2]
-`))
+`)
 	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate returned error: %v", err)
+		t.Fatalf("Load returned error: %v", err)
 	}
 	rule := cfg.WorkflowRules["code-review-approval"]
 	if rule.RequestEvent != "interactive" || len(rule.Triggers) != 2 {
@@ -150,7 +180,7 @@ func TestParseWorkflowRules(t *testing.T) {
 }
 
 func TestParseWorkflowRuleValidatesReplyToSlackRenderer(t *testing.T) {
-	cfg, err := Parse(testConfig(`workflow-rules:
+	_, err := loadWithRules(t, "workflow-rules.yaml", `workflow-rules:
   invalid:
     request_event: interactive
     match:
@@ -160,18 +190,14 @@ func TestParseWorkflowRuleValidatesReplyToSlackRenderer(t *testing.T) {
           template: response.json
           run:
             cmd: /path/to/cmd
-`))
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	err = cfg.Validate()
+`)
 	if err == nil || !strings.Contains(err.Error(), "exactly one of template, run, or delegate-to-agent") {
 		t.Fatalf("expected reply-to-slack validation error, got: %v", err)
 	}
 }
 
 func TestParseWorkflowRuleValidatesRequestEvent(t *testing.T) {
-	cfg, err := Parse(testConfig(`workflow-rules:
+	_, err := loadWithRules(t, "workflow-rules.yaml", `workflow-rules:
   invalid:
     request_event: slash_command
     match:
@@ -179,18 +205,14 @@ func TestParseWorkflowRuleValidatesRequestEvent(t *testing.T) {
     trigger:
       - run:
           cmd: /path/to/cmd
-`))
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	err = cfg.Validate()
+`)
 	if err == nil || !strings.Contains(err.Error(), "request_event must be interactive") {
 		t.Fatalf("expected request event validation error, got: %v", err)
 	}
 }
 
 func TestParseValidUnfurlRule(t *testing.T) {
-	cfg, err := Parse(testConfig(`unfurl-rules:
+	cfg, err := loadWithRules(t, "unfurl-rules.yaml", `unfurl-rules:
   github-pr:
     match:
       channels: [C0ENG]
@@ -198,12 +220,9 @@ func TestParseValidUnfurlRule(t *testing.T) {
       url_pattern: '/pull/(?P<number>\d+)'
     unfurl:
       template: templates/unfurl/github-pr.json
-`))
+`)
 	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate returned error: %v", err)
+		t.Fatalf("Load returned error: %v", err)
 	}
 	rule, ok := cfg.UnfurlRules["github-pr"]
 	if !ok {
@@ -218,24 +237,20 @@ func TestParseValidUnfurlRule(t *testing.T) {
 }
 
 func TestParseUnfurlRequiresMatchCondition(t *testing.T) {
-	cfg, err := Parse(testConfig(`unfurl-rules:
+	_, err := loadWithRules(t, "unfurl-rules.yaml", `unfurl-rules:
   bad:
     match:
       channels: [C1]
     unfurl:
       template: t.json
-`))
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	err = cfg.Validate()
+`)
 	if err == nil || !strings.Contains(err.Error(), "at least one of domain") {
 		t.Fatalf("expected match condition error, got: %v", err)
 	}
 }
 
 func TestParseUnfurlRejectsTemplateAndRun(t *testing.T) {
-	cfg, err := Parse(testConfig(`unfurl-rules:
+	_, err := loadWithRules(t, "unfurl-rules.yaml", `unfurl-rules:
   bad:
     match:
       domain: github.com
@@ -243,11 +258,7 @@ func TestParseUnfurlRejectsTemplateAndRun(t *testing.T) {
       template: t.json
       run:
         cmd: echo
-`))
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	err = cfg.Validate()
+`)
 	if err == nil || !strings.Contains(err.Error(), "exactly one of template, run, or delegate-to-agent") {
 		t.Fatalf("expected exclusivity error, got: %v", err)
 	}
@@ -448,7 +459,7 @@ func TestJobValidationRejectsUnknownAgent(t *testing.T) {
 }
 
 func TestParseWorkflowDelegateToAgentTrigger(t *testing.T) {
-	cfg, err := Parse(testConfig(`workflow-rules:
+	cfg, err := loadWithAgentAndRules(t, "workflow-rules.yaml", `workflow-rules:
   review:
     request_event: interactive
     match:
@@ -457,13 +468,9 @@ func TestParseWorkflowDelegateToAgentTrigger(t *testing.T) {
       - delegate-to-agent:
           agent: default
           prompt: "Do the thing"
-`))
+`)
 	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate returned error: %v", err)
+		t.Fatalf("Load returned error: %v", err)
 	}
 	trig := cfg.WorkflowRules["review"].Triggers[0]
 	if trig.Type != "delegate-to-agent" || trig.DelegateToAgent == nil || trig.DelegateToAgent.Agent != "default" {
@@ -472,7 +479,7 @@ func TestParseWorkflowDelegateToAgentTrigger(t *testing.T) {
 }
 
 func TestParseReplyToSlackDelegateToAgent(t *testing.T) {
-	cfg, err := Parse(testConfig(`workflow-rules:
+	cfg, err := loadWithAgentAndRules(t, "workflow-rules.yaml", `workflow-rules:
   review:
     request_event: interactive
     match:
@@ -482,13 +489,9 @@ func TestParseReplyToSlackDelegateToAgent(t *testing.T) {
           delegate-to-agent:
             agent: default
             prompt: "Return a JSON message"
-`))
+`)
 	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate returned error: %v", err)
+		t.Fatalf("Load returned error: %v", err)
 	}
 	rts := cfg.WorkflowRules["review"].Triggers[0].ReplyToSlack
 	if rts == nil || rts.DelegateToAgent == nil || rts.DelegateToAgent.Agent != "default" {
@@ -497,7 +500,7 @@ func TestParseReplyToSlackDelegateToAgent(t *testing.T) {
 }
 
 func TestParseReplyToSlackRejectsTemplateAndDelegate(t *testing.T) {
-	cfg, err := Parse(testConfig(`workflow-rules:
+	_, err := loadWithAgentAndRules(t, "workflow-rules.yaml", `workflow-rules:
   bad:
     request_event: interactive
     match:
@@ -508,19 +511,14 @@ func TestParseReplyToSlackRejectsTemplateAndDelegate(t *testing.T) {
           delegate-to-agent:
             agent: default
             prompt: "x"
-`))
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
-	err = cfg.Validate()
+`)
 	if err == nil || !strings.Contains(err.Error(), "exactly one of template, run, or delegate-to-agent") {
 		t.Fatalf("expected reply-to-slack exclusivity error, got: %v", err)
 	}
 }
 
 func TestParseUnfurlDelegateToAgent(t *testing.T) {
-	cfg, err := Parse(testConfig(`unfurl-rules:
+	cfg, err := loadWithAgentAndRules(t, "unfurl-rules.yaml", `unfurl-rules:
   github-issues:
     match:
       domain: github.com
@@ -528,13 +526,9 @@ func TestParseUnfurlDelegateToAgent(t *testing.T) {
       delegate-to-agent:
         agent: default
         prompt: "Summarise {{ .URL }}"
-`))
+`)
 	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate returned error: %v", err)
+		t.Fatalf("Load returned error: %v", err)
 	}
 	action := cfg.UnfurlRules["github-issues"].Unfurl
 	if action.DelegateToAgent == nil || action.DelegateToAgent.Agent != "default" {
@@ -543,7 +537,7 @@ func TestParseUnfurlDelegateToAgent(t *testing.T) {
 }
 
 func TestParseDelegateRejectsUnknownAgent(t *testing.T) {
-	cfg, err := Parse(testConfig(`unfurl-rules:
+	_, err := loadWithRules(t, "unfurl-rules.yaml", `unfurl-rules:
   github-issues:
     match:
       domain: github.com
@@ -551,11 +545,7 @@ func TestParseDelegateRejectsUnknownAgent(t *testing.T) {
       delegate-to-agent:
         agent: ghost
         prompt: "x"
-`))
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	err = cfg.Validate()
+`)
 	if err == nil || !strings.Contains(err.Error(), `delegate-to-agent references unknown agent "ghost"`) {
 		t.Fatalf("expected unknown-agent error, got: %v", err)
 	}
@@ -744,18 +734,14 @@ func TestIsAdminUserSkipsHandleConfiguredAdmin(t *testing.T) {
 }
 
 func TestParseUnfurlRejectsBadRegex(t *testing.T) {
-	cfg, err := Parse(testConfig(`unfurl-rules:
+	_, err := loadWithRules(t, "unfurl-rules.yaml", `unfurl-rules:
   bad:
     match:
       domain: github.com
       url_pattern: '([a-z'
     unfurl:
       template: t.json
-`))
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	err = cfg.Validate()
+`)
 	if err == nil || !strings.Contains(err.Error(), "url_pattern") {
 		t.Fatalf("expected url_pattern validation error, got: %v", err)
 	}

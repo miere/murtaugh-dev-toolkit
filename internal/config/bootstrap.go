@@ -82,6 +82,8 @@ func BootstrapWithReport(configPath string, force bool) (BootstrapReport, error)
 		{"agents.yaml", filepath.Join(baseDir, "agents.yaml")},
 		{"jobs.yaml", filepath.Join(baseDir, "jobs.yaml")},
 		{"journal.yaml", filepath.Join(baseDir, "journal.yaml")},
+		{"workflow-rules.yaml", filepath.Join(baseDir, "workflow-rules.yaml")},
+		{"unfurl-rules.yaml", filepath.Join(baseDir, "unfurl-rules.yaml")},
 		// Seed a template .env (from the non-dotfile asset env.example) so a
 		// fresh install has the credentials file to fill in. preserveExisting
 		// means a real .env is never clobbered.
