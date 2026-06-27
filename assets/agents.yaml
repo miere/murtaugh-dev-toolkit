@@ -1,21 +1,25 @@
-acp:
+# Runtime defaults applied to every agent, grouped by the concern each knob
+# serves. `enabled` gates the Slack chat surface (DMs + @mentions → agent).
+defaults:
   enabled: false
-  startup_timeout: 10s
-  request_timeout: 10m
-  session_idle_timeout: 30m
-  max_sessions: 100
-  stream_append_interval: 750ms
-  stream_min_chunk_chars: 96
-  cancel_grace_period: 2s
-  # progress_display: how tool/step progress renders while a turn streams.
-  # "simplified" (default) shows one small context-line message that updates in
-  # place as the agent works and resolves to "✓ Done thinking" at the end;
-  # "tasks" keeps the full multi-card plan. Per-agent profiles may override it.
-  progress_display: simplified
-
-# `agent:` is the new spelling of the runtime block above and is accepted as an
-# alias for `acp:` (the knobs apply to both native and ACP backends). The `acp:`
-# key keeps working for existing configs.
+  session:
+    idle_timeout: 30m
+    request_timeout: 10m       # idle-bounded: reset by every agent event, not total wall-clock
+    max_concurrent: 100
+  rendering:
+    # progress_display: how tool/step progress renders while a turn streams.
+    # "simplified" (default) shows one small context-line message that updates in
+    # place as the agent works and resolves to "✓ Done thinking" at the end;
+    # "tasks" keeps the full multi-card plan. Per-agent profiles may override it.
+    progress_display: simplified
+    stream_min_chunk_chars: 96
+    stream_append_interval: 750ms
+  acp:                         # ACP child-process lifecycle (native agents ignore these)
+    startup_timeout: 10s
+    cancel_grace_period: 2s
+  # approval:                  # global default, overridable per agent below
+  #   terminal: allowlist      # native terminal-tool gate
+  #   requests: ask            # how an ACP agent's own permission prompts are answered
 
 # External MCP servers a native agent can attach to (referenced by name from an
 # agent's `mcp_servers:` list below). Each server uses exactly one transport: a

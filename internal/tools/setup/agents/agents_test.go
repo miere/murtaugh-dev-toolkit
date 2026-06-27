@@ -10,15 +10,20 @@ import (
 )
 
 type loaded struct {
-	ACP struct {
-		Enabled              bool   `yaml:"enabled"`
-		StartupTimeout       string `yaml:"startup_timeout"`
-		RequestTimeout       string `yaml:"request_timeout"`
-		SessionIdleTimeout   string `yaml:"session_idle_timeout"`
-		MaxSessions          int    `yaml:"max_sessions"`
-		StreamAppendInterval string `yaml:"stream_append_interval"`
-		StreamMinChunkChars  int    `yaml:"stream_min_chunk_chars"`
-	} `yaml:"acp"`
+	Defaults struct {
+		Enabled bool `yaml:"enabled"`
+		Session struct {
+			IdleTimeout    string `yaml:"idle_timeout"`
+			RequestTimeout string `yaml:"request_timeout"`
+			MaxConcurrent  int    `yaml:"max_concurrent"`
+		} `yaml:"session"`
+		Rendering struct {
+			StreamMinChunkChars int `yaml:"stream_min_chunk_chars"`
+		} `yaml:"rendering"`
+		ACP struct {
+			StartupTimeout string `yaml:"startup_timeout"`
+		} `yaml:"acp"`
+	} `yaml:"defaults"`
 	Agents map[string]struct {
 		Tools      []string `yaml:"tools"`
 		MCPServers []string `yaml:"mcp_servers"`
@@ -74,14 +79,14 @@ func TestInvoke_NoCommandDisablesACP(t *testing.T) {
 		t.Fatal("Created must be true on fresh write")
 	}
 	doc := load(t, path)
-	if doc.ACP.Enabled {
-		t.Fatal("acp.enabled must be false when no command is supplied")
+	if doc.Defaults.Enabled {
+		t.Fatal("defaults.enabled must be false when no command is supplied")
 	}
 	if len(doc.Agents) != 0 {
 		t.Fatalf("agents must be empty when no command is supplied, got %+v", doc.Agents)
 	}
-	if doc.ACP.StartupTimeout != "10s" || doc.ACP.MaxSessions != 100 {
-		t.Fatalf("acp defaults missing: %+v", doc.ACP)
+	if doc.Defaults.ACP.StartupTimeout != "10s" || doc.Defaults.Session.MaxConcurrent != 100 {
+		t.Fatalf("runtime defaults missing: %+v", doc.Defaults)
 	}
 }
 
@@ -98,7 +103,7 @@ func TestInvoke_WithCommandRegistersAgentAndEnablesACP(t *testing.T) {
 		t.Fatalf("Invoke: %v", err)
 	}
 	doc := load(t, path)
-	if !doc.ACP.Enabled {
+	if !doc.Defaults.Enabled {
 		t.Fatal("acp.enabled must be true when a command is provided")
 	}
 	agent, ok := doc.Agents["default"]
@@ -179,7 +184,7 @@ func TestInvoke_NativeAgent(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", r)
 	}
 	doc := load(t, path)
-	if !doc.ACP.Enabled {
+	if !doc.Defaults.Enabled {
 		t.Fatal("runtime block must be enabled for a native agent")
 	}
 	a, ok := doc.Agents["emily"]

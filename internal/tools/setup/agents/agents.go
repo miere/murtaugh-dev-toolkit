@@ -93,34 +93,43 @@ func (r Result) String() string {
 	return fmt.Sprintf("%s %s (%s)", verb, r.Path, state)
 }
 
-// acpDefaults captures the runtime tuning baked into every fresh agents.yaml.
-// It applies to both backends (timeouts, streaming) and is emitted under the
-// back-compatible `acp:` key.
-var acpDefaults = acpBlock{
-	Enabled:              false,
-	StartupTimeout:       "10s",
-	RequestTimeout:       "10m",
-	SessionIdleTimeout:   "30m",
-	MaxSessions:          100,
-	StreamAppendInterval: "750ms",
-	StreamMinChunkChars:  96,
-	ProgressDisplay:      "simplified",
+// runtimeDefaults captures the runtime tuning baked into every fresh
+// agents.yaml, split by the concern each knob serves. `enabled` gates the
+// Slack chat surface.
+var runtimeDefaults = defaultsBlock{
+	Enabled:   false,
+	Session:   sessionBlock{IdleTimeout: "30m", RequestTimeout: "10m", MaxConcurrent: 100},
+	Rendering: renderingBlock{ProgressDisplay: "simplified", StreamMinChunkChars: 96, StreamAppendInterval: "750ms"},
+	ACP:       acpDefaultsBlock{StartupTimeout: "10s", CancelGracePeriod: "2s"},
 }
 
 type document struct {
-	ACP    acpBlock                `yaml:"acp"`
-	Agents map[string]profileBlock `yaml:"agents"`
+	Defaults defaultsBlock           `yaml:"defaults"`
+	Agents   map[string]profileBlock `yaml:"agents"`
 }
 
-type acpBlock struct {
-	Enabled              bool   `yaml:"enabled"`
-	StartupTimeout       string `yaml:"startup_timeout"`
-	RequestTimeout       string `yaml:"request_timeout"`
-	SessionIdleTimeout   string `yaml:"session_idle_timeout"`
-	MaxSessions          int    `yaml:"max_sessions"`
-	StreamAppendInterval string `yaml:"stream_append_interval"`
-	StreamMinChunkChars  int    `yaml:"stream_min_chunk_chars"`
+type defaultsBlock struct {
+	Enabled   bool             `yaml:"enabled"`
+	Session   sessionBlock     `yaml:"session"`
+	Rendering renderingBlock   `yaml:"rendering"`
+	ACP       acpDefaultsBlock `yaml:"acp"`
+}
+
+type sessionBlock struct {
+	IdleTimeout    string `yaml:"idle_timeout"`
+	RequestTimeout string `yaml:"request_timeout"`
+	MaxConcurrent  int    `yaml:"max_concurrent"`
+}
+
+type renderingBlock struct {
 	ProgressDisplay      string `yaml:"progress_display"`
+	StreamMinChunkChars  int    `yaml:"stream_min_chunk_chars"`
+	StreamAppendInterval string `yaml:"stream_append_interval"`
+}
+
+type acpDefaultsBlock struct {
+	StartupTimeout    string `yaml:"startup_timeout"`
+	CancelGracePeriod string `yaml:"cancel_grace_period"`
 }
 
 // profileBlock holds an agent's shared knobs plus exactly one backend
@@ -172,7 +181,7 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 		}
 	}
 
-	doc := document{ACP: acpDefaults, Agents: map[string]profileBlock{}}
+	doc := document{Defaults: runtimeDefaults, Agents: map[string]profileBlock{}}
 	var resultKind string
 
 	switch kind {
@@ -181,14 +190,14 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		doc.ACP.Enabled = true
+		doc.Defaults.Enabled = true
 		doc.Agents[agentName] = profile
 		resultKind = "native"
 	case "acp":
 		if command == "" {
 			return nil, errors.New("kind acp requires --command")
 		}
-		doc.ACP.Enabled = true
+		doc.Defaults.Enabled = true
 		doc.Agents[agentName] = profileBlock{ACP: &acpProfileBlock{Command: command, Args: agentArgs}}
 		resultKind = "acp"
 	case "":
@@ -224,7 +233,7 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 		Path:       path,
 		Created:    backupPath == "",
 		BackupPath: backupPath,
-		Enabled:    doc.ACP.Enabled,
+		Enabled:    doc.Defaults.Enabled,
 		AgentName:  agentName,
 		Kind:       resultKind,
 	}, nil

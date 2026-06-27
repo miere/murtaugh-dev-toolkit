@@ -469,7 +469,7 @@ func newJobDelegator(cfg config.Config, registry *tools.Registry) run.AgentDeleg
 	if len(cfg.Agents) == 0 {
 		return nil
 	}
-	return agentdelegate.NewRunner(cfg.Agents, cfg.ACP, cfg.BaseDir, slog.Default()).
+	return agentdelegate.NewRunner(cfg.Agents, cfg.Defaults, cfg.BaseDir, slog.Default()).
 		WithBuildContext(registry, cfg.MCPServers)
 }
 

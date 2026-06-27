@@ -18,8 +18,8 @@ func TestEffectiveProgressDisplayDefaultsToSimplified(t *testing.T) {
 
 func TestEffectiveProgressDisplayGlobalDefault(t *testing.T) {
 	cfg := Config{
-		ACP:    ACPConfig{ProgressDisplay: "tasks"},
-		Agents: map[string]AgentProfile{"coder": {ACP: &ACPProfile{Command: "x"}}},
+		Defaults: RuntimeDefaults{Rendering: RenderingDefaults{ProgressDisplay: "tasks"}},
+		Agents:   map[string]AgentProfile{"coder": {ACP: &ACPProfile{Command: "x"}}},
 	}
 	if got := cfg.EffectiveProgressDisplay("coder"); got != ProgressDisplayTasks {
 		t.Fatalf("expected global tasks default, got %q", got)
@@ -28,7 +28,7 @@ func TestEffectiveProgressDisplayGlobalDefault(t *testing.T) {
 
 func TestEffectiveProgressDisplayAgentOverridesGlobal(t *testing.T) {
 	cfg := Config{
-		ACP: ACPConfig{ProgressDisplay: "tasks"},
+		Defaults: RuntimeDefaults{Rendering: RenderingDefaults{ProgressDisplay: "tasks"}},
 		Agents: map[string]AgentProfile{
 			"coder":  {ACP: &ACPProfile{Command: "x"}},                                // inherits global → tasks
 			"helper": {ACP: &ACPProfile{Command: "x"}, ProgressDisplay: "simplified"}, // overrides → simplified
@@ -55,19 +55,19 @@ func TestProgressDisplayValidationRejectsUnknown(t *testing.T) {
 
 func TestProgressDisplayValidationRejectsUnknownGlobal(t *testing.T) {
 	cfg := Config{
-		OAuth: OAuthConfig{AppToken: "a", BotToken: "b"},
-		ACP:   ACPConfig{ProgressDisplay: "loud"},
+		OAuth:    OAuthConfig{AppToken: "a", BotToken: "b"},
+		Defaults: RuntimeDefaults{Rendering: RenderingDefaults{ProgressDisplay: "loud"}},
 	}
 	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "acp.progress_display") {
-		t.Fatalf("expected an acp.progress_display validation error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "defaults.rendering.progress_display") {
+		t.Fatalf("expected a defaults.rendering.progress_display validation error, got %v", err)
 	}
 }
 
 func TestProgressDisplayValidationAllowsKnownAndBlank(t *testing.T) {
 	cfg := Config{
-		OAuth: OAuthConfig{AppToken: "a", BotToken: "b"},
-		ACP:   ACPConfig{ProgressDisplay: "tasks"},
+		OAuth:    OAuthConfig{AppToken: "a", BotToken: "b"},
+		Defaults: RuntimeDefaults{Rendering: RenderingDefaults{ProgressDisplay: "tasks"}},
 		Agents: map[string]AgentProfile{
 			"a": {ACP: &ACPProfile{Command: "x"}, ProgressDisplay: "simplified"},
 			"b": {ACP: &ACPProfile{Command: "x"}}, // blank inherits, allowed

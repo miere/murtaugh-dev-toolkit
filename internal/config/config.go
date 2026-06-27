@@ -25,7 +25,7 @@ type Config struct {
 	OAuth         OAuthConfig                   `yaml:"oauth"`
 	Configuration ConfigurationConfig           `yaml:"configuration"`
 	Chat          ChatConfig                    `yaml:"chat"`
-	ACP           ACPConfig                     `yaml:"-"`
+	Defaults      RuntimeDefaults               `yaml:"-"`
 	Agents        map[string]AgentProfile       `yaml:"-"`
 	MCPServers    map[string]MCPServerConfig    `yaml:"-"`
 	Jobs          map[string]JobProfile         `yaml:"-"`
@@ -85,22 +85,42 @@ type ChatConfig struct {
 	DefaultAgent               string              `yaml:"default_agent"`
 }
 
-type ACPConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	StartupTimeout string `yaml:"startup_timeout"`
+// RuntimeDefaults are the agent-runtime defaults applied to every agent, split
+// by the concern each knob serves. Parsed from the agents.yaml `defaults:` block.
+type RuntimeDefaults struct {
+	// Enabled gates the Slack chat surface (DMs + @mentions → agent).
+	Enabled   bool              `yaml:"enabled"`
+	Session   SessionDefaults   `yaml:"session"`
+	Rendering RenderingDefaults `yaml:"rendering"`
+	ACP       ACPDefaults       `yaml:"acp"`
+	// Approval is the global default approval policy, overridden per agent.
+	Approval ApprovalConfig `yaml:"approval"`
+}
+
+// SessionDefaults tune chat-session lifecycle (both backends).
+type SessionDefaults struct {
+	IdleTimeout string `yaml:"idle_timeout"`
 	// RequestTimeout bounds a chat turn by INACTIVITY, not total wall-clock: the
 	// timer resets on every chunk or task update the agent emits, so a long turn
 	// that keeps making progress is never killed mid-flight. Only an agent that
 	// goes silent for this long is treated as stalled.
-	RequestTimeout       string `yaml:"request_timeout"`
-	SessionIdleTimeout   string `yaml:"session_idle_timeout"`
-	MaxSessions          int    `yaml:"max_sessions"`
-	StreamAppendInterval string `yaml:"stream_append_interval"`
-	StreamMinChunkChars  int    `yaml:"stream_min_chunk_chars"`
-	CancelGracePeriod    string `yaml:"cancel_grace_period"`
+	RequestTimeout string `yaml:"request_timeout"`
+	MaxConcurrent  int    `yaml:"max_concurrent"`
+}
+
+// RenderingDefaults tune how a streaming turn renders in Slack (both backends).
+type RenderingDefaults struct {
 	// ProgressDisplay is the default rendering for tool/step progress across all
 	// agents. Empty means simplified. Per-agent profiles may override it.
-	ProgressDisplay string `yaml:"progress_display"`
+	ProgressDisplay      string `yaml:"progress_display"`
+	StreamMinChunkChars  int    `yaml:"stream_min_chunk_chars"`
+	StreamAppendInterval string `yaml:"stream_append_interval"`
+}
+
+// ACPDefaults tune the ACP child-process lifecycle (native agents ignore these).
+type ACPDefaults struct {
+	StartupTimeout    string `yaml:"startup_timeout"`
+	CancelGracePeriod string `yaml:"cancel_grace_period"`
 }
 
 // ProgressDisplay selects how an agent's tool/step progress renders in Slack
@@ -487,21 +507,14 @@ func Load(path string) (Config, error) {
 	agentsData, err := os.ReadFile(agentsPath)
 	if err == nil {
 		var agents struct {
-			ACP        ACPConfig                  `yaml:"acp"`
-			Agent      *ACPConfig                 `yaml:"agent"`
+			Defaults   RuntimeDefaults            `yaml:"defaults"`
 			Agents     map[string]AgentProfile    `yaml:"agents"`
 			MCPServers map[string]MCPServerConfig `yaml:"mcp_servers"`
 		}
 		if err := yaml.Unmarshal(agentsData, &agents); err != nil {
 			return Config{}, fmt.Errorf("parse agents config %q: %w", agentsPath, err)
 		}
-		// `agent:` is the new spelling of the kind-agnostic runtime block; `acp:`
-		// stays accepted as an alias so existing configs keep working. When both
-		// are present the new `agent:` key wins.
-		cfg.ACP = agents.ACP
-		if agents.Agent != nil {
-			cfg.ACP = *agents.Agent
-		}
+		cfg.Defaults = agents.Defaults
 		cfg.Agents = agents.Agents
 		cfg.MCPServers = agents.MCPServers
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -553,6 +566,12 @@ func Load(path string) (Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
+	// Bake the global defaults.approval into each agent so every downstream
+	// consumer sees the resolved (per-agent over default) policy.
+	for name, p := range cfg.Agents {
+		p.Approval = cfg.EffectiveApproval(p)
+		cfg.Agents[name] = p
+	}
 	return cfg, nil
 }
 
@@ -580,7 +599,7 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("configuration.allowed_users[%d] must not be blank", i))
 		}
 	}
-	if err := c.ACP.Validate(); err != nil {
+	if err := c.Defaults.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	for name, profile := range c.Agents {
@@ -618,12 +637,12 @@ func (c Config) Validate() error {
 		}
 	}
 
-	if c.ACP.Enabled {
+	if c.Defaults.Enabled {
 		if len(c.Agents) == 0 {
-			errs = append(errs, errors.New("acp is enabled but no agents are defined in agents.yaml"))
+			errs = append(errs, errors.New("chat is enabled but no agents are defined in agents.yaml"))
 		}
 		if strings.TrimSpace(c.Chat.DefaultAgent) == "" {
-			errs = append(errs, errors.New("chat.default_agent is required when acp is enabled"))
+			errs = append(errs, errors.New("chat.default_agent is required when chat is enabled"))
 		} else if _, ok := c.Agents[c.Chat.DefaultAgent]; !ok {
 			errs = append(errs, fmt.Errorf("chat.default_agent %q not found in agents.yaml", c.Chat.DefaultAgent))
 		}
@@ -781,29 +800,29 @@ func looksLikeSlackUserID(value string) bool {
 	return true
 }
 
-func (c ACPConfig) Validate() error {
+func (c RuntimeDefaults) Validate() error {
 	var errs []error
 	for field, value := range map[string]string{
-		"startup_timeout":        c.StartupTimeout,
-		"request_timeout":        c.RequestTimeout,
-		"session_idle_timeout":   c.SessionIdleTimeout,
-		"stream_append_interval": c.StreamAppendInterval,
-		"cancel_grace_period":    c.CancelGracePeriod,
+		"defaults.acp.startup_timeout":              c.ACP.StartupTimeout,
+		"defaults.session.request_timeout":          c.Session.RequestTimeout,
+		"defaults.session.idle_timeout":             c.Session.IdleTimeout,
+		"defaults.rendering.stream_append_interval": c.Rendering.StreamAppendInterval,
+		"defaults.acp.cancel_grace_period":          c.ACP.CancelGracePeriod,
 	} {
 		if strings.TrimSpace(value) == "" {
 			continue
 		}
 		if _, err := time.ParseDuration(value); err != nil {
-			errs = append(errs, fmt.Errorf("acp.%s must be a valid duration: %w", field, err))
+			errs = append(errs, fmt.Errorf("%s must be a valid duration: %w", field, err))
 		}
 	}
-	if c.MaxSessions < 0 {
-		errs = append(errs, errors.New("acp.max_sessions must be greater than or equal to zero"))
+	if c.Session.MaxConcurrent < 0 {
+		errs = append(errs, errors.New("defaults.session.max_concurrent must be greater than or equal to zero"))
 	}
-	if c.StreamMinChunkChars < 0 {
-		errs = append(errs, errors.New("acp.stream_min_chunk_chars must be greater than or equal to zero"))
+	if c.Rendering.StreamMinChunkChars < 0 {
+		errs = append(errs, errors.New("defaults.rendering.stream_min_chunk_chars must be greater than or equal to zero"))
 	}
-	if err := validateProgressDisplay("acp.progress_display", c.ProgressDisplay); err != nil {
+	if err := validateProgressDisplay("defaults.rendering.progress_display", c.Rendering.ProgressDisplay); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
@@ -856,7 +875,7 @@ type MCPServerConfig struct {
 }
 
 // EffectiveProgressDisplay resolves how the given agent's progress renders:
-// the agent profile's setting wins, then the global acp default, then
+// the agent profile's setting wins, then the global rendering default, then
 // simplified. Unknown values are rejected at load time (Validate), so this
 // only ever observes valid or empty strings.
 func (c Config) EffectiveProgressDisplay(agent string) ProgressDisplay {
@@ -865,10 +884,26 @@ func (c Config) EffectiveProgressDisplay(agent string) ProgressDisplay {
 			return m
 		}
 	}
-	if m := normalizeProgressDisplay(c.ACP.ProgressDisplay); m != "" {
+	if m := normalizeProgressDisplay(c.Defaults.Rendering.ProgressDisplay); m != "" {
 		return m
 	}
 	return ProgressDisplaySimplified
+}
+
+// EffectiveApproval resolves an agent's approval policy: each field of the
+// per-agent block wins when set, falling back to the global defaults.approval.
+func (c Config) EffectiveApproval(profile AgentProfile) ApprovalConfig {
+	out := c.Defaults.Approval
+	if t := strings.TrimSpace(profile.Approval.Terminal); t != "" {
+		out.Terminal = profile.Approval.Terminal
+	}
+	if len(profile.Approval.Allow) > 0 {
+		out.Allow = profile.Approval.Allow
+	}
+	if r := strings.TrimSpace(profile.Approval.Requests); r != "" {
+		out.Requests = profile.Approval.Requests
+	}
+	return out
 }
 
 // normalizeProgressDisplay maps a raw config string to a known mode, or "" when
@@ -896,41 +931,41 @@ func validateProgressDisplay(field, value string) error {
 	return nil
 }
 
-func (c ACPConfig) EffectiveStartupTimeout() time.Duration {
-	return durationOrDefault(c.StartupTimeout, 10*time.Second)
+func (c RuntimeDefaults) EffectiveStartupTimeout() time.Duration {
+	return durationOrDefault(c.ACP.StartupTimeout, 10*time.Second)
 }
 
 // EffectiveRequestTimeout is the per-turn idle timeout: the longest a chat turn
 // may go with no agent activity before it is treated as stalled. It is reset by
 // every event, so it bounds inactivity rather than total turn duration.
-func (c ACPConfig) EffectiveRequestTimeout() time.Duration {
-	return durationOrDefault(c.RequestTimeout, 10*time.Minute)
+func (c RuntimeDefaults) EffectiveRequestTimeout() time.Duration {
+	return durationOrDefault(c.Session.RequestTimeout, 10*time.Minute)
 }
 
-func (c ACPConfig) EffectiveSessionIdleTimeout() time.Duration {
-	return durationOrDefault(c.SessionIdleTimeout, 30*time.Minute)
+func (c RuntimeDefaults) EffectiveSessionIdleTimeout() time.Duration {
+	return durationOrDefault(c.Session.IdleTimeout, 30*time.Minute)
 }
 
-func (c ACPConfig) EffectiveStreamAppendInterval() time.Duration {
-	return durationOrDefault(c.StreamAppendInterval, 250*time.Millisecond)
+func (c RuntimeDefaults) EffectiveStreamAppendInterval() time.Duration {
+	return durationOrDefault(c.Rendering.StreamAppendInterval, 250*time.Millisecond)
 }
 
-func (c ACPConfig) EffectiveMaxSessions() int {
-	if c.MaxSessions > 0 {
-		return c.MaxSessions
+func (c RuntimeDefaults) EffectiveMaxSessions() int {
+	if c.Session.MaxConcurrent > 0 {
+		return c.Session.MaxConcurrent
 	}
 	return 100
 }
 
-func (c ACPConfig) EffectiveStreamMinChunkChars() int {
-	if c.StreamMinChunkChars > 0 {
-		return c.StreamMinChunkChars
+func (c RuntimeDefaults) EffectiveStreamMinChunkChars() int {
+	if c.Rendering.StreamMinChunkChars > 0 {
+		return c.Rendering.StreamMinChunkChars
 	}
 	return 24
 }
 
-func (c ACPConfig) EffectiveCancelGracePeriod() time.Duration {
-	return durationOrDefault(c.CancelGracePeriod, 2*time.Second)
+func (c RuntimeDefaults) EffectiveCancelGracePeriod() time.Duration {
+	return durationOrDefault(c.ACP.CancelGracePeriod, 2*time.Second)
 }
 
 func durationOrDefault(value string, fallback time.Duration) time.Duration {
