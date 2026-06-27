@@ -31,8 +31,8 @@ type Config struct {
 	Jobs          map[string]JobProfile         `yaml:"-"`
 	Journal       JournalConfig                 `yaml:"-"`
 	Troubleshoot  TroubleshootConfig            `yaml:"-"`
-	WorkflowRules map[string]WorkflowRuleConfig `yaml:"workflow-rules"`
-	UnfurlRules   map[string]UnfurlRuleConfig   `yaml:"unfurl-rules"`
+	WorkflowRules map[string]WorkflowRuleConfig `yaml:"-"`
+	UnfurlRules   map[string]UnfurlRuleConfig   `yaml:"-"`
 }
 
 // TroubleshootConfig is the machine-managed troubleshoot.yaml sibling. It
@@ -549,6 +549,34 @@ func Load(path string) (Config, error) {
 		cfg.Journal = journal.Journal
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Config{}, fmt.Errorf("read journal config %q: %w", journalPath, err)
+	}
+
+	workflowRulesPath := filepath.Join(cfg.BaseDir, "workflow-rules.yaml")
+	workflowRulesData, err := os.ReadFile(workflowRulesPath)
+	if err == nil {
+		var wr struct {
+			WorkflowRules map[string]WorkflowRuleConfig `yaml:"workflow-rules"`
+		}
+		if err := yaml.Unmarshal(workflowRulesData, &wr); err != nil {
+			return Config{}, fmt.Errorf("parse workflow rules config %q: %w", workflowRulesPath, err)
+		}
+		cfg.WorkflowRules = wr.WorkflowRules
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Config{}, fmt.Errorf("read workflow rules config %q: %w", workflowRulesPath, err)
+	}
+
+	unfurlRulesPath := filepath.Join(cfg.BaseDir, "unfurl-rules.yaml")
+	unfurlRulesData, err := os.ReadFile(unfurlRulesPath)
+	if err == nil {
+		var ur struct {
+			UnfurlRules map[string]UnfurlRuleConfig `yaml:"unfurl-rules"`
+		}
+		if err := yaml.Unmarshal(unfurlRulesData, &ur); err != nil {
+			return Config{}, fmt.Errorf("parse unfurl rules config %q: %w", unfurlRulesPath, err)
+		}
+		cfg.UnfurlRules = ur.UnfurlRules
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Config{}, fmt.Errorf("read unfurl rules config %q: %w", unfurlRulesPath, err)
 	}
 
 	troubleshootPath := filepath.Join(cfg.BaseDir, "troubleshoot.yaml")

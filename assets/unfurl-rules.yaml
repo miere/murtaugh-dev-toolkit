@@ -1,0 +1,31 @@
+# Custom link unfurling (disabled by default — uncomment to enable). Requires
+# the link_shared bot event plus the links:read and chat:write scopes, and each
+# match.domain must be registered in the Slack app's "App Unfurl Domains" list
+# (max 5) or no link_shared event is delivered. An unfurl action is exactly one
+# of `template`, `run`, or `delegate-to-agent`.
+#
+# unfurl-rules:
+#   # Template-based: build the preview from the URL's parts alone.
+#   github-pr:
+#     match:
+#       domain: github.com
+#       url_pattern: '^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>\d+)'
+#     unfurl:
+#       template: templates/unfurl/github-pr.json
+#
+#   # Agent-based: unlike a workflow trigger, an unfurl ALWAYS renders JSON — the
+#   # agent's final output must be a valid Slack attachment, which becomes the
+#   # preview. Non-JSON output is logged and the link is left un-unfurled. The
+#   # prompt is rendered against the unfurl context, so it can reference
+#   # {{ .URL }}, {{ .Domain }}, and named captures via {{ .Captures.<name> }}.
+#   github-issues:
+#     match:
+#       domain: github.com
+#       url_pattern: '^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/issues/(?P<number>\d+)'
+#     unfurl:
+#       delegate-to-agent:
+#         agent: default
+#         prompt: |
+#           Summarise GitHub issue {{ .URL }} and return me solely a valid Slack
+#           attachment JSON object containing the summary in one paragraph. Lists
+#           and emojis are allowed.

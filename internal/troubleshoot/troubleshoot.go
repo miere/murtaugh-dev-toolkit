@@ -116,8 +116,8 @@ func ResolveSources(journalDB, blobDir, baseDir, version string) Sources {
 	if strings.TrimSpace(baseDir) == "" {
 		baseDir = filepath.Join(home, ".config", "murtaugh")
 	}
-	configFiles := make([]string, 0, 4)
-	for _, name := range []string{"slack.yaml", "agents.yaml", "jobs.yaml", "journal.yaml"} {
+	configFiles := make([]string, 0, 6)
+	for _, name := range []string{"slack.yaml", "agents.yaml", "jobs.yaml", "journal.yaml", "workflow-rules.yaml", "unfurl-rules.yaml"} {
 		configFiles = append(configFiles, filepath.Join(baseDir, name))
 	}
 	var logFiles []string

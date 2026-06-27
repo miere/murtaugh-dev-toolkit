@@ -1,0 +1,48 @@
+# Workflow rules: react to Slack interactive events (button clicks, etc.).
+#
+# The "Test communication" ping → pong self-test is built into Murtaugh itself
+# (it is not a workflow rule): the binary posts the card and answers the click
+# directly, so the round-trip cannot be redirected by config or template edits.
+# Define your own rules below to react to other interactive buttons.
+#
+# A trigger has three mutually exclusive action types:
+#   * reply-to-slack — produce a Slack message JSON and post it back to the
+#     interaction. The JSON can come from a `template`, the stdout of a `run`
+#     command, or — as below — a `delegate-to-agent` block.
+#   * run — execute a command with the interaction payload on stdin.
+#   * delegate-to-agent — hand the work to an agent and forget it (no output
+#     captured); the agent acts through its own tools (it may post to Slack
+#     itself, open a PR, etc.).
+#
+# delegate-to-agent prompts are rendered with Go templates against the
+# interaction payload, exposed under `.Payload` (e.g. {{ .Payload.user.id }},
+# {{ index .Payload.channel "name" }}). An agent runs in an isolated one-shot
+# session — no shared chat memory.
+
+workflow-rules:
+  # review-button:
+  #   request_event: interactive
+  #   match:
+  #     type: block_actions
+  #     actions:
+  #       - action_id: review
+  #   trigger:
+  #     # Captured: the agent MUST return solely a valid Slack message JSON
+  #     # object, which is posted back to the interaction. Non-JSON output is
+  #     # logged and skipped.
+  #     - reply-to-slack:
+  #         delegate-to-agent:
+  #           agent: default
+  #           prompt: |
+  #             Acknowledge the review request from {{ .Payload.user.id }} and
+  #             return solely a valid Slack message JSON object confirming it.
+  #     # Fire-and-forget: the agent does the work on its own; nothing is posted
+  #     # for this trigger.
+  #     - delegate-to-agent:
+  #         agent: default
+  #         prompt: |
+  #           Review the open PR referenced in channel
+  #           {{ index .Payload.channel "name" }} and post your findings there.
+
+# workflow-rules may be omitted entirely; the built-in ping → pong self-test is
+# handled natively by the binary regardless.
