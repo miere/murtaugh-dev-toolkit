@@ -44,7 +44,7 @@ capability skill — defer to them for flag/tool details:
 ├── jobs.yaml                 # scheduled jobs (cron/interval) -> commands
 ├── journal.yaml              # journal configuration
 ├── gateway.yaml              # connection / access / chat (oauth tokens, admin, default agent)
-├── gateway-*.yaml            # additional Slack identities (e.g. a second workspace bot)
+│                             #   (a second workspace bot runs as its own instance with --config)
 ├── workflow-rules.yaml       # Slack workflow rules: reply / run / interactive
 ├── unfurl-rules.yaml         # link-unfurl rules: custom URL previews
 ├── automations/              # the automation routines (see below)

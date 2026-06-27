@@ -1,7 +1,7 @@
 // Package agents implements the `setup.agents` tool: write agents.yaml with the
-// runtime tuning block and a single named agent. It supports both backends — a
-// native LLM agent (kind: native, the default) and an external ACP agent
-// (kind: acp) — so the installer can configure either from one tool.
+// runtime defaults block and a single named agent. It supports both backends — a
+// native LLM agent (a `native:` block, the default) and an external ACP agent
+// (an `acp:` block) — so the installer can configure either from one tool.
 //
 // Secrets are never written here: a native profile only records api_key_env (the
 // .env variable name); the key value goes to .env via setup.env.

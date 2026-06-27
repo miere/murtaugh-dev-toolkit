@@ -1,4 +1,4 @@
-// Package native is the in-process, LLM-backed agent.Client (kind: native). It
+// Package native is the in-process, LLM-backed agent.Client (the native backend). It
 // owns the conversation array per session and runs the tool-calling turn loop
 // itself — no external agent process, no ACP. It satisfies the same agent.Client
 // interface ProcessClient does, so SessionManager, the Slack ChatHandler,

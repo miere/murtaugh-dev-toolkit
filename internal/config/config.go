@@ -150,8 +150,8 @@ const (
 	// AgentKindNative is the in-process LLM agent loop (the default). It talks
 	// to a provider directly via internal/llm and owns the conversation array.
 	AgentKindNative AgentKind = "native"
-	// AgentKindACP is the legacy external-process backend driven over ACP
-	// (kind: acp). Requires Command.
+	// AgentKindACP is the external-process backend driven over ACP (selected by
+	// an `acp:` block). Requires a command.
 	AgentKindACP AgentKind = "acp"
 )
 

@@ -47,8 +47,8 @@ type Runner struct {
 	idleTimeout time.Duration
 	newClient   ClientFactory
 	logger      *slog.Logger
-	// registry and mcpServers are consulted only when building a native agent
-	// (kind: native): the registry backs its `tools:` allowlist and mcpServers
+	// registry and mcpServers are consulted only when building a native agent:
+	// the registry backs its `tools:` allowlist and mcpServers
 	// resolves its MCP references. Wired by the composition root via
 	// WithBuildContext; nil leaves a native agent with only its synthesized and
 	// MCP tools (unresolved MCP refs are skipped).

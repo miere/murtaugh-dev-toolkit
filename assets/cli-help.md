@@ -371,11 +371,11 @@ murtaugh setup env --set GEMINI_API_KEY=AIza… --set VAULTRE_TOKEN=…
 
 ## murtaugh setup agents
 
-Write `agents.yaml` with the runtime tuning block and a single named agent.
-Supports both backends: a **native** LLM agent (`kind: native`, the default —
-Murtaugh talks to the model directly) and an external **ACP** agent
-(`kind: acp`). The kind is inferred from the flags when `--kind` is omitted:
-`--provider` ⇒ native, `--command` ⇒ acp. With no agent flags the file is
+Write `agents.yaml` with the runtime `defaults` block and a single named agent.
+Supports both backends: a **native** LLM agent (the default — Murtaugh talks to
+the model directly, configured under a `native:` block) and an external **ACP**
+agent (under an `acp:` block). The backend is inferred from the flags when
+`--kind` is omitted: `--provider` ⇒ native, `--command` ⇒ acp. With no agent flags the file is
 written with chat disabled. Secrets are never written here — a native profile
 records `--api-key-env` (the `.env` variable name); set the value with
 `setup env`.
