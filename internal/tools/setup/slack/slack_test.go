@@ -93,10 +93,10 @@ func TestInvoke_FirstWriteCreatesFile(t *testing.T) {
 	if strings.Contains(string(rawYAML), "xapp-1-test") || strings.Contains(string(rawYAML), "xoxb-test") {
 		t.Fatalf("raw token leaked into slack.yaml:\n%s", rawYAML)
 	}
-	if cfg.Configuration.AdminUser != "@admin" {
-		t.Fatalf("admin_user = %q, want @admin", cfg.Configuration.AdminUser)
+	if cfg.Access.AdminUser != "@admin" {
+		t.Fatalf("admin_user = %q, want @admin", cfg.Access.AdminUser)
 	}
-	if cfg.Configuration.Debug {
+	if cfg.Access.Debug {
 		t.Fatal("debug must default to false")
 	}
 	st, err := os.Stat(path)

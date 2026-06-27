@@ -418,7 +418,7 @@ func buildRegistry(cfg config.Config, configPath, version string, recorder journ
 	// gateway already understands. The real restart fires when the admin
 	// confirms in Slack (or via the admin-only slash command), never from
 	// this tool. With no channel it asks the configured admin in their DM.
-	reg.Register(restart.New(botToken, cfg.Configuration.AdminUser))
+	reg.Register(restart.New(botToken, cfg.Access.AdminUser))
 
 	// `ask` lets an agent put a question with options to the user as clickable
 	// Slack buttons and wait for the answer, instead of assuming one. It shares

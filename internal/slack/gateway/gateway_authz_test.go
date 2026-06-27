@@ -33,7 +33,7 @@ func TestResolveAllowSetMutatesConfigForHandlesAndIDs(t *testing.T) {
 	app := &Gateway{
 		api:    api,
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg: config.ConfigurationConfig{
+		cfg: config.AccessConfig{
 			AdminUser:    "@admin",
 			AllowedUsers: []string{"U0ALICE00", "bob"},
 		},
@@ -77,7 +77,7 @@ func TestResolveAllowSetFailsClosedOnUnresolvable(t *testing.T) {
 	app := &Gateway{
 		api:    api,
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:    config.ConfigurationConfig{AdminUser: "@admin", AllowedUsers: []string{"@ghost"}},
+		cfg:    config.AccessConfig{AdminUser: "@admin", AllowedUsers: []string{"@ghost"}},
 	}
 	err := app.resolveAllowSet(context.Background())
 	if err == nil {
@@ -94,7 +94,7 @@ func TestHandleSlashCommandDeniesUnauthorizedUser(t *testing.T) {
 	app := &Gateway{
 		handler: handler,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:     config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:     config.AccessConfig{AdminUser: "UADMIN00"},
 	}
 	app.handleSlashCommand(context.Background(), socketmode.Event{
 		Type: socketmode.EventTypeSlashCommand,
@@ -110,7 +110,7 @@ func TestHandleSlashCommandAllowsAdmin(t *testing.T) {
 	app := &Gateway{
 		handler: handler,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:     config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:     config.AccessConfig{AdminUser: "UADMIN00"},
 	}
 	app.handleSlashCommand(context.Background(), socketmode.Event{
 		Type: socketmode.EventTypeSlashCommand,
@@ -126,7 +126,7 @@ func TestAppMentionEventIgnoresUnauthorizedUser(t *testing.T) {
 	app := &Gateway{
 		chat:   NewChatHandler(&fakeStreamAPI{}, map[string]ChatSessionManager{"default": sessions}, func(ChatRequest) string { return "default" }, time.Hour, 1, nil),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:    config.ConfigurationConfig{AllowedUsers: []string{"UALICE00"}},
+		cfg:    config.AccessConfig{AllowedUsers: []string{"UALICE00"}},
 	}
 	app.handleEventsAPI(socketmode.Event{Type: socketmode.EventTypeEventsAPI, Data: slackevents.EventsAPIEvent{
 		TeamID:     "T1",
@@ -168,7 +168,7 @@ func TestHandleInteractiveIgnoresUnauthorizedUser(t *testing.T) {
 		workflow: wf,
 		socket:   nil, // a.ack is a no-op when socket is nil (see app.go)
 		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:      config.ConfigurationConfig{AllowedUsers: []string{"UALICE00"}},
+		cfg:      config.AccessConfig{AllowedUsers: []string{"UALICE00"}},
 	}
 	app.handleInteractive(socketmode.Event{
 		Type: socketmode.EventTypeInteractive,
@@ -189,7 +189,7 @@ func TestHandleInteractiveAllowsAllowlistedUser(t *testing.T) {
 		workflow: wf,
 		socket:   nil,
 		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:      config.ConfigurationConfig{AllowedUsers: []string{"UALICE00"}},
+		cfg:      config.AccessConfig{AllowedUsers: []string{"UALICE00"}},
 	}
 	app.handleInteractive(socketmode.Event{
 		Type: socketmode.EventTypeInteractive,
@@ -247,7 +247,7 @@ func TestHandleSlashCommandRestartDeniesNonAdmin(t *testing.T) {
 	app := &Gateway{
 		handler: &recordingSlashHandler{},
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:     config.ConfigurationConfig{AdminUser: "UADMIN00", AllowedUsers: []string{"UALICE00"}},
+		cfg:     config.AccessConfig{AdminUser: "UADMIN00", AllowedUsers: []string{"UALICE00"}},
 		restart: restart.trigger,
 	}
 	app.handleSlashCommand(context.Background(), socketmode.Event{
@@ -264,7 +264,7 @@ func TestHandleSlashCommandRestartFiresCoordinatorForAdmin(t *testing.T) {
 	app := &Gateway{
 		handler: &recordingSlashHandler{},
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:     config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:     config.AccessConfig{AdminUser: "UADMIN00"},
 		restart: restart.trigger,
 	}
 	app.handleSlashCommand(context.Background(), socketmode.Event{
@@ -288,7 +288,7 @@ func TestHandleSlashCommandRestartUnavailableWhenTriggerMissing(t *testing.T) {
 	app := &Gateway{
 		handler: handler,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:     config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:     config.AccessConfig{AdminUser: "UADMIN00"},
 	}
 	app.handleSlashCommand(context.Background(), socketmode.Event{
 		Type: socketmode.EventTypeSlashCommand,
@@ -307,7 +307,7 @@ func TestHandleSlashCommandRestartSurfacesCooldown(t *testing.T) {
 	app := &Gateway{
 		handler: &recordingSlashHandler{},
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:     config.ConfigurationConfig{AdminUser: "UADMIN00"},
+		cfg:     config.AccessConfig{AdminUser: "UADMIN00"},
 		restart: restart.trigger,
 	}
 	app.handleSlashCommand(context.Background(), socketmode.Event{
@@ -324,7 +324,7 @@ func TestDMEventIgnoresUnauthorizedUser(t *testing.T) {
 	app := &Gateway{
 		chat:   NewChatHandler(&fakeStreamAPI{}, map[string]ChatSessionManager{"default": sessions}, func(ChatRequest) string { return "default" }, time.Hour, 1, nil),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:    config.ConfigurationConfig{AllowedUsers: []string{"UALICE00"}},
+		cfg:    config.AccessConfig{AllowedUsers: []string{"UALICE00"}},
 	}
 	app.handleEventsAPI(socketmode.Event{Type: socketmode.EventTypeEventsAPI, Data: slackevents.EventsAPIEvent{
 		TeamID:     "T1",

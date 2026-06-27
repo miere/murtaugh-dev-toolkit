@@ -83,7 +83,7 @@ func TestHandleInteractiveRoutesPingAwayFromWorkflow(t *testing.T) {
 		workflow:  wf,
 		messaging: msg,
 		logger:    newSilentLogger(),
-		cfg:       config.ConfigurationConfig{AllowedUsers: []string{"U1"}},
+		cfg:       config.AccessConfig{AllowedUsers: []string{"U1"}},
 	}
 	app.handleInteractive(socketmode.Event{
 		Type: socketmode.EventTypeInteractive,

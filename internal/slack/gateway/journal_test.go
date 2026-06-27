@@ -122,7 +122,7 @@ func TestHandleInteractiveRecordsIngress(t *testing.T) {
 		workflow: &recordingWorkflow{},
 		socket:   nil, // a.ack is a no-op when socket is nil
 		logger:   discardLogger(),
-		cfg:      config.ConfigurationConfig{AllowedUsers: []string{"UALICE00"}},
+		cfg:      config.AccessConfig{AllowedUsers: []string{"UALICE00"}},
 		recorder: rec,
 	}
 	app.handleInteractive(socketmode.Event{
@@ -158,7 +158,7 @@ func TestHandleInteractiveUnauthorizedRecordsNothing(t *testing.T) {
 		workflow: &recordingWorkflow{},
 		socket:   nil,
 		logger:   discardLogger(),
-		cfg:      config.ConfigurationConfig{AllowedUsers: []string{"UALICE00"}},
+		cfg:      config.AccessConfig{AllowedUsers: []string{"UALICE00"}},
 		recorder: rec,
 	}
 	app.handleInteractive(socketmode.Event{
@@ -177,7 +177,7 @@ func TestHandleSlashCommandRecordsIngress(t *testing.T) {
 		handler:  NewDefaultSlashCommandHandler(),
 		socket:   nil,
 		logger:   discardLogger(),
-		cfg:      config.ConfigurationConfig{AllowedUsers: []string{"UALICE00"}},
+		cfg:      config.AccessConfig{AllowedUsers: []string{"UALICE00"}},
 		recorder: rec,
 	}
 	app.handleSlashCommand(context.Background(), socketmode.Event{

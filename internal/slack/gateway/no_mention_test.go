@@ -82,10 +82,10 @@ func newNoMentionGateway(global []string, perChannel map[string][]string, allowe
 		recentEvents:        newEventDedup(time.Minute),
 		channelCache:        cache,
 		noMentionPerChannel: perChannel,
+		noMentionEverywhere: global,
 		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg: config.ConfigurationConfig{
-			AllowedUsers:            allowed,
-			DoNotRequireMentionFrom: global,
+		cfg: config.AccessConfig{
+			AllowedUsers: allowed,
 		},
 	}
 	return app, fakeSessions

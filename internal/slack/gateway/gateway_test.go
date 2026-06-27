@@ -63,7 +63,7 @@ func TestAppMentionEventRoutesToACPChat(t *testing.T) {
 	app := &Gateway{
 		chat:   NewChatHandler(api, sessions, resolver, time.Hour, 1, nil),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:    config.ConfigurationConfig{AllowedUsers: []string{"U1"}},
+		cfg:    config.AccessConfig{AllowedUsers: []string{"U1"}},
 	}
 	app.handleEventsAPI(socketmode.Event{Type: socketmode.EventTypeEventsAPI, Data: slackevents.EventsAPIEvent{
 		TeamID:     "T1",
@@ -121,7 +121,7 @@ func TestDuplicateAppMentionStartsChatOnce(t *testing.T) {
 		inFlight:     NewInFlightRegistry(),
 		recentEvents: newEventDedup(time.Minute),
 		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		cfg:          config.ConfigurationConfig{AllowedUsers: []string{"U1"}},
+		cfg:          config.AccessConfig{AllowedUsers: []string{"U1"}},
 	}
 	event := socketmode.Event{Type: socketmode.EventTypeEventsAPI, Data: slackevents.EventsAPIEvent{
 		TeamID:     "T1",
@@ -193,7 +193,7 @@ func TestNonInterruptibleAgentDropsFollowUpWhileInFlight(t *testing.T) {
 		recentEvents: newEventDedup(time.Minute),
 		messaging:    msg,
 		logger:       discardLogger(),
-		cfg:          config.ConfigurationConfig{AllowedUsers: []string{"U1"}},
+		cfg:          config.AccessConfig{AllowedUsers: []string{"U1"}},
 	}
 	defer close(fake.release)
 
