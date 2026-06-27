@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	slacklib "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/client/slacktest"
+	slacklib "github.com/miere/murtaugh/internal/slack/client"
+	"github.com/miere/murtaugh/internal/slack/client/slacktest"
 )
 
 func TestTool_Metadata(t *testing.T) {

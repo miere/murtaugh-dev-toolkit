@@ -22,12 +22,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/app"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config/migrate"
-	"github.com/miere/murtaugh-dev-toolkit/internal/help"
-	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
-	"github.com/miere/murtaugh-dev-toolkit/internal/mcpbridge"
+	"github.com/miere/murtaugh/internal/app"
+	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/config/migrate"
+	"github.com/miere/murtaugh/internal/help"
+	"github.com/miere/murtaugh/internal/journal"
+	"github.com/miere/murtaugh/internal/mcpbridge"
 )
 
 var version = "dev"

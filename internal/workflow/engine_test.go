@@ -11,8 +11,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/agentdelegate"
+	"github.com/miere/murtaugh/internal/config"
 	"github.com/slack-go/slack"
 )
 

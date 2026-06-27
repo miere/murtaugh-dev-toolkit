@@ -17,8 +17,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"gopkg.in/yaml.v3"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/internal/backup"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/internal/envfile"
+	"github.com/miere/murtaugh/internal/tools/setup/internal/backup"
+	"github.com/miere/murtaugh/internal/tools/setup/internal/envfile"
 )
 
 // Env variable names gateway.yaml references for the Slack credentials. The actual

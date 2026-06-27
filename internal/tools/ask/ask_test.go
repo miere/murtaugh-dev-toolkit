@@ -8,10 +8,10 @@ import (
 
 	slackgo "github.com/slack-go/slack"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	slacklib "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/client/slacktest"
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/interaction"
+	"github.com/miere/murtaugh/internal/agent"
+	slacklib "github.com/miere/murtaugh/internal/slack/client"
+	"github.com/miere/murtaugh/internal/slack/client/slacktest"
+	"github.com/miere/murtaugh/internal/slack/interaction"
 )
 
 type signalingAPI struct {

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/config"
 )
 
 // Rule is a compiled unfurl rule ready for matching.

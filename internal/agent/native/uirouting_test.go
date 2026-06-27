@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/llm"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/llm"
+	"github.com/miere/murtaugh/internal/tools"
 )
 
 // TestRun_ToolActivityIsTaskEventsOnly is the regression for the Slack UX bug

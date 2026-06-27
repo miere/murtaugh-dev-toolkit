@@ -7,9 +7,9 @@ import (
 
 	slackgo "github.com/slack-go/slack"
 
-	slacklib "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/client/slacktest"
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/restartcard"
+	slacklib "github.com/miere/murtaugh/internal/slack/client"
+	"github.com/miere/murtaugh/internal/slack/client/slacktest"
+	"github.com/miere/murtaugh/internal/slack/restartcard"
 )
 
 // cardActionIDs decodes the posted Block Kit JSON and returns the action_ids

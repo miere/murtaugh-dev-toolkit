@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	"github.com/miere/murtaugh-dev-toolkit/internal/updates"
+	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/updates"
 	"github.com/slack-go/slack"
 )
 
@@ -86,7 +86,7 @@ func stubChecker(current, latest string) *updates.Checker {
 	return updates.New(updates.Deps{
 		Current: current,
 		Owner:   "miere",
-		Repo:    "murtaugh-dev-toolkit",
+		Repo:    "murtaugh",
 		HTTPGet: func(context.Context, string) ([]byte, error) {
 			return []byte(`{"tag_name":"` + latest + `"}`), nil
 		},

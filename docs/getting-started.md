@@ -15,7 +15,7 @@ starter config files, sets up a background daemon (LaunchAgent), and can wire
 Murtaugh into your MCP client.
 
 ```sh
-curl -fsSL https://github.com/miere/murtaugh-dev-toolkit/releases/latest/download/install_macos.sh | bash
+curl -fsSL https://github.com/miere/murtaugh/releases/latest/download/install_macos.sh | bash
 ```
 
 Useful flags:
@@ -51,8 +51,8 @@ For unattended installs (`--yes`), set `MURTAUGH_CHAT_AGENT=native` with
 Requirements: **Go 1.26+**.
 
 ```sh
-git clone https://github.com/miere/murtaugh-dev-toolkit.git
-cd murtaugh-dev-toolkit
+git clone https://github.com/miere/murtaugh.git
+cd murtaugh
 go build -o murtaugh ./cmd/murtaugh
 ```
 

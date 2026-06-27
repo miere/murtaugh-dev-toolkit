@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/assets"
+	"github.com/miere/murtaugh/assets"
 )
 
 // assertEmbeddedTreeCopied walks the embedded srcRoot subtree and fails the

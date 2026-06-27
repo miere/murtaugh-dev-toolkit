@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/files"
+	"github.com/miere/murtaugh/internal/tools/files"
 )
 
 // Tool is the `files.write` capability, rooted at a directory and sharing the

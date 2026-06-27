@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/files"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/tools/files"
 )
 
 func newRoot(t *testing.T, dir string) *files.Root {

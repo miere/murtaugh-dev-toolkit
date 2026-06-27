@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/config"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/config"
 )
 
 // TestResolveSystemPrompt_Precedence covers the four-level fallback:

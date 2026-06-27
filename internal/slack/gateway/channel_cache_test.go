@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	slackclient "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
+	slackclient "github.com/miere/murtaugh/internal/slack/client"
 )
 
 // fakeChannelDirectory is an in-memory channelDirectoryAPI. The channels it

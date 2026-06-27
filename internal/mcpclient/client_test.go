@@ -7,7 +7,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh/internal/tools"
 )
 
 // echoInput is the typed argument of the fake server's "echo" tool. Using a

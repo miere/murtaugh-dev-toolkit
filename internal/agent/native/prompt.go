@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
+	"github.com/miere/murtaugh/internal/agent"
 )
 
 // VolatileContext is the per-turn context that changes turn-to-turn (the current

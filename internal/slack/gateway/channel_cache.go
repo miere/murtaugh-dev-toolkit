@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	slackclient "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
+	slackclient "github.com/miere/murtaugh/internal/slack/client"
 )
 
 // channelDirectoryAPI is the minimal Slack surface the channel-name cache needs

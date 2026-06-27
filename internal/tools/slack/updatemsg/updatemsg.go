@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	slacklib "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
+	slacklib "github.com/miere/murtaugh/internal/slack/client"
 )
 
 // DefaultBody is the fallback text Slack receives when --body is omitted.

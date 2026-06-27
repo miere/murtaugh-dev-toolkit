@@ -33,14 +33,14 @@ self-contained binary that connects to your workspace over Socket Mode and adds:
 optionally installs the background daemon:
 
 ```sh
-curl -fsSL https://github.com/miere/murtaugh-dev-toolkit/releases/latest/download/install_macos.sh | bash
+curl -fsSL https://github.com/miere/murtaugh/releases/latest/download/install_macos.sh | bash
 ```
 
 **From source** (requires [Go 1.26+](https://go.dev/dl/)):
 
 ```sh
-git clone https://github.com/miere/murtaugh-dev-toolkit.git
-cd murtaugh-dev-toolkit
+git clone https://github.com/miere/murtaugh.git
+cd murtaugh
 go build -o murtaugh ./cmd/murtaugh
 ```
 

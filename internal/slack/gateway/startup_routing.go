@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
+	"github.com/miere/murtaugh/internal/journal"
 )
 
 // startupAgent is one configured agent in the startup summary.

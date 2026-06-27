@@ -32,8 +32,8 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/frontends/mcp"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh/internal/frontends/mcp"
+	"github.com/miere/murtaugh/internal/tools"
 )
 
 // Subcommand is the argv[1] that runs the bridge: `murtaugh mcp-bridge`.

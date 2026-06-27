@@ -3,7 +3,7 @@ package native
 import (
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/config"
 )
 
 func TestMCPServerConfigsIsAuthoritativeAndSorted(t *testing.T) {

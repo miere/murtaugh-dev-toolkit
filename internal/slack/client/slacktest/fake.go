@@ -9,7 +9,7 @@ import (
 
 	slackgo "github.com/slack-go/slack"
 
-	slacklib "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
+	slacklib "github.com/miere/murtaugh/internal/slack/client"
 )
 
 // FakeAPI is an in-memory SlackAPI suitable for tests. Set the *Result /

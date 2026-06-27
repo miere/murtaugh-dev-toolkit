@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/llm"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/llm"
+	"github.com/miere/murtaugh/internal/tools"
 )
 
 // defaultMaxTurns bounds a single Run when the constructor is given a

@@ -26,7 +26,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh/internal/tools"
 )
 
 // clientName and clientVersion identify Murtaugh to the remote MCP server

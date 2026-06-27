@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/assets"
+	"github.com/miere/murtaugh/assets"
 )
 
 const baseSlackYAML = `oauth:

@@ -18,15 +18,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/assets"
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	"github.com/miere/murtaugh-dev-toolkit/internal/llm"
-	"github.com/miere/murtaugh-dev-toolkit/internal/mcpclient"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/skills"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/terminal"
-	"github.com/miere/murtaugh-dev-toolkit/internal/toolset"
+	"github.com/miere/murtaugh/assets"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/llm"
+	"github.com/miere/murtaugh/internal/mcpclient"
+	"github.com/miere/murtaugh/internal/tools"
+	"github.com/miere/murtaugh/internal/tools/skills"
+	"github.com/miere/murtaugh/internal/tools/terminal"
+	"github.com/miere/murtaugh/internal/toolset"
 )
 
 // defaultCacheRetention is the prompt-cache TTL native agents request when the

@@ -12,12 +12,12 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent/native"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	"github.com/miere/murtaugh-dev-toolkit/internal/frontends/mcp"
-	"github.com/miere/murtaugh-dev-toolkit/internal/mcpbridge"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/agent/native"
+	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/frontends/mcp"
+	"github.com/miere/murtaugh/internal/mcpbridge"
+	"github.com/miere/murtaugh/internal/tools"
 )
 
 // Deps carries the shared context needed to build either backend. Registry and

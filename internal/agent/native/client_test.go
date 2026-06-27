@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
+	"github.com/miere/murtaugh/internal/agent"
 )
 
 // newTestClient builds a Client wired to a fake provider, bypassing Build (which

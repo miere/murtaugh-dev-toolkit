@@ -18,8 +18,8 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/interaction"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/slack/interaction"
 )
 
 // Tool is the `present_plan` capability.

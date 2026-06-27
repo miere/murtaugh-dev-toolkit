@@ -3,7 +3,7 @@ package native
 import (
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/llm"
+	"github.com/miere/murtaugh/internal/llm"
 )
 
 func TestConversation_AppendHelpersBuildAlternatingArray(t *testing.T) {

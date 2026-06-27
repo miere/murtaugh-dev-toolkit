@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"github.com/miere/murtaugh-dev-toolkit/assets"
+	"github.com/miere/murtaugh/assets"
 	"github.com/slack-go/slack"
 )
 

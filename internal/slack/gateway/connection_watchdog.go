@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
+	"github.com/miere/murtaugh/internal/journal"
 	"github.com/slack-go/slack/socketmode"
 )
 

@@ -18,7 +18,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/internal/backup"
+	"github.com/miere/murtaugh/internal/tools/setup/internal/backup"
 )
 
 // keyLine matches a dotenv assignment, capturing the variable name. An optional

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/files"
+	"github.com/miere/murtaugh/internal/tools/files"
 )
 
 func setup(t *testing.T) (*Tool, *files.ReadState, string) {

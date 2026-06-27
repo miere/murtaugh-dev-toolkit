@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/config"
 	"gopkg.in/yaml.v3"
 )
 

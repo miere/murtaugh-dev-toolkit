@@ -15,7 +15,7 @@
 set -euo pipefail
 
 REPO_OWNER="miere"
-REPO_NAME="murtaugh-dev-toolkit"
+REPO_NAME="murtaugh"
 RELEASE_API_URL="${MURTAUGH_RELEASE_API_URL:-https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest}"
 
 ASSUME_YES=0

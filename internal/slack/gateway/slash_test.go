@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
+	"github.com/miere/murtaugh/internal/agent"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 )

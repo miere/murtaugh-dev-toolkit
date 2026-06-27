@@ -8,9 +8,9 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/llm"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/llm"
+	"github.com/miere/murtaugh/internal/tools"
 )
 
 // blockingTool's Invoke parks until release is closed, standing in for the `ask`

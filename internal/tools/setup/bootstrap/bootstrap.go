@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/config"
 )
 
 // PathProvider returns the path of the primary config file (gateway.yaml). The

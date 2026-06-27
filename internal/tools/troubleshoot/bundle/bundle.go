@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/troubleshoot"
+	"github.com/miere/murtaugh/internal/troubleshoot"
 )
 
 // SourcesProvider returns the resolved on-disk read locations for the bundle.

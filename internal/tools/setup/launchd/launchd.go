@@ -19,7 +19,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/internal/backup"
+	"github.com/miere/murtaugh/internal/tools/setup/internal/backup"
 )
 
 // HomeResolver returns the user home directory.

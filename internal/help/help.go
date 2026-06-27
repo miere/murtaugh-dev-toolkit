@@ -9,7 +9,7 @@ package help
 import (
 	"strings"
 
-	"github.com/miere/murtaugh-dev-toolkit/assets"
+	"github.com/miere/murtaugh/assets"
 )
 
 // fileName is the embedded reference document.

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/internal/backup"
+	"github.com/miere/murtaugh/internal/tools/setup/internal/backup"
 )
 
 // releaseURL builds the GitHub API URL for either a specific tag or the

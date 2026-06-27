@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/internal/envfile"
+	"github.com/miere/murtaugh/internal/tools/setup/internal/envfile"
 )
 
 // PathProvider returns the absolute path of the .env file.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/restartcard"
+	"github.com/miere/murtaugh/internal/slack/restartcard"
 	"github.com/slack-go/slack"
 )
 

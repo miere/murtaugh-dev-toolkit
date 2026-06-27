@@ -10,7 +10,7 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
+	"github.com/miere/murtaugh/internal/agent"
 )
 
 // progressRenderer is the surface ChatHandler uses to turn ACP task events into

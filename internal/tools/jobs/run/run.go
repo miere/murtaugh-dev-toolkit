@@ -23,8 +23,8 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
+	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/journal"
 )
 
 // defaultTimeout matches the previous hand-rolled subcommand: jobs without an

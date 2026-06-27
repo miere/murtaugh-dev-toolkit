@@ -3,7 +3,7 @@ package run
 import (
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/config"
 )
 
 func TestRequiresApproval(t *testing.T) {

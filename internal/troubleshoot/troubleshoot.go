@@ -26,7 +26,7 @@ import (
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver for the journal snapshot
 
-	"github.com/miere/murtaugh-dev-toolkit/assets"
+	"github.com/miere/murtaugh/assets"
 )
 
 // defaultMaxLogBytes caps how much of each (potentially unbounded) log file is

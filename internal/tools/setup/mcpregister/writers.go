@@ -10,7 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/internal/backup"
+	"github.com/miere/murtaugh/internal/tools/setup/internal/backup"
 )
 
 // writeOpencode merges the murtaugh stdio entry into ~/.config/opencode/

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/journal"
 )
 
 // scriptedSessions streams a fixed set of events and reports a fixed session id

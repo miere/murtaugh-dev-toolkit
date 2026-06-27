@@ -8,8 +8,8 @@ import (
 
 	"github.com/go-co-op/gocron/v2"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	askbroker "github.com/miere/murtaugh-dev-toolkit/internal/slack/interaction"
+	"github.com/miere/murtaugh/internal/config"
+	askbroker "github.com/miere/murtaugh/internal/slack/interaction"
 )
 
 // ScheduledRunner executes the named job to completion and returns a non-nil

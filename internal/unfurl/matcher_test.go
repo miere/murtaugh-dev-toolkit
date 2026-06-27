@@ -3,7 +3,7 @@ package unfurl
 import (
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/config"
 )
 
 func templateAction(path string) config.UnfurlActionConfig {

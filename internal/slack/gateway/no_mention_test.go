@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	slackclient "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/config"
+	slackclient "github.com/miere/murtaugh/internal/slack/client"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 )

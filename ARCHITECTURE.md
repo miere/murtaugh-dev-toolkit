@@ -21,7 +21,7 @@ shared Tool registry:
 - **MCP** — JSON-RPC stdio server (`murtaugh mcp`) that exposes every
   registered tool to AI clients.
 
-Module path: `github.com/miere/murtaugh-dev-toolkit`.
+Module path: `github.com/miere/murtaugh`.
 
 ## High-level architecture
 

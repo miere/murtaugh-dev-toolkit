@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
+	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/journal"
 )
 
 // fakeRecorder captures the journal events an engine emits.

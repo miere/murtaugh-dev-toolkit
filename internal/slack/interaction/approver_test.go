@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
+	"github.com/miere/murtaugh/internal/agent"
 )
 
 func TestGateApprover_NoLocationProceeds(t *testing.T) {

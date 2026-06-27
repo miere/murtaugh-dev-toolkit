@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/pingcard"
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/restartcard"
+	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/slack/pingcard"
+	"github.com/miere/murtaugh/internal/slack/restartcard"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 )

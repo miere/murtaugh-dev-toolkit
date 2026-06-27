@@ -17,7 +17,7 @@ func TestCheck_ReportsNewerRelease(t *testing.T) {
 	c := New(Deps{
 		Current: "v0.9.1",
 		Owner:   "miere",
-		Repo:    "murtaugh-dev-toolkit",
+		Repo:    "murtaugh",
 		HTTPGet: func(context.Context, string) ([]byte, error) { return releaseJSON("v0.9.4"), nil },
 	})
 	res, err := c.Check(context.Background())
@@ -170,11 +170,11 @@ func TestCheck_ServesStaleCacheOnError(t *testing.T) {
 }
 
 func TestReleaseURL(t *testing.T) {
-	c := New(Deps{Owner: "miere", Repo: "murtaugh-dev-toolkit"})
-	if got, want := c.ReleaseURL("v0.9.4"), "https://github.com/miere/murtaugh-dev-toolkit/releases/tag/v0.9.4"; got != want {
+	c := New(Deps{Owner: "miere", Repo: "murtaugh"})
+	if got, want := c.ReleaseURL("v0.9.4"), "https://github.com/miere/murtaugh/releases/tag/v0.9.4"; got != want {
 		t.Fatalf("ReleaseURL(tag) = %q, want %q", got, want)
 	}
-	if got, want := c.ReleaseURL(""), "https://github.com/miere/murtaugh-dev-toolkit/releases/latest"; got != want {
+	if got, want := c.ReleaseURL(""), "https://github.com/miere/murtaugh/releases/latest"; got != want {
 		t.Fatalf("ReleaseURL(\"\") = %q, want %q", got, want)
 	}
 }

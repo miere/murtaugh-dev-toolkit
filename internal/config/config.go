@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/assets"
+	"github.com/miere/murtaugh/assets"
 	"gopkg.in/yaml.v3"
 )
 

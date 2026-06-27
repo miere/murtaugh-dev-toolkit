@@ -27,7 +27,7 @@ import (
 
 	slackgo "github.com/slack-go/slack"
 
-	slacklib "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
+	slacklib "github.com/miere/murtaugh/internal/slack/client"
 )
 
 const (

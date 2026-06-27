@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/config"
 	"github.com/slack-go/slack"
 )
 

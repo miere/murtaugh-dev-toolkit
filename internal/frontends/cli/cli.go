@@ -13,7 +13,7 @@ import (
 	"os"
 	"reflect"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh/internal/tools"
 )
 
 // ErrUsage is returned when the user invokes the CLI without arguments or

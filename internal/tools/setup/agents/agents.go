@@ -18,7 +18,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"gopkg.in/yaml.v3"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/setup/internal/backup"
+	"github.com/miere/murtaugh/internal/tools/setup/internal/backup"
 )
 
 // PathProvider returns the absolute path of agents.yaml.

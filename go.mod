@@ -1,4 +1,4 @@
-module github.com/miere/murtaugh-dev-toolkit
+module github.com/miere/murtaugh
 
 go 1.26.2
 

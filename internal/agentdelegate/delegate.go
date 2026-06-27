@@ -25,10 +25,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/agentbuild"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/agentbuild"
+	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/tools"
 )
 
 // ErrNonJSONOutput is returned by RunForJSON when the agent completed its turn

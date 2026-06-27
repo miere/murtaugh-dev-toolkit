@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/config"
 )
 
 func TestBuildStartupSummary_FlagsUnavailableTargets(t *testing.T) {

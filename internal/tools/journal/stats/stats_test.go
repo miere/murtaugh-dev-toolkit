@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
+	"github.com/miere/murtaugh/internal/journal"
 )
 
 func TestStatsReportsPerStreamCounts(t *testing.T) {

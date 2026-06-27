@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/pingcard"
+	"github.com/miere/murtaugh/internal/slack/pingcard"
 	"github.com/slack-go/slack"
 )
 

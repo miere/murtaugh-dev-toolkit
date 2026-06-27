@@ -13,10 +13,10 @@ import (
 	"sort"
 	"text/template"
 
-	"github.com/miere/murtaugh-dev-toolkit/assets"
-	"github.com/miere/murtaugh-dev-toolkit/internal/agentdelegate"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
-	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
+	"github.com/miere/murtaugh/assets"
+	"github.com/miere/murtaugh/internal/agentdelegate"
+	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/journal"
 	"github.com/slack-go/slack"
 )
 

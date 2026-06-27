@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"regexp"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
-	"github.com/miere/murtaugh-dev-toolkit/internal/unfurl"
-	"github.com/miere/murtaugh-dev-toolkit/internal/workflow"
+	"github.com/miere/murtaugh/internal/journal"
+	"github.com/miere/murtaugh/internal/unfurl"
+	"github.com/miere/murtaugh/internal/workflow"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 )

@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
+	"github.com/miere/murtaugh/internal/tools"
 )
 
 // Manager owns the connections to a set of MCP servers, reusing one session

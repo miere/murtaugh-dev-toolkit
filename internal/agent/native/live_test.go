@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/config"
 )
 
 // TestLive_NativeTurn exercises a REAL native turn against Gemini: provider

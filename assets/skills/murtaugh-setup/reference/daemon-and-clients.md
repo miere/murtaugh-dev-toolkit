@@ -73,7 +73,7 @@ murtaugh setup mcp-register --client goose --binary-path "$(which murtaugh)"
 | `release_json_url` | no | Override the GitHub API URL (testing). |
 
 Fetches the matching `murtaugh-<tag>-<os>-<arch>` asset from
-`github.com/miere/murtaugh-dev-toolkit`, sanity-checks it (`<asset> version`),
+`github.com/miere/murtaugh`, sanity-checks it (`<asset> version`),
 backs up the current binary, and swaps it in. **Skips** if already on the target
 version; refuses to replace a `dev` build unless `--force true`. After updating a
 daemon, reload it (`setup_launchd --load true`, or your supervisor).

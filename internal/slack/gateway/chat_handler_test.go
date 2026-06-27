@@ -9,8 +9,8 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/config"
 )
 
 // tasksProgress forces the full task-card rendering, for the tests that assert

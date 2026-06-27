@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/files"
+	"github.com/miere/murtaugh/internal/tools/files"
 )
 
 // defaultLimit caps how many lines a read returns when the caller does not ask

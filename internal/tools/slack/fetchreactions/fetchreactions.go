@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	slacklib "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
+	slacklib "github.com/miere/murtaugh/internal/slack/client"
 )
 
 // HistoryLimit caps the history pull.

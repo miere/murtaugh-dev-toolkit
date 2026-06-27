@@ -23,8 +23,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	slackgo "github.com/slack-go/slack"
 
-	slacklib "github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/restartcard"
+	slacklib "github.com/miere/murtaugh/internal/slack/client"
+	"github.com/miere/murtaugh/internal/slack/restartcard"
 )
 
 // Tool is the `restart` capability.

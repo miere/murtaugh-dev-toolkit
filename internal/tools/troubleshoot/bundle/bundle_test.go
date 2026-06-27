@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/troubleshoot"
+	"github.com/miere/murtaugh/internal/troubleshoot"
 )
 
 func TestTool_Metadata(t *testing.T) {

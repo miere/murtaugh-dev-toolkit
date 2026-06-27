@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/miere/murtaugh-dev-toolkit/assets"
+	"github.com/miere/murtaugh/assets"
 )
 
 const (

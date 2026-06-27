@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
+	"github.com/miere/murtaugh/internal/agent"
 )
 
 // newTestSectionRenderer wires a sectionRenderer to the test fakes: every text

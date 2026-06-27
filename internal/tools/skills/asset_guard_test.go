@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/assets"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/skills"
+	"github.com/miere/murtaugh/assets"
+	"github.com/miere/murtaugh/internal/tools/skills"
 )
 
 // TestMurtaughSlack_NoManageLeakToChatAgent is the maintainability guard from

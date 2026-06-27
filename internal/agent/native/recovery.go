@@ -3,7 +3,7 @@ package native
 import (
 	"context"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
+	"github.com/miere/murtaugh/internal/agent"
 )
 
 // maxRecoveryRetries bounds the empty-completion recovery loop. Modeled on the

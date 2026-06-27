@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/slack/client"
+	"github.com/miere/murtaugh/internal/slack/client"
 	"github.com/slack-go/slack"
 )
 

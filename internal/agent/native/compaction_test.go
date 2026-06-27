@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/llm"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/llm"
 )
 
 // buildGroups appends n realistic turn-groups to a conversation: a user message,

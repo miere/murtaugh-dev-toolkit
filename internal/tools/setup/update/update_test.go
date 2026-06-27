@@ -55,7 +55,7 @@ func newTool(t *testing.T, current string, srv *stubServer) (*Tool, string) {
 		HTTPGet:        srv.get,
 		VerifyBinary:   func(string) error { return nil },
 		Owner:          "miere",
-		Repo:           "murtaugh-dev-toolkit",
+		Repo:           "murtaugh",
 	})
 	return tl, bin
 }

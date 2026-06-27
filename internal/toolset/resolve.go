@@ -18,15 +18,15 @@ import (
 	"os"
 	"strings"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/attach"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/files"
-	fedit "github.com/miere/murtaugh-dev-toolkit/internal/tools/files/edit"
-	fls "github.com/miere/murtaugh-dev-toolkit/internal/tools/files/ls"
-	fread "github.com/miere/murtaugh-dev-toolkit/internal/tools/files/read"
-	fwrite "github.com/miere/murtaugh-dev-toolkit/internal/tools/files/write"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/skills"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools/terminal"
+	"github.com/miere/murtaugh/internal/tools"
+	"github.com/miere/murtaugh/internal/tools/attach"
+	"github.com/miere/murtaugh/internal/tools/files"
+	fedit "github.com/miere/murtaugh/internal/tools/files/edit"
+	fls "github.com/miere/murtaugh/internal/tools/files/ls"
+	fread "github.com/miere/murtaugh/internal/tools/files/read"
+	fwrite "github.com/miere/murtaugh/internal/tools/files/write"
+	"github.com/miere/murtaugh/internal/tools/skills"
+	"github.com/miere/murtaugh/internal/tools/terminal"
 )
 
 // Synthesized native tool-group names recognised in an agent's `tools:` list.

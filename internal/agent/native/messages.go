@@ -3,7 +3,7 @@ package native
 import (
 	"fmt"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/llm"
+	"github.com/miere/murtaugh/internal/llm"
 )
 
 // Conversation owns the provider-facing message array for one native session.

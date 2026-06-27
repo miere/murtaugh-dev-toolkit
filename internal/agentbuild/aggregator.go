@@ -8,13 +8,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent"
-	"github.com/miere/murtaugh-dev-toolkit/internal/agent/native"
-	"github.com/miere/murtaugh-dev-toolkit/internal/frontends/mcp"
-	"github.com/miere/murtaugh-dev-toolkit/internal/mcpbridge"
-	"github.com/miere/murtaugh-dev-toolkit/internal/mcpclient"
-	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
-	"github.com/miere/murtaugh-dev-toolkit/internal/toolset"
+	"github.com/miere/murtaugh/internal/agent"
+	"github.com/miere/murtaugh/internal/agent/native"
+	"github.com/miere/murtaugh/internal/frontends/mcp"
+	"github.com/miere/murtaugh/internal/mcpbridge"
+	"github.com/miere/murtaugh/internal/mcpclient"
+	"github.com/miere/murtaugh/internal/tools"
+	"github.com/miere/murtaugh/internal/toolset"
 )
 
 // acpAggregator is the concrete agent.Aggregator for an ACP agent. It serves the
