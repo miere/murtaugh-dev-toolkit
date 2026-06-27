@@ -61,14 +61,14 @@ type Runner struct {
 // wall-clock, so a long but productive delegation never trips it. baseDir is
 // used as the working directory for any agent that leaves workdir unset, so
 // delegated agents start where the bundled skills and templates live.
-func NewRunner(agents map[string]config.AgentProfile, acpCfg config.ACPConfig, baseDir string, logger *slog.Logger) *Runner {
+func NewRunner(agents map[string]config.AgentProfile, defaults config.RuntimeDefaults, baseDir string, logger *slog.Logger) *Runner {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	r := &Runner{
 		agents:      agents,
 		baseDir:     baseDir,
-		idleTimeout: acpCfg.EffectiveRequestTimeout(),
+		idleTimeout: defaults.EffectiveRequestTimeout(),
 		logger:      logger,
 	}
 	r.newClient = r.defaultClient

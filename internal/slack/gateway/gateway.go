@@ -212,11 +212,11 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 
 	var chat *ChatHandler
 	var sessions map[string]ChatSessionManager
-	if !cfg.ACP.Enabled {
+	if !cfg.Defaults.Enabled {
 		logger.Warn("ACP chat disabled: set agent.enabled: true in agents.yaml to enable DM and app_mention replies")
 	}
 	var bridge *mcpbridge.Server
-	if cfg.ACP.Enabled {
+	if cfg.Defaults.Enabled {
 		sessions = make(map[string]ChatSessionManager)
 		// The aggregator lets ACP agents reach Murtaugh's own tools over a private
 		// socket; built here, bound and torn down in Run. ACP agents that fail to
@@ -271,8 +271,8 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 			}
 			sessions[name] = agent.NewSessionManager(
 				client,
-				cfg.ACP.EffectiveSessionIdleTimeout(),
-				cfg.ACP.EffectiveMaxSessions(),
+				cfg.Defaults.EffectiveSessionIdleTimeout(),
+				cfg.Defaults.EffectiveMaxSessions(),
 			).WithLogger(logger.With("agent", name)).WithCancelOverride(interruptible)
 		}
 
@@ -321,10 +321,10 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 			api,
 			sessions,
 			resolver,
-			cfg.ACP.EffectiveStreamAppendInterval(),
-			cfg.ACP.EffectiveStreamMinChunkChars(),
+			cfg.Defaults.EffectiveStreamAppendInterval(),
+			cfg.Defaults.EffectiveStreamMinChunkChars(),
 			logger,
-		).WithIdleTimeout(cfg.ACP.EffectiveRequestTimeout()).WithSessionLogger(sessionLog).
+		).WithIdleTimeout(cfg.Defaults.EffectiveRequestTimeout()).WithSessionLogger(sessionLog).
 			WithProgressDisplay(cfg.EffectiveProgressDisplay).WithStatusMessenger(api).
 			WithBackfiller(NewThreadBackfiller(api, botUserID, logger)).
 			WithFileFetcher(api).
@@ -337,7 +337,7 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 	var unfurlDelegator UnfurlDelegator
 	var workflowDelegator workflow.AgentDelegator
 	if len(cfg.Agents) > 0 {
-		runner := agentdelegate.NewRunner(cfg.Agents, cfg.ACP, cfg.BaseDir, logger).
+		runner := agentdelegate.NewRunner(cfg.Agents, cfg.Defaults, cfg.BaseDir, logger).
 			WithBuildContext(registry, cfg.MCPServers)
 		unfurlDelegator = runner
 		workflowDelegator = runner
@@ -365,8 +365,8 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		chatSessions:    sessions,
 		chatRouting:     cfg.Chat,
 		agentProfiles:   cfg.Agents,
-		chatWarmTimeout: cfg.ACP.EffectiveStartupTimeout(),
-		cancelGrace:     cfg.ACP.EffectiveCancelGracePeriod(),
+		chatWarmTimeout: cfg.Defaults.EffectiveStartupTimeout(),
+		cancelGrace:     cfg.Defaults.EffectiveCancelGracePeriod(),
 		inFlight:        NewInFlightRegistry(),
 		recentEvents:    newEventDedup(0),
 		unfurl:          unfurlHandler,
