@@ -24,6 +24,7 @@ import (
 	askbroker "github.com/miere/murtaugh-dev-toolkit/internal/slack/interaction"
 	"github.com/miere/murtaugh-dev-toolkit/internal/tools"
 	"github.com/miere/murtaugh-dev-toolkit/internal/unfurl"
+	"github.com/miere/murtaugh-dev-toolkit/internal/updates"
 	"github.com/miere/murtaugh-dev-toolkit/internal/workflow"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -98,6 +99,18 @@ type Gateway struct {
 	// in tests that do not need to exercise the restart path; the slash
 	// handler reports "not available" when nil.
 	restart RestartTrigger
+	// version is the running binary's compile-time version, shown on the App
+	// Home control panel. Empty in tests and struct-literal gateways.
+	version string
+	// updates reports whether a newer Murtaugh release is available; consulted
+	// when rendering the admin's App Home panel. nil disables the update check,
+	// so the panel shows the version alone.
+	updates *updates.Checker
+	// installUpdate downloads and swaps in the binary for a given release tag,
+	// returning the installed version. Injected over the setup.update tool. nil
+	// disables the App Home "Update" action (the button still never appears
+	// unless updates is also wired).
+	installUpdate func(ctx context.Context, target string) (string, error)
 	// resumeStore persists the restart marker between processes. nil
 	// disables the "restarting…" / "back online" Slack confirmation flow
 	// — the restart still happens, just silently.
@@ -422,6 +435,23 @@ func (a *Gateway) WithResumeMarkerStore(store ResumeMarkerStore) *Gateway {
 // default) the restart slash verb reports the feature as unavailable.
 func (a *Gateway) WithRestartTrigger(trigger RestartTrigger) *Gateway {
 	a.restart = trigger
+	return a
+}
+
+// WithVersion records the running binary's compile-time version for display on
+// the App Home control panel. Blank (the default) renders as "unknown".
+func (a *Gateway) WithVersion(version string) *Gateway {
+	a.version = strings.TrimSpace(version)
+	return a
+}
+
+// WithUpdateChecker wires the App Home update affordance: checker reports
+// whether a newer release exists, and install downloads+swaps the binary for a
+// given tag (returning the installed version). Passing nil for either leaves
+// the panel showing the version without an "Update" button.
+func (a *Gateway) WithUpdateChecker(checker *updates.Checker, install func(ctx context.Context, target string) (string, error)) *Gateway {
+	a.updates = checker
+	a.installUpdate = install
 	return a
 }
 
@@ -768,6 +798,22 @@ func (a *Gateway) handleInteractive(event socketmode.Event) {
 		}()
 		return
 	}
+	// App Home control panel: the admin's "Update" button opens a confirmation
+	// modal; submitting it installs the release and restarts. Both are owned by
+	// the binary (admin-gated) and handled before the workflow engine, like the
+	// restart and ping built-ins above.
+	if isAppHomeUpdateClick(interaction) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			a.handleAppHomeUpdateClick(ctx, interaction)
+		}()
+		return
+	}
+	if isAppHomeUpdateSubmit(interaction) {
+		go a.handleAppHomeUpdateSubmit(interaction)
+		return
+	}
 	// Broker prompts (the `ask` tool, later the approval gate) are routed back to
 	// the blocked turn waiting on the click, before the workflow engine sees it.
 	// The blocked Ask owns editing the message to its terminal state.
@@ -1051,6 +1097,8 @@ func (a *Gateway) handleEventsAPI(event socketmode.Event) {
 	}
 	a.ack(event)
 	switch inner := eventsAPI.InnerEvent.Data.(type) {
+	case *slackevents.AppHomeOpenedEvent:
+		a.handleAppHomeOpened(inner)
 	case *slackevents.LinkSharedEvent:
 		a.handleLinkShared(eventsAPI.TeamID, inner)
 	case *slackevents.AppMentionEvent:

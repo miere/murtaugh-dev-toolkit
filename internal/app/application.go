@@ -48,6 +48,7 @@ import (
 	troubleshootbundle "github.com/miere/murtaugh-dev-toolkit/internal/tools/troubleshoot/bundle"
 	versiontool "github.com/miere/murtaugh-dev-toolkit/internal/tools/version"
 	"github.com/miere/murtaugh-dev-toolkit/internal/troubleshoot"
+	"github.com/miere/murtaugh-dev-toolkit/internal/updates"
 )
 
 // Mode selects which frontend Run starts.
@@ -188,6 +189,32 @@ func (a *Application) Run(ctx context.Context) error {
 			}
 			return res.Path, res.Manifest.Errors, nil
 		})
+		// App Home control panel: everyone who opens the Home tab sees the
+		// running version; the admin additionally gets a one-click "Update"
+		// button when a newer release exists. The check reuses the same release
+		// source as the setup.update tool, and the install path IS that tool,
+		// followed by the existing restart coordinator.
+		updDeps := updateDeps(a.version)
+		gw = gw.WithVersion(a.version).WithUpdateChecker(
+			updates.New(updates.Deps{
+				Current: a.version,
+				Owner:   updDeps.Owner,
+				Repo:    updDeps.Repo,
+				HTTPGet: updates.HTTPGet(updDeps.HTTPGet),
+			}),
+			func(ctx context.Context, target string) (string, error) {
+				args := map[string]any{}
+				if t := strings.TrimSpace(target); t != "" {
+					args["version"] = t
+				}
+				out, err := setupupdate.New(updDeps).Invoke(ctx, args)
+				if err != nil {
+					return "", err
+				}
+				res, _ := out.(setupupdate.Result)
+				return res.TargetVersion, nil
+			},
+		)
 		a.logger.Info("starting Slack gateway (Socket Mode)", "config", a.configPath)
 		err := gw.Run(ctx)
 		if err != nil && ctx.Err() != nil {
@@ -391,16 +418,7 @@ func buildRegistry(cfg config.Config, configPath, version string, recorder journ
 		Plutil:    execRunner,
 		Launchctl: execRunner,
 	}))
-	reg.Register(setupupdate.New(setupupdate.Deps{
-		CurrentVersion: func() string { return version },
-		CurrentBinary:  os.Executable,
-		GOOS:           runtime.GOOS,
-		GOARCH:         runtime.GOARCH,
-		HTTPGet:        setupupdate.HTTPGetter(),
-		VerifyBinary:   verifyBinary,
-		Owner:          "miere",
-		Repo:           "murtaugh-dev-toolkit",
-	}))
+	reg.Register(setupupdate.New(updateDeps(version)))
 
 	// Slack tools share the daemon's bot token (oauth.bot_token in
 	// gateway.yaml). The client is built lazily on first Invoke, so an
@@ -493,6 +511,22 @@ func newScheduledRunner(cfg config.Config, recorder journal.Recorder, registry *
 			return fmt.Errorf("exited with code %d", r.ExitCode)
 		}
 		return nil
+	}
+}
+
+// updateDeps builds the dependency bundle shared by the setup.update tool and
+// the App Home "Update" button. Centralizing it guarantees the in-Slack update
+// installs exactly what the tool would, against the same GitHub repository.
+func updateDeps(version string) setupupdate.Deps {
+	return setupupdate.Deps{
+		CurrentVersion: func() string { return version },
+		CurrentBinary:  os.Executable,
+		GOOS:           runtime.GOOS,
+		GOARCH:         runtime.GOARCH,
+		HTTPGet:        setupupdate.HTTPGetter(),
+		VerifyBinary:   verifyBinary,
+		Owner:          "miere",
+		Repo:           "murtaugh-dev-toolkit",
 	}
 }
 

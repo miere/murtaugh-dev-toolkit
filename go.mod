@@ -9,6 +9,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/slack-go/slack v0.24.0
 	github.com/voocel/litellm v1.6.16
+	golang.org/x/mod v0.33.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
 )

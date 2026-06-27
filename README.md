@@ -143,7 +143,12 @@ settings enabled:
 4. **Event subscriptions** — subscribe to:
    - `app_mention`, `message.im` — for AI chat
    - `link_shared` — for URL unfurling (if used)
+   - `app_home_opened` — for the App Home control panel
 5. **App Unfurl Domains** — register each domain you want to unfurl (max 5).
+6. **App Home** — under *Features → App Home*, enable the **Home Tab**. This
+   surfaces a control panel showing Murtaugh's version to anyone who opens it,
+   plus a one-click **Update** button for the configured `admin_user` whenever a
+   newer release is available. No extra OAuth scope is required.
 
 ### slack.yaml
 
