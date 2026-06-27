@@ -2,14 +2,19 @@
 
 ## Config is loaded once
 
-The gateway reads `slack.yaml`, `agents.yaml`, and `jobs.yaml` **at startup
-only**. Editing them on disk changes nothing until the daemon restarts — this
-applies to allowlists, chat routing, agents, workflow/unfurl rules, and job
-schedules alike.
+The gateway reads `gateway.yaml`, `agents.yaml`, `jobs.yaml`, and the rule-file
+siblings `workflow-rules.yaml` / `unfurl-rules.yaml` **at startup only**. Editing
+them on disk changes nothing until the daemon restarts — this applies to
+allowlists, chat routing, agents, workflow/unfurl rules, and job schedules alike.
+
+(A legacy `slack.yaml` config dir is auto-migrated to this layout on the first
+run of a new binary — backed up and validated, rolled back on failure — or
+convert it ahead of time with `murtaugh config migrate`; a `.schema_version`
+sidecar tracks the version.)
 
 ## The config watcher
 
-When enabled, a watcher polls those three files every **5 seconds**. On a
+When enabled, a watcher polls those config files every **5 seconds**. On a
 detected change it DMs the admin a Block Kit **restart suggestion** naming the
 changed file, with two buttons:
 

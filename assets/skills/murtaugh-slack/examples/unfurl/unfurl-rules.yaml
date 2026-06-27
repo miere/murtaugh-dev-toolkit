@@ -1,4 +1,4 @@
-# Example unfurl-rules for slack.yaml.
+# Example unfurl-rules.yaml (a sibling of gateway.yaml).
 # Remember: every match.domain must also be in the Slack app's
 # "App Unfurl Domains" list (max 5) or no link_shared event is delivered.
 

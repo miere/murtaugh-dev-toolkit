@@ -63,13 +63,13 @@ only if **none** of the above apply — the change is pure static rendering or a
 single fixed mapping:
 
 - a static `templates/*.json` payload (only values interpolated);
-- a one-line `slack.yaml` rule with a fixed `template`/`reply` and no logic;
+- a one-line `workflow-rules.yaml` rule with a fixed `template`/`reply` and no logic;
 - a config/threshold/schedule tweak.
 
 | Change | Tier |
 |---|---|
 | Python automation with state / branching / retries / loops / status logic | **Full loop** |
-| `slack.yaml` `run` script (or rule) containing real branching logic | **Full loop** |
+| `workflow-rules.yaml` `run` script (or rule) containing real branching logic | **Full loop** |
 | Static `templates/*.json`, a fixed one-line rule, a config/schedule tweak | **Light path** |
 
 When a change spans both (e.g. a new template *and* the automation that fills it),

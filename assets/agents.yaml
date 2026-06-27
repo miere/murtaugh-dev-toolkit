@@ -1,7 +1,6 @@
 # Runtime defaults applied to every agent, grouped by the concern each knob
-# serves. `enabled` gates the Slack chat surface (DMs + @mentions → agent).
+# serves. The chat-surface gate (chat.enabled) lives in gateway.yaml.
 defaults:
-  enabled: false
   session:
     idle_timeout: 30m
     request_timeout: 10m       # idle-bounded: reset by every agent event, not total wall-clock

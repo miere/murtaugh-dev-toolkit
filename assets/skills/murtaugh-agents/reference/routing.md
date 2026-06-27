@@ -1,11 +1,11 @@
 # Chat routing: which agent answers
 
-Routing is **kind-agnostic** — the same rules pick a native or an ACP agent. The
-`chat` block in `slack.yaml` decides which agent handles each conversation:
+Routing is **backend-agnostic** — the same rules pick a native or an ACP agent.
+The `chat` block in `gateway.yaml` decides which agent handles each conversation:
 
 ```yaml
 chat:
-  default_agent: default        # required when acp.enabled
+  default_agent: default        # required when chat.enabled
   dm_agent: support             # optional: override for DMs
   channel_agents:               # optional: per-channel overrides
     C0ENG1: coding              #   by exact channel ID
@@ -24,7 +24,7 @@ For an incoming prompt, Murtaugh picks the agent like this:
 
 ## Channel keys: ID, name, or glob
 
-A `channel_agents` key — and a `channel_do_not_require_mention` key, which uses
+A `channel_agents` key — and a `chat.no_mention.by_channel` key, which uses
 the same syntax — can be any of three forms. `matchChannelAgent` tries them in
 this order:
 
@@ -44,7 +44,7 @@ this order:
 
 ## Validation (fail-closed)
 
-When `acp.enabled: true`, the gateway refuses to start unless:
+When `chat.enabled: true`, the gateway refuses to start unless:
 
 - `chat.default_agent` is **set** and names an agent defined in `agents.yaml`.
 - `chat.dm_agent`, if set, names a known agent.

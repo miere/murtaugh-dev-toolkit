@@ -1,4 +1,4 @@
-# Seeding & config: bootstrap, slack, env, agents
+# Seeding & config: bootstrap, slack (gateway.yaml), env, agents
 
 These tools write into the workspace (`~/.config/murtaugh` by default) and back
 up any file they replace.
@@ -18,8 +18,10 @@ up any file they replace.
 Takes **no arguments**. It runs automatically on every Murtaugh start (and you
 can run it by hand). What it touches:
 
-- `slack.yaml`, `agents.yaml`, `jobs.yaml` and `templates/` — **created once,
-  then preserved**: your tokens and edits are never overwritten.
+- `gateway.yaml`, `agents.yaml`, `jobs.yaml` and `templates/` — **created once,
+  then preserved**: your tokens and edits are never overwritten. (A legacy
+  `slack.yaml` layout is auto-migrated to this shape on first run, or convert it
+  ahead of time with `murtaugh config migrate`.)
 - `.agents/skills/` (the home for your **bespoke** skills) plus a `.claude/skills`
   symlink to it — **created if absent**. The bundled `murtaugh-*` skills are
   served in-binary and are **not** written here; an agent's `export_skills_to_fs`
@@ -29,19 +31,20 @@ can run it by hand). What it touches:
 Returns a report of which files were **created**, **updated** (refreshed), and
 **preserved**. Run it first on a fresh install; safe to re-run any time.
 
-## `setup_slack` — write slack.yaml
+## `setup_slack` — write gateway.yaml
 
-*Write slack.yaml with OAuth tokens, admin user, and the /murtaugh slash command.*
+*Write gateway.yaml with OAuth tokens, admin user, and chat settings.*
 
 | Arg | Required | Meaning |
 |---|---|---|
 | `app_token` | yes | Slack app-level token; must start with `xapp-`. |
 | `bot_token` | yes | Slack bot token; must start with `xoxb-`. |
-| `admin_user` | yes | Admin handle (`@name`) or user ID (`U…`). |
+| `admin_user` | yes | Admin handle (`@name`) or user ID (`U…`); written under `access.admin_user`. |
 | `default_agent` | no | Agent name to wire into `chat.default_agent`. |
 
-Validates the token prefixes, writes `slack.yaml` at `0600`, and backs up any
-existing file. Re-run to rotate tokens or change the admin.
+Validates the token prefixes, writes `gateway.yaml` at `0600`, and backs up any
+existing file. The tool name is still `setup_slack` (CLI `setup slack`); it just
+writes the renamed anchor file. Re-run to rotate tokens or change the admin.
 
 ```bash
 murtaugh setup slack --app-token xapp-… --bot-token xoxb-… --admin-user @you
@@ -108,9 +111,13 @@ Shared:
 | `command` | yes | Path to the ACP-speaking binary. |
 | `args` | no | Arguments for the agent command. **Repeatable** — once per argument. |
 
-Writes the runtime block with tuned defaults plus the agent profile (`0600`,
-backs up existing). To enable chat you still need `chat.default_agent` in
-`slack.yaml` (see the `murtaugh-agents` skill).
+Writes the `defaults:` runtime block with tuned defaults plus the agent profile
+(`0600`, backs up existing). The profile is a tagged union — the backend is the
+sub-block written (`native:` or `acp:`), there is no `kind:` key in the YAML. To
+enable the chat surface you still need `chat.enabled: true` and
+`chat.default_agent` in `gateway.yaml` (see the `murtaugh-agents` skill);
+delegation (jobs, workflow rules, unfurls) runs whenever the agent is defined,
+regardless of that gate.
 
 > `setup_agents` does **not** write the `approval:` block, an inline
 > `system_prompt`, a `workdir`, or `max_turns` — edit `agents.yaml` directly for

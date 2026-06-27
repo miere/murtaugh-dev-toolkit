@@ -8,7 +8,8 @@ BIN="$(command -v murtaugh)"
 # 1. Seed the workspace (~/.config/murtaugh): config defaults, templates, skills.
 murtaugh setup bootstrap
 
-# 2. Slack credentials + admin user.
+# 2. Slack credentials + admin user → gateway.yaml (the anchor file: oauth +
+#    access + chat). The tool is still `setup slack`; it writes gateway.yaml.
 murtaugh setup slack \
   --app-token "xapp-REPLACE" \
   --bot-token "xoxb-REPLACE" \
@@ -20,8 +21,9 @@ murtaugh setup slack \
 murtaugh setup env --set GEMINI_API_KEY="AIza-REPLACE"
 
 # 4. Native agent (the DEFAULT kind). Passing --provider infers kind=native.
-#    --tools is repeatable. Wire chat.default_agent in slack.yaml separately
-#    (setup_slack --default-agent, or the murtaugh-agents skill).
+#    --tools is repeatable. Wire chat.enabled + chat.default_agent in
+#    gateway.yaml separately (setup_slack --default-agent, or the
+#    murtaugh-agents skill).
 murtaugh setup agents \
   --provider gemini --model gemini-2.5-pro \
   --api-key-env GEMINI_API_KEY \

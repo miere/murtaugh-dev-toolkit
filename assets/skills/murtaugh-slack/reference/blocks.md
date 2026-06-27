@@ -29,7 +29,7 @@ for notifications, and `"thread_ts"` to reply in a thread — see `messaging.md`
 
 Every button needs a stable `action_id`; the block usually carries a `block_id`.
 These are your routing keys (see `workflow-rules.md`) — **reuse the keys already in
-`slack.yaml`**, and never put secrets in `value`.
+`workflow-rules.yaml`**, and never put secrets in `value`.
 
 ```json
 {

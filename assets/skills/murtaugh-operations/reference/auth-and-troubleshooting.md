@@ -2,7 +2,7 @@
 
 ## Who can interact
 
-Two settings in `slack.yaml` `configuration:`:
+Two settings in `gateway.yaml` `access:`:
 
 - **`admin_user`** — a single user (handle or ID). Can do everything, including
   **restart**.
@@ -31,8 +31,8 @@ logged at startup.
 
 | Symptom | Likely cause |
 |---|---|
-| No startup DM | `admin_user` unset or unresolvable; or the daemon didn't start — check `slack.err.log`. |
-| Bot ignores my DM / @-mention | Your user isn't in `admin_user`/`allowed_users` (mentions/DMs fail **silently**); or ACP chat is disabled (`acp.enabled: false`, no `chat.default_agent`). See `murtaugh-agents`. |
+| No startup DM | `access.admin_user` unset or unresolvable; or the daemon didn't start — check `slack.err.log`. |
+| Bot ignores my DM / @-mention | Your user isn't in `access.admin_user`/`access.allowed_users` (mentions/DMs fail **silently**); or the chat surface is disabled (`chat.enabled: false`, no `chat.default_agent`). See `murtaugh-agents`. |
 | "you are not authorized" on a slash command | Same allowlist issue, surfaced because slash commands deny loudly. |
 | Config edit had no effect | Config loads once — **restart** to apply. See `reference/config-and-restart.md`. |
 | Link previews don't appear | The domain isn't in the Slack app's **App Unfurl Domains** (no `link_shared` is delivered), or no matching `unfurl-rules`. See the `murtaugh-slack` skill's `unfurl.md`. |

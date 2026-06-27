@@ -4,8 +4,8 @@ Murtaugh can replace a bare URL posted in Slack with a **rich Block Kit preview*
 When a message containing a matched link is posted, Slack sends a `link_shared`
 event; Murtaugh matches it against an `unfurl-rules` entry and renders a preview
 from a **template**, a **command** you run, or an **agent** you delegate to. This
-is operator config (it edits `slack.yaml`), a sibling of `workflow-rules.md` — same
-shape: inbound Slack event → rule match → action.
+is operator config (it edits `unfurl-rules.yaml`), a sibling of `workflow-rules.md`
+— same shape: inbound Slack event → rule match → action.
 
 > **Prerequisite — register the domain.** Slack only delivers `link_shared` for
 > domains listed in your Slack app's **App Unfurl Domains** (max 5). If a domain
@@ -24,7 +24,7 @@ shape: inbound Slack event → rule match → action.
 
 ## Configuring the rule
 
-Rules live under `unfurl-rules:` in `slack.yaml`, keyed by name:
+Rules live under `unfurl-rules:` in `unfurl-rules.yaml`, keyed by name:
 
 ```yaml
 unfurl-rules:
