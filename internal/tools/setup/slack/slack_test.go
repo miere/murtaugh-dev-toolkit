@@ -99,9 +99,6 @@ func TestInvoke_FirstWriteCreatesFile(t *testing.T) {
 	if cfg.Configuration.Debug {
 		t.Fatal("debug must default to false")
 	}
-	if len(cfg.Commands) != 1 || cfg.Commands[0].Name != "/murtaugh" {
-		t.Fatalf("commands = %+v, want exactly one /murtaugh entry", cfg.Commands)
-	}
 	st, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat: %v", err)

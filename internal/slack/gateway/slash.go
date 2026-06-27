@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/slack-go/slack"
 )
 
@@ -19,23 +18,17 @@ type AckResponse struct {
 	Blocks       []slack.Block `json:"blocks,omitempty"`
 }
 
-type DefaultSlashCommandHandler struct {
-	commands map[string]config.CommandConfig
-}
+// DefaultSlashCommandHandler renders help and the unknown-verb fallback. The
+// real verbs (chat/stop/restart/troubleshoot) are dispatched ahead of this
+// handler in gateway.handleSlashCommand by hardcoded predicates, so this type
+// owns no config — Slack-side registration lives in the Slack app manifest.
+type DefaultSlashCommandHandler struct{}
 
-func NewDefaultSlashCommandHandler(commands []config.CommandConfig) *DefaultSlashCommandHandler {
-	indexed := make(map[string]config.CommandConfig, len(commands))
-	for _, command := range commands {
-		indexed[command.Name] = command
-	}
-	return &DefaultSlashCommandHandler{commands: indexed}
+func NewDefaultSlashCommandHandler() *DefaultSlashCommandHandler {
+	return &DefaultSlashCommandHandler{}
 }
 
 func (h *DefaultSlashCommandHandler) HandleSlashCommand(_ context.Context, command slack.SlashCommand) (AckResponse, error) {
-	if _, configured := h.commands[command.Command]; len(h.commands) > 0 && !configured {
-		return ephemeralText(fmt.Sprintf("Command %s is not configured for Murtaugh.", command.Command)), nil
-	}
-
 	fields := strings.Fields(command.Text)
 	if len(fields) == 0 {
 		return h.help(command.Command), nil
@@ -49,7 +42,7 @@ func (h *DefaultSlashCommandHandler) HandleSlashCommand(_ context.Context, comma
 }
 
 func (h *DefaultSlashCommandHandler) help(commandName string) AckResponse {
-	verbs := fmt.Sprintf("• `%s chat <prompt>` — ask the configured ACP agent\n• `%s stop` — cancel the in-flight response in this thread or DM\n• `%s restart` — admin-only graceful restart\n• `%s help` — show this message", commandName, commandName, commandName, commandName)
+	verbs := fmt.Sprintf("• `%s chat <prompt>` — ask the configured agent\n• `%s stop` — cancel the in-flight response in this thread or DM\n• `%s troubleshoot [symptom]` — collect a diagnostics bundle\n• `%s restart` — admin-only graceful restart\n• `%s help` — show this message", commandName, commandName, commandName, commandName, commandName)
 	return AckResponse{
 		ResponseType: "ephemeral",
 		Text:         fmt.Sprintf("%s is connected.", commandName),

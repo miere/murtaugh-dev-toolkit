@@ -174,7 +174,7 @@ func TestHandleInteractiveUnauthorizedRecordsNothing(t *testing.T) {
 func TestHandleSlashCommandRecordsIngress(t *testing.T) {
 	rec := &journalSpy{}
 	app := &Gateway{
-		handler:  NewDefaultSlashCommandHandler(nil),
+		handler:  NewDefaultSlashCommandHandler(),
 		socket:   nil,
 		logger:   discardLogger(),
 		cfg:      config.ConfigurationConfig{AllowedUsers: []string{"UALICE00"}},

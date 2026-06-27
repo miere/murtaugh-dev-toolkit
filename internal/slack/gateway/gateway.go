@@ -353,7 +353,7 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		webClient:       api,
 		socket:          socket,
 		now:             time.Now,
-		handler:         NewDefaultSlashCommandHandler(cfg.Commands),
+		handler:         NewDefaultSlashCommandHandler(),
 		workflow:        workflow.NewEngine(cfg, workflow.Options{Logger: logger, Delegator: workflowDelegator, Recorder: recorder}),
 		interactions:    broker,
 		bridge:          bridge,

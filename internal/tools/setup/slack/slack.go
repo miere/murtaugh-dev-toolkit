@@ -96,7 +96,6 @@ type document struct {
 	OAuth         oauthBlock         `yaml:"oauth"`
 	Configuration configurationBlock `yaml:"configuration"`
 	Chat          map[string]string  `yaml:"chat"`
-	Commands      []commandEntry     `yaml:"commands"`
 }
 
 type oauthBlock struct {
@@ -107,11 +106,6 @@ type oauthBlock struct {
 type configurationBlock struct {
 	AdminUser string `yaml:"admin_user"`
 	Debug     bool   `yaml:"debug"`
-}
-
-type commandEntry struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
 }
 
 // Invoke validates arguments, builds the slack.yaml document, and writes it
@@ -155,9 +149,6 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 		OAuth:         oauthBlock{AppToken: "${" + appTokenVar + "}", BotToken: "${" + botTokenVar + "}"},
 		Configuration: configurationBlock{AdminUser: adminUser, Debug: false},
 		Chat:          map[string]string{},
-		Commands: []commandEntry{
-			{Name: "/murtaugh", Description: "Entrypoint for Murtaugh commands"},
-		},
 	}
 	if strings.TrimSpace(defaultAgent) != "" {
 		doc.Chat["default_agent"] = defaultAgent

@@ -32,15 +32,9 @@ chat:
   #   feature-*: [alice, U0123ABC]
   #   incident-prod: [oncall]
 
-commands:
-  - name: /murtaugh
-    description: Entrypoint for Murtaugh commands
-  # Optional: register `/stop` in the Slack app config to allow interrupting
-  # an in-flight chat response from inside the thread or DM. Murtaugh also
-  # recognises `/<command> stop` (e.g. `/murtaugh stop`) so this entry is
-  # only required if operators prefer the standalone form.
-  - name: /stop
-    description: Cancel the in-flight Murtaugh response in this thread or DM
+# Slash commands (/murtaugh, /stop) are registered in the Slack app manifest,
+# not here. Murtaugh recognises the verbs `chat`, `stop`, `troubleshoot`,
+# `restart`, and `help` (e.g. `/murtaugh stop`, or a standalone `/stop`).
 
 workflow-rules:
   # The "Test communication" ping → pong self-test is built into Murtaugh

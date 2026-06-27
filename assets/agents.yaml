@@ -6,7 +6,6 @@ acp:
   max_sessions: 100
   stream_append_interval: 750ms
   stream_min_chunk_chars: 96
-  stream_final_feedback: false
   cancel_grace_period: 2s
   # progress_display: how tool/step progress renders while a turn streams.
   # "simplified" (default) shows one small context-line message that updates in

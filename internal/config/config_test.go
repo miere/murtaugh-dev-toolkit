@@ -26,8 +26,6 @@ chat:
   channel_agents:
     C12345: coding
   dm_agent: default
-commands:
-  - name: /murtaugh
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
@@ -40,9 +38,6 @@ commands:
 	}
 	if cfg.Chat.DefaultAgent != "default" || cfg.Chat.DMAgent != "default" || cfg.Chat.ChannelAgents["C12345"] != "coding" {
 		t.Fatalf("unexpected chat routing parsed: %#v", cfg.Chat)
-	}
-	if len(cfg.Commands) != 1 || cfg.Commands[0].Name != "/murtaugh" {
-		t.Fatalf("unexpected commands parsed: %#v", cfg.Commands)
 	}
 }
 
@@ -114,17 +109,6 @@ func TestParseRequiresSlackTokens(t *testing.T) {
 	message := err.Error()
 	if !strings.Contains(message, "oauth.app_token") || !strings.Contains(message, "oauth.bot_token") {
 		t.Fatalf("unexpected validation error: %v", err)
-	}
-}
-
-func TestParseValidatesSlashCommandNames(t *testing.T) {
-	cfg, err := Parse(testConfig("commands:\n  - name: murtaugh\n"))
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	err = cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "must start with /") {
-		t.Fatalf("expected slash command validation error, got: %v", err)
 	}
 }
 

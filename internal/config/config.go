@@ -31,7 +31,6 @@ type Config struct {
 	Jobs          map[string]JobProfile         `yaml:"-"`
 	Journal       JournalConfig                 `yaml:"-"`
 	Troubleshoot  TroubleshootConfig            `yaml:"-"`
-	Commands      []CommandConfig               `yaml:"commands"`
 	WorkflowRules map[string]WorkflowRuleConfig `yaml:"workflow-rules"`
 	UnfurlRules   map[string]UnfurlRuleConfig   `yaml:"unfurl-rules"`
 }
@@ -86,11 +85,6 @@ type ChatConfig struct {
 	DefaultAgent               string              `yaml:"default_agent"`
 }
 
-type CommandConfig struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-}
-
 type ACPConfig struct {
 	Enabled        bool   `yaml:"enabled"`
 	StartupTimeout string `yaml:"startup_timeout"`
@@ -103,7 +97,6 @@ type ACPConfig struct {
 	MaxSessions          int    `yaml:"max_sessions"`
 	StreamAppendInterval string `yaml:"stream_append_interval"`
 	StreamMinChunkChars  int    `yaml:"stream_min_chunk_chars"`
-	StreamFinalFeedback  bool   `yaml:"stream_final_feedback"`
 	CancelGracePeriod    string `yaml:"cancel_grace_period"`
 	// ProgressDisplay is the default rendering for tool/step progress across all
 	// agents. Empty means simplified. Per-agent profiles may override it.
@@ -566,11 +559,6 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.OAuth.BotToken) == "" {
 		errs = append(errs, errors.New("oauth.bot_token is required"))
-	}
-	for i, command := range c.Commands {
-		if !strings.HasPrefix(strings.TrimSpace(command.Name), "/") {
-			errs = append(errs, fmt.Errorf("commands[%d].name must start with /", i))
-		}
 	}
 	if err := c.Journal.Validate(); err != nil {
 		errs = append(errs, err)

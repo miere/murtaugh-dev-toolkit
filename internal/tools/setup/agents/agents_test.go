@@ -18,7 +18,6 @@ type loaded struct {
 		MaxSessions          int    `yaml:"max_sessions"`
 		StreamAppendInterval string `yaml:"stream_append_interval"`
 		StreamMinChunkChars  int    `yaml:"stream_min_chunk_chars"`
-		StreamFinalFeedback  bool   `yaml:"stream_final_feedback"`
 	} `yaml:"acp"`
 	Agents map[string]struct {
 		Kind           string   `yaml:"kind"`
