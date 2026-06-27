@@ -212,11 +212,11 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 
 	var chat *ChatHandler
 	var sessions map[string]ChatSessionManager
-	if !cfg.Defaults.Enabled {
-		logger.Warn("ACP chat disabled: set agent.enabled: true in agents.yaml to enable DM and app_mention replies")
+	if !cfg.Chat.Enabled {
+		logger.Warn("chat disabled: set chat.enabled: true to enable DM and app_mention replies (delegation still runs)")
 	}
 	var bridge *mcpbridge.Server
-	if cfg.Defaults.Enabled {
+	if cfg.Chat.Enabled {
 		sessions = make(map[string]ChatSessionManager)
 		// The aggregator lets ACP agents reach Murtaugh's own tools over a private
 		// socket; built here, bound and torn down in Run. ACP agents that fail to

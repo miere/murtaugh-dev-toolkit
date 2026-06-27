@@ -67,7 +67,9 @@ func (t *Tool) InputSchema() *jsonschema.Schema {
 	}
 }
 
-// Result is the structured payload returned by Invoke.
+// Result is the structured payload returned by Invoke. Enabled reports whether
+// an agent was configured (not whether chat is on — that gate, chat.enabled,
+// lives in slack.yaml and is written by setup.slack).
 type Result struct {
 	Path       string `json:"path"`
 	Created    bool   `json:"created"`
@@ -83,9 +85,9 @@ func (r Result) String() string {
 	if r.Created {
 		verb = "created"
 	}
-	state := "chat=disabled"
+	state := "no agent configured"
 	if r.Enabled {
-		state = fmt.Sprintf("chat=enabled agent=%s kind=%s", r.AgentName, r.Kind)
+		state = fmt.Sprintf("agent=%s kind=%s", r.AgentName, r.Kind)
 	}
 	if r.BackupPath != "" {
 		return fmt.Sprintf("%s %s (%s, backup: %s)", verb, r.Path, state, r.BackupPath)
@@ -94,10 +96,9 @@ func (r Result) String() string {
 }
 
 // runtimeDefaults captures the runtime tuning baked into every fresh
-// agents.yaml, split by the concern each knob serves. `enabled` gates the
-// Slack chat surface.
+// agents.yaml, split by the concern each knob serves. The chat-surface gate
+// (chat.enabled) lives in slack.yaml, written by setup.slack.
 var runtimeDefaults = defaultsBlock{
-	Enabled:   false,
 	Session:   sessionBlock{IdleTimeout: "30m", RequestTimeout: "10m", MaxConcurrent: 100},
 	Rendering: renderingBlock{ProgressDisplay: "simplified", StreamMinChunkChars: 96, StreamAppendInterval: "750ms"},
 	ACP:       acpDefaultsBlock{StartupTimeout: "10s", CancelGracePeriod: "2s"},
@@ -109,7 +110,6 @@ type document struct {
 }
 
 type defaultsBlock struct {
-	Enabled   bool             `yaml:"enabled"`
 	Session   sessionBlock     `yaml:"session"`
 	Rendering renderingBlock   `yaml:"rendering"`
 	ACP       acpDefaultsBlock `yaml:"acp"`
@@ -190,14 +190,12 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		doc.Defaults.Enabled = true
 		doc.Agents[agentName] = profile
 		resultKind = "native"
 	case "acp":
 		if command == "" {
 			return nil, errors.New("kind acp requires --command")
 		}
-		doc.Defaults.Enabled = true
 		doc.Agents[agentName] = profileBlock{ACP: &acpProfileBlock{Command: command, Args: agentArgs}}
 		resultKind = "acp"
 	case "":
@@ -233,7 +231,7 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 		Path:       path,
 		Created:    backupPath == "",
 		BackupPath: backupPath,
-		Enabled:    doc.Defaults.Enabled,
+		Enabled:    resultKind != "",
 		AgentName:  agentName,
 		Kind:       resultKind,
 	}, nil

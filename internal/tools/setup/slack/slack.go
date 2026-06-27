@@ -95,7 +95,13 @@ func (r Result) String() string {
 type document struct {
 	OAuth         oauthBlock         `yaml:"oauth"`
 	Configuration configurationBlock `yaml:"configuration"`
-	Chat          map[string]string  `yaml:"chat"`
+	Chat          chatBlock          `yaml:"chat"`
+}
+
+type chatBlock struct {
+	// Enabled gates the Slack chat surface; on when a default agent is set.
+	Enabled      bool   `yaml:"enabled"`
+	DefaultAgent string `yaml:"default_agent,omitempty"`
 }
 
 type oauthBlock struct {
@@ -148,10 +154,12 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 	doc := document{
 		OAuth:         oauthBlock{AppToken: "${" + appTokenVar + "}", BotToken: "${" + botTokenVar + "}"},
 		Configuration: configurationBlock{AdminUser: adminUser, Debug: false},
-		Chat:          map[string]string{},
 	}
-	if strings.TrimSpace(defaultAgent) != "" {
-		doc.Chat["default_agent"] = defaultAgent
+	// A configured default agent is what makes the chat surface useful, so
+	// enable it in the same step; with no agent, chat stays off.
+	if da := strings.TrimSpace(defaultAgent); da != "" {
+		doc.Chat.DefaultAgent = da
+		doc.Chat.Enabled = true
 	}
 
 	out, err := yaml.Marshal(doc)
