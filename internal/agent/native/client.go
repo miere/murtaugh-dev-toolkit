@@ -116,20 +116,24 @@ type BuildDeps struct {
 // environment variable the profile names (api_key_env), which the dotenv loader
 // has already populated.
 func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
-	family, err := llm.ParseFamily(profile.Provider)
+	n := profile.Native
+	if n == nil {
+		return nil, fmt.Errorf("native: profile has no native block")
+	}
+	family, err := llm.ParseFamily(n.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("native: %w", err)
 	}
-	keyEnv := strings.TrimSpace(profile.APIKeyEnv)
+	keyEnv := strings.TrimSpace(n.APIKeyEnv)
 	apiKey := strings.TrimSpace(os.Getenv(keyEnv))
 	if apiKey == "" {
 		return nil, fmt.Errorf("native: api_key_env %q is empty (set it in ~/.config/murtaugh/.env)", keyEnv)
 	}
-	provider, err := llm.New(family, profile.Model, profile.BaseURL, apiKey)
+	provider, err := llm.New(family, n.Model, n.BaseURL, apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("native: build provider: %w", err)
 	}
-	contextLimit := profile.ContextLimit
+	contextLimit := n.ContextLimit
 	if contextLimit <= 0 {
 		contextLimit = llm.DefaultContextLimit(family)
 	}
@@ -170,11 +174,11 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 
 	return &Client{
 		provider:         provider,
-		model:            profile.Model,
+		model:            n.Model,
 		systemPrompt:     systemPrompt,
 		agentsDoc:        readAgentsDoc(workDir),
 		skillsIndex:      skillsIndex,
-		maxTurns:         profile.MaxTurns,
+		maxTurns:         n.MaxTurns,
 		workDir:          workDir,
 		managedSkillsFS:  managedSkillsFS,
 		bespokeSkillsDir: bespokeSkillsDir,
@@ -182,8 +186,8 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 		toolAllow:        profile.Tools,
 		serverCfgs:       serverCfgs,
 		contextLimit:     contextLimit,
-		compaction:       parseCompaction(profile.Compaction),
-		cacheRetention:   resolveCacheRetention(profile.CacheRetention),
+		compaction:       parseCompaction(n.Compaction),
+		cacheRetention:   resolveCacheRetention(n.CacheRetention),
 		terminalApproval: terminal.ApprovalPolicy{Mode: strings.TrimSpace(profile.Approval.Terminal), Allow: profile.Approval.Allow},
 		approver:         deps.Approver,
 		logger:           logger,
@@ -349,10 +353,14 @@ func (c *Client) Close() error {
 // an operator can override it per-agent or by editing the seeded file. Config
 // validation guarantees 1 and 2 are not both set.
 func resolveSystemPrompt(profile config.AgentProfile, baseDir string) (string, error) {
-	if p := strings.TrimSpace(profile.SystemPrompt); p != "" {
-		return profile.SystemPrompt, nil
+	if profile.Native != nil && strings.TrimSpace(profile.Native.SystemPrompt) != "" {
+		return profile.Native.SystemPrompt, nil
 	}
-	if file := strings.TrimSpace(profile.SystemPromptFile); file != "" {
+	var promptFile string
+	if profile.Native != nil {
+		promptFile = strings.TrimSpace(profile.Native.SystemPromptFile)
+	}
+	if file := promptFile; file != "" {
 		if !filepath.IsAbs(file) {
 			file = filepath.Join(baseDir, file)
 		}

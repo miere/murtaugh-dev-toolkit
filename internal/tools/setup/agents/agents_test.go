@@ -20,17 +20,20 @@ type loaded struct {
 		StreamMinChunkChars  int    `yaml:"stream_min_chunk_chars"`
 	} `yaml:"acp"`
 	Agents map[string]struct {
-		Kind           string   `yaml:"kind"`
-		Command        string   `yaml:"command"`
-		Args           []string `yaml:"args"`
-		Provider       string   `yaml:"provider"`
-		Model          string   `yaml:"model"`
-		APIKeyEnv      string   `yaml:"api_key_env"`
-		Tools          []string `yaml:"tools"`
-		MCPServers     []string `yaml:"mcp_servers"`
-		ContextLimit   int      `yaml:"context_limit"`
-		Compaction     string   `yaml:"compaction"`
-		CacheRetention string   `yaml:"cache_retention"`
+		Tools      []string `yaml:"tools"`
+		MCPServers []string `yaml:"mcp_servers"`
+		Native     *struct {
+			Provider       string `yaml:"provider"`
+			Model          string `yaml:"model"`
+			APIKeyEnv      string `yaml:"api_key_env"`
+			ContextLimit   int    `yaml:"context_limit"`
+			Compaction     string `yaml:"compaction"`
+			CacheRetention string `yaml:"cache_retention"`
+		} `yaml:"native"`
+		ACP *struct {
+			Command string   `yaml:"command"`
+			Args    []string `yaml:"args"`
+		} `yaml:"acp"`
 	} `yaml:"agents"`
 }
 
@@ -102,12 +105,12 @@ func TestInvoke_WithCommandRegistersAgentAndEnablesACP(t *testing.T) {
 	if !ok {
 		t.Fatalf("default agent missing in %+v", doc.Agents)
 	}
-	if agent.Command != "/usr/local/bin/auggie" {
-		t.Fatalf("command = %q, want auggie path", agent.Command)
+	if agent.ACP == nil || agent.ACP.Command != "/usr/local/bin/auggie" {
+		t.Fatalf("command wrong, want auggie path: %+v", agent.ACP)
 	}
 	want := []string{"--acp", "--allow-indexing"}
-	if len(agent.Args) != 2 || agent.Args[0] != want[0] || agent.Args[1] != want[1] {
-		t.Fatalf("args = %v, want %v", agent.Args, want)
+	if len(agent.ACP.Args) != 2 || agent.ACP.Args[0] != want[0] || agent.ACP.Args[1] != want[1] {
+		t.Fatalf("args = %v, want %v", agent.ACP.Args, want)
 	}
 }
 
@@ -183,14 +186,14 @@ func TestInvoke_NativeAgent(t *testing.T) {
 	if !ok {
 		t.Fatalf("native agent missing: %+v", doc.Agents)
 	}
-	if a.Kind != "native" || a.Provider != "gemini" || a.Model != "gemini-2.5-pro" || a.APIKeyEnv != "GEMINI_API_KEY" {
-		t.Fatalf("native fields wrong: %+v", a)
+	if a.Native == nil || a.Native.Provider != "gemini" || a.Native.Model != "gemini-2.5-pro" || a.Native.APIKeyEnv != "GEMINI_API_KEY" {
+		t.Fatalf("native fields wrong: %+v", a.Native)
 	}
-	if a.Command != "" {
-		t.Errorf("native profile must not carry a command, got %q", a.Command)
+	if a.ACP != nil {
+		t.Errorf("native profile must not carry an acp block, got %+v", a.ACP)
 	}
-	if a.ContextLimit != 200000 || a.Compaction != "summarize" || a.CacheRetention != "1h" {
-		t.Errorf("context_limit/compaction/cache_retention wrong: %+v", a)
+	if a.Native.ContextLimit != 200000 || a.Native.Compaction != "summarize" || a.Native.CacheRetention != "1h" {
+		t.Errorf("context_limit/compaction/cache_retention wrong: %+v", a.Native)
 	}
 	if len(a.Tools) != 3 || len(a.MCPServers) != 1 {
 		t.Errorf("tools/mcp_servers wrong: %+v", a)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/miere/murtaugh-dev-toolkit/internal/config"
 	"github.com/miere/murtaugh-dev-toolkit/internal/journal"
 )
 
@@ -58,9 +57,11 @@ func (a *Gateway) buildStartupSummary() startupSummary {
 
 	for _, name := range sortedKeys(a.agentProfiles) {
 		p := a.agentProfiles[name]
-		detail := p.Model
-		if p.ResolvedKind() == config.AgentKindACP {
-			detail = p.Command
+		var detail string
+		if p.ACP != nil {
+			detail = p.ACP.Command
+		} else if p.Native != nil {
+			detail = p.Native.Model
 		}
 		ready := built(name)
 		s.Agents = append(s.Agents, startupAgent{Name: name, Kind: string(p.ResolvedKind()), Detail: detail, Ready: ready})

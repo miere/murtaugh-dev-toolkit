@@ -102,10 +102,12 @@ func TestBuild_AutoLoadsAgentsDoc(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, err := Build(config.AgentProfile{
-		Provider:  "gemini",
-		Model:     "gemini-2.5-pro",
-		APIKeyEnv: "TEST_AGENTS_KEY",
-		WorkDir:   work,
+		WorkDir: work,
+		Native: &config.NativeProfile{
+			Provider:  "gemini",
+			Model:     "gemini-2.5-pro",
+			APIKeyEnv: "TEST_AGENTS_KEY",
+		},
 	}, BuildDeps{BaseDir: base})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -123,10 +125,12 @@ func TestBuild_NoAgentsDocWhenAbsent(t *testing.T) {
 	t.Setenv("TEST_AGENTS_KEY2", "x")
 	base := t.TempDir() // no AGENTS.md here
 	c, err := Build(config.AgentProfile{
-		Provider:  "gemini",
-		Model:     "gemini-2.5-pro",
-		APIKeyEnv: "TEST_AGENTS_KEY2",
-		WorkDir:   base,
+		WorkDir: base,
+		Native: &config.NativeProfile{
+			Provider:  "gemini",
+			Model:     "gemini-2.5-pro",
+			APIKeyEnv: "TEST_AGENTS_KEY2",
+		},
 	}, BuildDeps{BaseDir: base})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -143,9 +147,11 @@ func TestBuild_SkillsIndexGatedByAllowlist(t *testing.T) {
 	writeSkill(t, skillsDir, "alpha", "alpha", "Do alpha things", "# Alpha")
 
 	profile := config.AgentProfile{
-		Provider:  "gemini",
-		Model:     "gemini-2.5-pro",
-		APIKeyEnv: "TEST_SKILLS_KEY",
+		Native: &config.NativeProfile{
+			Provider:  "gemini",
+			Model:     "gemini-2.5-pro",
+			APIKeyEnv: "TEST_SKILLS_KEY",
+		},
 	}
 
 	// Without "skills" in the allowlist: nothing advertised.

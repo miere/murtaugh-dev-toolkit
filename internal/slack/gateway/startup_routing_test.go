@@ -10,8 +10,8 @@ import (
 func TestBuildStartupSummary_FlagsUnavailableTargets(t *testing.T) {
 	a := &Gateway{
 		agentProfiles: map[string]config.AgentProfile{
-			"default": {Kind: config.AgentKindNative, Provider: "gemini", Model: "gemini-2.5-pro"},
-			"broken":  {Kind: config.AgentKindACP, Command: "/x"},
+			"default": {Native: &config.NativeProfile{Provider: "gemini", Model: "gemini-2.5-pro"}},
+			"broken":  {ACP: &config.ACPProfile{Command: "/x"}},
 		},
 		// Only "default" built; "broken" failed (absent = not built).
 		chatSessions: map[string]ChatSessionManager{"default": nil},
@@ -60,7 +60,7 @@ func TestBuildStartupSummary_FlagsUnavailableTargets(t *testing.T) {
 func TestBuildStartupSummary_ChatDisabled(t *testing.T) {
 	a := &Gateway{
 		agentProfiles: map[string]config.AgentProfile{
-			"default": {Kind: config.AgentKindNative, Model: "m"},
+			"default": {Native: &config.NativeProfile{Model: "m"}},
 		},
 		chatSessions: nil, // chat disabled (acp.enabled: false)
 		chatRouting:  config.ChatConfig{DefaultAgent: "default"},

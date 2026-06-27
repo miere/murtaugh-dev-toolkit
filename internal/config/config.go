@@ -129,11 +129,12 @@ const (
 	AgentKindACP AgentKind = "acp"
 )
 
-// ApprovalConfig gates a native agent's side-effecting tool calls behind human
-// approval in Slack. v1 covers the terminal tool — the only tool that can act
-// outside the rooted workspace (the files tools are confined to the workdir).
+// ApprovalConfig holds how an agent's tool-call approvals are handled. It spans
+// both backends under one block: Terminal/Allow govern the NATIVE terminal-tool
+// gate, while Requests governs how an ACP agent's own permission prompts are
+// answered. A field for the wrong backend is simply unused, never an error.
 type ApprovalConfig struct {
-	// Terminal selects the gating posture for the terminal tool:
+	// Terminal selects the gating posture for the native terminal tool:
 	//   "allowlist" (default) — auto-run a recognized read-only command; ask for
 	//                           anything else (fail closed)
 	//   "prompt"              — ask before every terminal command
@@ -144,26 +145,56 @@ type ApprovalConfig struct {
 	// Allow extends the built-in read-only allowlist with extra command keys:
 	// an argv0 ("kubectl") or a "binary subcommand" pair ("docker ps").
 	Allow []string `yaml:"allow"`
-}
-
-type AgentProfile struct {
-	// Kind selects the backend. Empty resolves via ResolvedKind: a profile with
-	// a Command (and no explicit kind) is treated as acp for back-compat;
-	// otherwise it defaults to native.
-	Kind AgentKind `yaml:"kind"`
-
-	// --- ACP backend (kind: acp) ---
-	Command string   `yaml:"command"`
-	Args    []string `yaml:"args"`
-	WorkDir string   `yaml:"workdir"`
-	// ACPPermission governs how agent-initiated permission requests
+	// Requests governs how an ACP agent's own permission requests
 	// (session/request_permission) are answered: "ask" (default — route to a
 	// human in the Slack thread), "auto-allow", or "auto-deny". Headless/CLI
 	// callers have no human, so "ask" there denies; set "auto-allow" for
-	// unattended ACP automation. Ignored for native agents.
-	ACPPermission string `yaml:"acp_permission"`
+	// unattended ACP automation. Unused by native agents.
+	Requests string `yaml:"requests"`
+}
 
-	// --- Native backend (kind: native) ---
+// AgentProfile defines one agent. Shared knobs live at the top; the backend is
+// selected by which sub-block is present — exactly one of Native or ACP. There
+// is no separate `kind`: a profile carrying a `native:` block is a native
+// agent, one carrying an `acp:` block is an ACP agent (see ResolvedKind).
+type AgentProfile struct {
+	// WorkDir roots the agent: the files/terminal tools for a native agent, or
+	// the spawned process's cwd for an ACP agent.
+	WorkDir string `yaml:"workdir"`
+	// Tools is the allowlist of registry/native tool groups exposed to this
+	// agent (e.g. "files", "terminal", "skills", "slack", "jobs"). Empty means
+	// no tools beyond the always-on set the toolset resolver decides.
+	Tools []string `yaml:"tools"`
+	// ExportSkillsToFS lists bundled (murtaugh-*) skills to write into this
+	// agent's workdir so an external, filesystem-discovering agent (e.g. a
+	// Claude-based ACP backend) can load them. Empty (the default) keeps the
+	// bundled skills in-binary only — readable solely through the gated `skills`
+	// tool, never by the file/terminal tools. The sentinel "all" exports every
+	// bundled skill. The list is the source of truth: on each build, listed
+	// skills are (re)written and any previously-exported murtaugh-* skill not
+	// listed is removed (bespoke skills are never touched). Exporting a skill
+	// opts it out of the in-binary blind for this agent.
+	ExportSkillsToFS []string `yaml:"export_skills_to_fs"`
+	// MCPServers names additional MCP servers (defined in the top-level
+	// mcp_servers block) to attach to this agent on top of the authoritative
+	// global set. Empty attaches just the global set; names must exist.
+	MCPServers []string `yaml:"mcp_servers"`
+	// Approval governs tool-call approvals for whichever backend applies (the
+	// terminal gate for native, request answering for ACP). Empty defaults to
+	// allowlist (native gating on) / ask (ACP).
+	Approval ApprovalConfig `yaml:"approval"`
+	// ProgressDisplay overrides the global rendering default for this agent.
+	// Empty inherits it (which itself defaults to simplified).
+	ProgressDisplay string `yaml:"progress_display"`
+
+	// Native carries the in-process backend config; non-nil selects kind native.
+	Native *NativeProfile `yaml:"native"`
+	// ACP carries the external-process backend config; non-nil selects kind acp.
+	ACP *ACPProfile `yaml:"acp"`
+}
+
+// NativeProfile is the in-process LLM backend config (the `native:` sub-block).
+type NativeProfile struct {
 	// Provider selects the litellm provider family: "gemini", "anthropic"
 	// (Anthropic-compatible, incl. base_url overrides), or "openai"
 	// (OpenAI-compatible, incl. GLM/DeepSeek/Kimi via base_url).
@@ -182,26 +213,6 @@ type AgentProfile struct {
 	// SystemPromptFile is a path (resolved against the config dir) to a file
 	// holding the system prompt. Mutually exclusive with SystemPrompt.
 	SystemPromptFile string `yaml:"system_prompt_file"`
-	// Tools is the allowlist of registry/native tool groups exposed to this
-	// agent (e.g. "files", "terminal", "skills", "slack", "jobs"). Empty means
-	// no tools beyond the always-on set the toolset resolver decides.
-	Tools []string `yaml:"tools"`
-	// ExportSkillsToFS lists bundled (murtaugh-*) skills to write into this
-	// agent's workdir so an external, filesystem-discovering agent (e.g. a
-	// Claude-based ACP backend) can load them. Empty (the default) keeps the
-	// bundled skills in-binary only — readable solely through the gated `skills`
-	// tool, never by the file/terminal tools. The sentinel "all" exports every
-	// bundled skill. The list is the source of truth: on each build, listed
-	// skills are (re)written and any previously-exported murtaugh-* skill not
-	// listed is removed (bespoke skills are never touched). Exporting a skill
-	// opts it out of the in-binary blind for this agent.
-	ExportSkillsToFS []string `yaml:"export_skills_to_fs"`
-	// MCPServers historically selected which top-level mcp_servers to attach to
-	// this agent. As of spec 015 the global mcp_servers block is authoritative —
-	// every agent attaches all of them — so this per-agent list is no longer a
-	// selector. It is still parsed and validated (names must exist) for backward
-	// compatibility, but it no longer narrows the set.
-	MCPServers []string `yaml:"mcp_servers"`
 	// MaxTurns bounds tool-call iterations in a single prompt. 0 uses a default.
 	MaxTurns int `yaml:"max_turns"`
 	// ContextLimit is the conversation token budget that drives compaction. 0
@@ -216,17 +227,17 @@ type AgentProfile struct {
 	// "off"/"none" disables caching. Empty uses the default. Applied for
 	// Anthropic/OpenAI; Gemini caches a static prefix implicitly regardless.
 	CacheRetention string `yaml:"cache_retention"`
-	// Approval gates the agent's side-effecting tool calls behind human approval
-	// in Slack. v1 covers the terminal tool (the only tool that can act outside
-	// the rooted workspace). Defaults to allowlist (gating on) when unset.
-	Approval ApprovalConfig `yaml:"approval"`
+}
+
+// ACPProfile is the external-process backend config (the `acp:` sub-block).
+type ACPProfile struct {
+	// Command and Args launch the ACP agent process. Command is required.
+	Command string   `yaml:"command"`
+	Args    []string `yaml:"args"`
 	// Interruptible overrides auto-detection of session/cancel support. When
 	// nil (the default) Murtaugh probes the agent at warmup; set it explicitly
 	// to skip the probe or to correct a wrong verdict.
 	Interruptible *bool `yaml:"interruptible"`
-	// ProgressDisplay overrides acp.progress_display for this agent. Empty
-	// inherits the global default (which itself defaults to simplified).
-	ProgressDisplay string `yaml:"progress_display"`
 	// Env injects environment variables into the agent process. Each value is
 	// expanded against Murtaugh's own environment first (so "${HOME}/bin" and
 	// "$PATH" resolve), then the resulting KEY=VALUE pairs are layered on top of
@@ -236,17 +247,18 @@ type AgentProfile struct {
 	Env map[string]string `yaml:"env"`
 }
 
-// EnvOverrides renders the profile's Env map into the KEY=VALUE slice exec
+// EnvOverrides renders the ACP profile's Env map into the KEY=VALUE slice exec
 // expects, expanding each value against the host environment. It returns nil
-// when no variables are configured so callers can leave cmd.Env unset and keep
-// the plain inherited environment. Blank keys are skipped; keys are emitted in
-// sorted order so the result is deterministic.
+// when no variables are configured (or the profile is not ACP) so callers can
+// leave cmd.Env unset and keep the plain inherited environment. Blank keys are
+// skipped; keys are emitted in sorted order so the result is deterministic.
 func (p AgentProfile) EnvOverrides() []string {
-	if len(p.Env) == 0 {
+	if p.ACP == nil || len(p.ACP.Env) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(p.Env))
-	for key := range p.Env {
+	env := p.ACP.Env
+	keys := make([]string, 0, len(env))
+	for key := range env {
 		if strings.TrimSpace(key) == "" {
 			continue
 		}
@@ -255,7 +267,7 @@ func (p AgentProfile) EnvOverrides() []string {
 	sort.Strings(keys)
 	out := make([]string, 0, len(keys))
 	for _, key := range keys {
-		out = append(out, key+"="+os.ExpandEnv(p.Env[key]))
+		out = append(out, key+"="+os.ExpandEnv(env[key]))
 	}
 	return out
 }
@@ -575,17 +587,29 @@ func (c Config) Validate() error {
 		if err := validateProgressDisplay(fmt.Sprintf("agents[%s].progress_display", name), profile.ProgressDisplay); err != nil {
 			errs = append(errs, err)
 		}
-		for key := range profile.Env {
-			if strings.ContainsRune(key, '=') {
-				errs = append(errs, fmt.Errorf("agents[%s].env key %q must not contain '='", name, key))
+		if profile.ACP != nil {
+			for key := range profile.ACP.Env {
+				if strings.ContainsRune(key, '=') {
+					errs = append(errs, fmt.Errorf("agents[%s].acp.env key %q must not contain '='", name, key))
+				}
 			}
 		}
 		errs = append(errs, validateExportSkills(name, profile.ExportSkillsToFS)...)
-		if profile.ResolvedKind() == AgentKindNative {
+		// Exactly one backend sub-block must be present; a clear error beats a
+		// silent backend flip or a half-configured agent.
+		switch {
+		case profile.Native != nil && profile.ACP != nil:
+			errs = append(errs, fmt.Errorf("agents[%s] sets both native and acp; use exactly one", name))
+		case profile.Native != nil:
 			errs = append(errs, validateNativeAgent(name, profile, c.MCPServers)...)
-		} else if err := profile.Validate(); err != nil {
-			errs = append(errs, fmt.Errorf("agents[%s]: %w", name, err))
+		case profile.ACP != nil:
+			if err := profile.Validate(); err != nil {
+				errs = append(errs, fmt.Errorf("agents[%s]: %w", name, err))
+			}
+		default:
+			errs = append(errs, fmt.Errorf("agents[%s] needs a native or acp block", name))
 		}
+		errs = append(errs, validateMCPRefs(name, profile.MCPServers, c.MCPServers)...)
 	}
 
 	for name, server := range c.MCPServers {
@@ -785,16 +809,18 @@ func (c ACPConfig) Validate() error {
 	return errors.Join(errs...)
 }
 
+// Validate checks an ACP profile (callers gate this on p.ACP != nil).
 func (p AgentProfile) Validate() error {
-	if p.ResolvedKind() == AgentKindACP {
-		if strings.TrimSpace(p.Command) == "" {
-			return errors.New("agent profile command is required")
-		}
-		switch p.ResolvedACPPermission() {
-		case "ask", "auto-allow", "auto-deny":
-		default:
-			return fmt.Errorf("agent profile acp_permission must be ask, auto-allow, or auto-deny (got %q)", p.ACPPermission)
-		}
+	if p.ACP == nil {
+		return nil
+	}
+	if strings.TrimSpace(p.ACP.Command) == "" {
+		return errors.New("agent acp.command is required")
+	}
+	switch p.ResolvedACPPermission() {
+	case "ask", "auto-allow", "auto-deny":
+	default:
+		return fmt.Errorf("agent approval.requests must be ask, auto-allow, or auto-deny (got %q)", p.Approval.Requests)
 	}
 	return nil
 }
@@ -802,27 +828,20 @@ func (p AgentProfile) Validate() error {
 // ResolvedACPPermission reports the effective permission policy for an ACP agent,
 // defaulting an empty value to "ask".
 func (p AgentProfile) ResolvedACPPermission() string {
-	if v := strings.ToLower(strings.TrimSpace(p.ACPPermission)); v != "" {
+	if v := strings.ToLower(strings.TrimSpace(p.Approval.Requests)); v != "" {
 		return v
 	}
 	return "ask"
 }
 
-// ResolvedKind reports the effective backend for the profile. An explicit Kind
-// wins; otherwise a profile carrying a Command resolves to acp (back-compat for
-// pre-native configs) and everything else defaults to native.
+// ResolvedKind reports the backend selected by the present sub-block: an `acp:`
+// block is ACP, otherwise native. (Validate enforces exactly one sub-block, so
+// the native default only applies to an already-validated native profile.)
 func (p AgentProfile) ResolvedKind() AgentKind {
-	switch AgentKind(strings.ToLower(strings.TrimSpace(string(p.Kind)))) {
-	case AgentKindACP:
+	if p.ACP != nil {
 		return AgentKindACP
-	case AgentKindNative:
-		return AgentKindNative
-	default:
-		if strings.TrimSpace(p.Command) != "" {
-			return AgentKindACP
-		}
-		return AgentKindNative
 	}
+	return AgentKindNative
 }
 
 // MCPServerConfig describes one external MCP server the native agent can attach
@@ -1019,45 +1038,54 @@ func validateExportSkills(agent string, list []string) []error {
 // anthropic or openai families via a base_url override.
 var nativeProviders = map[string]struct{}{"gemini": {}, "anthropic": {}, "openai": {}}
 
-// validateNativeAgent checks a kind:native profile: it needs a known provider,
+// validateNativeAgent checks a native profile: it needs a known provider,
 // a model, and an api_key_env; system_prompt and system_prompt_file are mutually
-// exclusive; and every referenced MCP server must be defined.
+// exclusive; the terminal-approval mode must be known.
 func validateNativeAgent(name string, p AgentProfile, servers map[string]MCPServerConfig) []error {
 	var errs []error
-	provider := strings.ToLower(strings.TrimSpace(p.Provider))
+	n := p.Native
+	provider := strings.ToLower(strings.TrimSpace(n.Provider))
 	if provider == "" {
-		errs = append(errs, fmt.Errorf("agents[%s].provider is required for a native agent", name))
+		errs = append(errs, fmt.Errorf("agents[%s].native.provider is required", name))
 	} else if _, ok := nativeProviders[provider]; !ok {
-		errs = append(errs, fmt.Errorf("agents[%s].provider %q must be one of gemini, anthropic, openai", name, p.Provider))
+		errs = append(errs, fmt.Errorf("agents[%s].native.provider %q must be one of gemini, anthropic, openai", name, n.Provider))
 	}
-	if strings.TrimSpace(p.Model) == "" {
-		errs = append(errs, fmt.Errorf("agents[%s].model is required for a native agent", name))
+	if strings.TrimSpace(n.Model) == "" {
+		errs = append(errs, fmt.Errorf("agents[%s].native.model is required", name))
 	}
-	if strings.TrimSpace(p.APIKeyEnv) == "" {
-		errs = append(errs, fmt.Errorf("agents[%s].api_key_env is required for a native agent (the .env variable holding the credential)", name))
+	if strings.TrimSpace(n.APIKeyEnv) == "" {
+		errs = append(errs, fmt.Errorf("agents[%s].native.api_key_env is required (the .env variable holding the credential)", name))
 	}
-	if strings.TrimSpace(p.SystemPrompt) != "" && strings.TrimSpace(p.SystemPromptFile) != "" {
-		errs = append(errs, fmt.Errorf("agents[%s] sets both system_prompt and system_prompt_file; use exactly one", name))
+	if strings.TrimSpace(n.SystemPrompt) != "" && strings.TrimSpace(n.SystemPromptFile) != "" {
+		errs = append(errs, fmt.Errorf("agents[%s].native sets both system_prompt and system_prompt_file; use exactly one", name))
 	}
-	if p.ContextLimit < 0 {
-		errs = append(errs, fmt.Errorf("agents[%s].context_limit must be greater than or equal to zero", name))
+	if n.ContextLimit < 0 {
+		errs = append(errs, fmt.Errorf("agents[%s].native.context_limit must be greater than or equal to zero", name))
 	}
-	switch strings.ToLower(strings.TrimSpace(p.Compaction)) {
+	switch strings.ToLower(strings.TrimSpace(n.Compaction)) {
 	case "", "truncate", "summarize":
 	default:
-		errs = append(errs, fmt.Errorf("agents[%s].compaction must be %q or %q", name, "truncate", "summarize"))
+		errs = append(errs, fmt.Errorf("agents[%s].native.compaction must be %q or %q", name, "truncate", "summarize"))
 	}
-	switch strings.ToLower(strings.TrimSpace(p.CacheRetention)) {
+	switch strings.ToLower(strings.TrimSpace(n.CacheRetention)) {
 	case "", "off", "none", "5m", "short", "1h", "long":
 	default:
-		errs = append(errs, fmt.Errorf("agents[%s].cache_retention must be one of 5m, 1h, or off (got %q)", name, p.CacheRetention))
+		errs = append(errs, fmt.Errorf("agents[%s].native.cache_retention must be one of 5m, 1h, or off (got %q)", name, n.CacheRetention))
 	}
 	switch strings.ToLower(strings.TrimSpace(p.Approval.Terminal)) {
 	case "", "allowlist", "prompt", "off":
 	default:
 		errs = append(errs, fmt.Errorf("agents[%s].approval.terminal must be one of allowlist, prompt, or off (got %q)", name, p.Approval.Terminal))
 	}
-	for _, ref := range p.MCPServers {
+	return errs
+}
+
+// validateMCPRefs checks that every per-agent mcp_servers entry names a defined
+// server. The list is additive on top of the authoritative global set, so it is
+// validated for both backends.
+func validateMCPRefs(name string, refs []string, servers map[string]MCPServerConfig) []error {
+	var errs []error
+	for _, ref := range refs {
 		if _, ok := servers[ref]; !ok {
 			errs = append(errs, fmt.Errorf("agents[%s].mcp_servers references unknown server %q (define it under mcp_servers)", name, ref))
 		}

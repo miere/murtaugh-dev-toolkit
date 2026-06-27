@@ -75,10 +75,9 @@ func TestResolvedKind(t *testing.T) {
 		p    AgentProfile
 		want AgentKind
 	}{
-		{"explicit native", AgentProfile{Kind: "native"}, AgentKindNative},
-		{"explicit acp", AgentProfile{Kind: "acp", Command: "goose"}, AgentKindACP},
-		{"command no kind ⇒ acp", AgentProfile{Command: "goose"}, AgentKindACP},
-		{"empty ⇒ native", AgentProfile{Provider: "gemini"}, AgentKindNative},
+		{"acp block ⇒ acp", AgentProfile{ACP: &ACPProfile{Command: "goose"}}, AgentKindACP},
+		{"native block ⇒ native", AgentProfile{Native: &NativeProfile{Provider: "gemini"}}, AgentKindNative},
+		{"neither ⇒ native", AgentProfile{}, AgentKindNative},
 	}
 	for _, tc := range cases {
 		if got := tc.p.ResolvedKind(); got != tc.want {
@@ -97,10 +96,10 @@ func TestACPAgentPermissionValidation(t *testing.T) {
 		{"ask", "ask", ""},
 		{"auto-allow", "auto-allow", ""},
 		{"auto-deny", "auto-deny", ""},
-		{"bad value", "yolo", "acp_permission must be"},
+		{"bad value", "yolo", "approval.requests must be"},
 	}
 	for _, tc := range cases {
-		profile := AgentProfile{Kind: "acp", Command: "claude-code-acp-rs", ACPPermission: tc.value}
+		profile := AgentProfile{ACP: &ACPProfile{Command: "claude-code-acp-rs"}, Approval: ApprovalConfig{Requests: tc.value}}
 		err := profile.Validate()
 		if tc.wantErr == "" {
 			if err != nil {
@@ -123,65 +122,65 @@ func TestNativeAgentValidation(t *testing.T) {
 	}{
 		{
 			name:    "valid",
-			profile: AgentProfile{Provider: "gemini", Model: "gemini-2.5-pro", APIKeyEnv: "GEMINI_API_KEY"},
+			profile: AgentProfile{Native: &NativeProfile{Provider: "gemini", Model: "gemini-2.5-pro", APIKeyEnv: "GEMINI_API_KEY"}},
 		},
 		{
 			name:    "missing provider",
-			profile: AgentProfile{Model: "m", APIKeyEnv: "K"},
+			profile: AgentProfile{Native: &NativeProfile{Model: "m", APIKeyEnv: "K"}},
 			wantErr: "provider is required",
 		},
 		{
 			name:    "bad provider",
-			profile: AgentProfile{Provider: "cohere", Model: "m", APIKeyEnv: "K"},
+			profile: AgentProfile{Native: &NativeProfile{Provider: "cohere", Model: "m", APIKeyEnv: "K"}},
 			wantErr: "must be one of gemini, anthropic, openai",
 		},
 		{
 			name:    "missing model",
-			profile: AgentProfile{Provider: "openai", APIKeyEnv: "K"},
+			profile: AgentProfile{Native: &NativeProfile{Provider: "openai", APIKeyEnv: "K"}},
 			wantErr: "model is required",
 		},
 		{
 			name:    "missing api_key_env",
-			profile: AgentProfile{Provider: "openai", Model: "m"},
+			profile: AgentProfile{Native: &NativeProfile{Provider: "openai", Model: "m"}},
 			wantErr: "api_key_env is required",
 		},
 		{
 			name:    "both prompts",
-			profile: AgentProfile{Provider: "openai", Model: "m", APIKeyEnv: "K", SystemPrompt: "a", SystemPromptFile: "b"},
+			profile: AgentProfile{Native: &NativeProfile{Provider: "openai", Model: "m", APIKeyEnv: "K", SystemPrompt: "a", SystemPromptFile: "b"}},
 			wantErr: "exactly one",
 		},
 		{
 			name:    "unknown mcp ref",
-			profile: AgentProfile{Provider: "openai", Model: "m", APIKeyEnv: "K", MCPServers: []string{"ghost"}},
+			profile: AgentProfile{MCPServers: []string{"ghost"}, Native: &NativeProfile{Provider: "openai", Model: "m", APIKeyEnv: "K"}},
 			wantErr: "unknown server",
 		},
 		{
 			name:    "known mcp ref",
-			profile: AgentProfile{Provider: "openai", Model: "m", APIKeyEnv: "K", MCPServers: []string{"vaultre"}},
+			profile: AgentProfile{MCPServers: []string{"vaultre"}, Native: &NativeProfile{Provider: "openai", Model: "m", APIKeyEnv: "K"}},
 			servers: map[string]MCPServerConfig{"vaultre": {Command: "vaultre-mcp"}},
 		},
 		{
 			name:    "negative context_limit",
-			profile: AgentProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", ContextLimit: -1},
+			profile: AgentProfile{Native: &NativeProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", ContextLimit: -1}},
 			wantErr: "context_limit must be greater than or equal to zero",
 		},
 		{
 			name:    "bad compaction",
-			profile: AgentProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", Compaction: "shrink"},
+			profile: AgentProfile{Native: &NativeProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", Compaction: "shrink"}},
 			wantErr: "compaction must be",
 		},
 		{
 			name:    "valid summarize compaction",
-			profile: AgentProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", Compaction: "summarize", ContextLimit: 200000},
+			profile: AgentProfile{Native: &NativeProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", Compaction: "summarize", ContextLimit: 200000}},
 		},
 		{
 			name:    "bad cache_retention",
-			profile: AgentProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", CacheRetention: "2h"},
+			profile: AgentProfile{Native: &NativeProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", CacheRetention: "2h"}},
 			wantErr: "cache_retention must be",
 		},
 		{
 			name:    "valid cache_retention off",
-			profile: AgentProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", CacheRetention: "off"},
+			profile: AgentProfile{Native: &NativeProfile{Provider: "gemini", Model: "m", APIKeyEnv: "K", CacheRetention: "off"}},
 		},
 	}
 	for _, tc := range cases {

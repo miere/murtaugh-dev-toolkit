@@ -265,11 +265,15 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 				logger.Error("agent disabled: could not build client", "agent", name, "kind", profile.ResolvedKind(), "error", err)
 				continue
 			}
+			var interruptible *bool
+			if profile.ACP != nil {
+				interruptible = profile.ACP.Interruptible
+			}
 			sessions[name] = agent.NewSessionManager(
 				client,
 				cfg.ACP.EffectiveSessionIdleTimeout(),
 				cfg.ACP.EffectiveMaxSessions(),
-			).WithLogger(logger.With("agent", name)).WithCancelOverride(profile.Interruptible)
+			).WithLogger(logger.With("agent", name)).WithCancelOverride(interruptible)
 		}
 
 		// The resolver runs on the Slack socket goroutine, so it must not do any

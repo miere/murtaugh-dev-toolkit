@@ -59,7 +59,7 @@ func (f *fakeClient) Close() error { f.closed = true; return nil }
 
 func newTestRunner(t *testing.T, client *fakeClient, requestTimeout string) *Runner {
 	t.Helper()
-	agents := map[string]config.AgentProfile{"default": {Command: "/bin/true"}}
+	agents := map[string]config.AgentProfile{"default": {ACP: &config.ACPProfile{Command: "/bin/true"}}}
 	r := NewRunner(agents, config.ACPConfig{RequestTimeout: requestTimeout}, "", slog.New(slog.NewTextHandler(nopWriter{}, nil)))
 	r.WithClientFactory(func(config.AgentProfile, *slog.Logger) agent.Client { return client })
 	return r
@@ -192,7 +192,7 @@ func (c *heartbeatClient) Close() error { c.closed = true; return nil }
 func TestRunProductiveTurnOutlivesIdleWindow(t *testing.T) {
 	const beats = 12
 	client := &heartbeatClient{interval: 20 * time.Millisecond, beats: beats}
-	agents := map[string]config.AgentProfile{"default": {Command: "/bin/true"}}
+	agents := map[string]config.AgentProfile{"default": {ACP: &config.ACPProfile{Command: "/bin/true"}}}
 	r := NewRunner(agents, config.ACPConfig{RequestTimeout: "200ms"}, "", slog.New(slog.NewTextHandler(nopWriter{}, nil)))
 	r.WithClientFactory(func(config.AgentProfile, *slog.Logger) agent.Client { return client })
 

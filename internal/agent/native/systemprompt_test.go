@@ -35,12 +35,12 @@ func TestResolveSystemPrompt_Precedence(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "custom.md"), []byte("CUSTOM FILE"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := resolveSystemPrompt(config.AgentProfile{SystemPromptFile: "custom.md"}, base); got != "CUSTOM FILE" {
+	if got, _ := resolveSystemPrompt(config.AgentProfile{Native: &config.NativeProfile{SystemPromptFile: "custom.md"}}, base); got != "CUSTOM FILE" {
 		t.Fatalf("system_prompt_file not used: %q", got)
 	}
 
 	// 1. An inline system_prompt wins over everything.
-	if got, _ := resolveSystemPrompt(config.AgentProfile{SystemPrompt: "INLINE", SystemPromptFile: "custom.md"}, base); got != "INLINE" {
+	if got, _ := resolveSystemPrompt(config.AgentProfile{Native: &config.NativeProfile{SystemPrompt: "INLINE", SystemPromptFile: "custom.md"}}, base); got != "INLINE" {
 		t.Fatalf("inline system_prompt not preferred: %q", got)
 	}
 }

@@ -6,7 +6,7 @@ import (
 )
 
 func TestEffectiveProgressDisplayDefaultsToSimplified(t *testing.T) {
-	cfg := Config{Agents: map[string]AgentProfile{"coder": {Command: "x"}}}
+	cfg := Config{Agents: map[string]AgentProfile{"coder": {ACP: &ACPProfile{Command: "x"}}}}
 	if got := cfg.EffectiveProgressDisplay("coder"); got != ProgressDisplaySimplified {
 		t.Fatalf("expected simplified by default, got %q", got)
 	}
@@ -19,7 +19,7 @@ func TestEffectiveProgressDisplayDefaultsToSimplified(t *testing.T) {
 func TestEffectiveProgressDisplayGlobalDefault(t *testing.T) {
 	cfg := Config{
 		ACP:    ACPConfig{ProgressDisplay: "tasks"},
-		Agents: map[string]AgentProfile{"coder": {Command: "x"}},
+		Agents: map[string]AgentProfile{"coder": {ACP: &ACPProfile{Command: "x"}}},
 	}
 	if got := cfg.EffectiveProgressDisplay("coder"); got != ProgressDisplayTasks {
 		t.Fatalf("expected global tasks default, got %q", got)
@@ -30,8 +30,8 @@ func TestEffectiveProgressDisplayAgentOverridesGlobal(t *testing.T) {
 	cfg := Config{
 		ACP: ACPConfig{ProgressDisplay: "tasks"},
 		Agents: map[string]AgentProfile{
-			"coder":  {Command: "x"},                                // inherits global → tasks
-			"helper": {Command: "x", ProgressDisplay: "simplified"}, // overrides → simplified
+			"coder":  {ACP: &ACPProfile{Command: "x"}},                                // inherits global → tasks
+			"helper": {ACP: &ACPProfile{Command: "x"}, ProgressDisplay: "simplified"}, // overrides → simplified
 		},
 	}
 	if got := cfg.EffectiveProgressDisplay("coder"); got != ProgressDisplayTasks {
@@ -45,7 +45,7 @@ func TestEffectiveProgressDisplayAgentOverridesGlobal(t *testing.T) {
 func TestProgressDisplayValidationRejectsUnknown(t *testing.T) {
 	cfg := Config{
 		OAuth:  OAuthConfig{AppToken: "a", BotToken: "b"},
-		Agents: map[string]AgentProfile{"coder": {Command: "x", ProgressDisplay: "verbose"}},
+		Agents: map[string]AgentProfile{"coder": {ACP: &ACPProfile{Command: "x"}, ProgressDisplay: "verbose"}},
 	}
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "progress_display") {
@@ -69,8 +69,8 @@ func TestProgressDisplayValidationAllowsKnownAndBlank(t *testing.T) {
 		OAuth: OAuthConfig{AppToken: "a", BotToken: "b"},
 		ACP:   ACPConfig{ProgressDisplay: "tasks"},
 		Agents: map[string]AgentProfile{
-			"a": {Command: "x", ProgressDisplay: "simplified"},
-			"b": {Command: "x"}, // blank inherits, allowed
+			"a": {ACP: &ACPProfile{Command: "x"}, ProgressDisplay: "simplified"},
+			"b": {ACP: &ACPProfile{Command: "x"}}, // blank inherits, allowed
 		},
 	}
 	if err := cfg.Validate(); err != nil {

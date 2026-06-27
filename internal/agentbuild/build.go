@@ -79,8 +79,8 @@ func Client(profile config.AgentProfile, deps Deps) (agent.Client, error) {
 			aggregator = aggr
 		}
 		return agent.NewProcessClient(agent.ProcessOptions{
-			Command:          profile.Command,
-			Args:             profile.Args,
+			Command:          profile.ACP.Command,
+			Args:             profile.ACP.Args,
 			WorkDir:          workDir,
 			Env:              profile.EnvOverrides(),
 			Logger:           logger,

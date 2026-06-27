@@ -31,18 +31,15 @@ acp:
 #     url: https://data-api.internal/mcp
 
 agents:
-  # --- Native agent (kind: native is the DEFAULT) ----------------------------
-  # Murtaugh talks to the model itself — no external ACP agent process. Provider
-  # is one of gemini / anthropic / openai; GLM, DeepSeek and Kimi ride the
-  # anthropic- or openai-compatible families via a base_url override. The API key
-  # never lives here: api_key_env names the variable in ~/.config/murtaugh/.env.
+  # --- Native agent (in-process LLM, no external ACP process) ----------------
+  # Murtaugh talks to the model itself. Backend-specific knobs live under the
+  # `native:` sub-block; shared knobs (workdir, tools, approval, mcp_servers)
+  # stay at the top. Provider is one of gemini / anthropic / openai; GLM,
+  # DeepSeek and Kimi ride the anthropic-/openai-compatible families via a
+  # base_url override. The API key never lives here: api_key_env names the
+  # variable in ~/.config/murtaugh/.env.
   # emily:
-  #   provider: gemini
-  #   model: gemini-2.5-pro
-  #   api_key_env: GEMINI_API_KEY
-  #   # base_url:            # set for Z.ai/DeepSeek/Kimi compat endpoints
   #   workdir: ${HOME}/work/emily      # roots the files/terminal tools
-  #   system_prompt_file: prompts/emily.md   # or inline `system_prompt: |`
   #   tools: [files, terminal, skills, slack, jobs, ask, present_plan, attach]  # native groups + registry namespaces
   #   # `ask` lets the agent put a question with options to you as clickable Slack
   #   # buttons and WAIT for your answer (instead of assuming one). Recommended.
@@ -50,8 +47,7 @@ agents:
   #   # you as a real downloadable upload; paths are confined to the workdir.
   #   # `present_plan` shows you a plan with Proceed / Revise / Cancel buttons and
   #   # WAITS for sign-off before the agent starts multi-step work.
-  #   mcp_servers: [vaultre, data-api]               # from the block above
-  #   max_turns: 40
+  #   mcp_servers: [vaultre, data-api]               # additive on top of the global set
   #   # Approval gate: confirm side-effecting terminal commands in Slack before
   #   # they run. terminal: allowlist (default — auto-run recognized read-only
   #   # commands like ls/cat/grep/git status, ask for anything else), prompt (ask
@@ -62,35 +58,41 @@ agents:
   #   approval:
   #     terminal: allowlist
   #     allow: [kubectl, "docker ps"]
-  #   # Context-window management — keeps a long thread within the model window.
-  #   # context_limit: token budget; omit to use a per-provider-family default.
-  #   # compaction: "truncate" (default — drop oldest turns) or "summarize"
-  #   #             (LLM-compress the oldest turns, truncation as the fallback).
-  #   context_limit: 1000000
-  #   compaction: truncate
-  #   # Prompt-cache TTL: "5m" (default) or "1h"; "off" disables. Applied for
-  #   # Anthropic/OpenAI; Gemini caches the static system prefix implicitly.
-  #   cache_retention: 5m
+  #   native:
+  #     provider: gemini
+  #     model: gemini-2.5-pro
+  #     api_key_env: GEMINI_API_KEY
+  #     # base_url:                            # set for Z.ai/DeepSeek/Kimi compat endpoints
+  #     system_prompt_file: prompts/emily.md   # or inline `system_prompt: |`
+  #     max_turns: 40
+  #     # Context-window management — keeps a long thread within the model window.
+  #     # context_limit: token budget; omit to use a per-provider-family default.
+  #     # compaction: "truncate" (default — drop oldest turns) or "summarize"
+  #     #             (LLM-compress the oldest turns, truncation as the fallback).
+  #     context_limit: 1000000
+  #     compaction: truncate
+  #     # Prompt-cache TTL: "5m" (default) or "1h"; "off" disables. Applied for
+  #     # Anthropic/OpenAI; Gemini caches the static system prefix implicitly.
+  #     cache_retention: 5m
   #   # A workspace AGENTS.md (in the agent's workdir) is auto-loaded into the
   #   # system prompt as project guidelines — no config needed.
 
-  # --- ACP agent (kind: acp — external process over ACP) ---------------------
+  # --- ACP agent (external process over ACP) ---------------------------------
+  # The backend is chosen by the sub-block present: an `acp:` block makes this an
+  # ACP agent, a `native:` block makes it native. Shared knobs (workdir, tools,
+  # approval, progress_display, mcp_servers) sit at the top level.
   default:
-    kind: acp
-    command: /path/to/acp-agent
-    args: [--stdio]
     workdir: /path/to/workspace
-    # progress_display: tasks   # per-agent override of acp.progress_display
-    # interruptible: optional override for session/cancel support. Omit to let
-    # Murtaugh auto-detect at startup (it probes the agent and logs the result).
-    # Set false for agents that do not implement session/cancel so a follow-up
-    # message does not try to interrupt — and instead waits for the current
-    # response to finish. Set true to force-enable and skip the probe.
-    # interruptible: false
-    # env: extra environment variables for the agent process. Values are
-    # expanded against Murtaugh's own environment (so "${HOME}" and "$PATH"
-    # work) and layered on top of the inherited environment, so these win on a
-    # duplicate key. Omit to start the agent with Murtaugh's environment as-is.
-    # env:
-    #   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-    #   PATH: ${HOME}/bin:${PATH}
+    # progress_display: tasks   # per-agent override of the global default
+    # approval:
+    #   requests: ask           # how the agent's own permission prompts are answered
+    acp:
+      command: /path/to/acp-agent
+      args: [--stdio]
+      # interruptible: false    # omit to auto-detect session/cancel support at startup
+      # env: extra environment variables for the agent process. Values are
+      # expanded against Murtaugh's own environment (so "${HOME}" and "$PATH"
+      # work) and layered on top of the inherited environment.
+      # env:
+      #   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      #   PATH: ${HOME}/bin:${PATH}

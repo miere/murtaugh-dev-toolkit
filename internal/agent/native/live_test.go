@@ -42,12 +42,14 @@ func TestLive_NativeTurn(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	client, err := Build(config.AgentProfile{
-		Provider:  "gemini",
-		Model:     "gemini-3.1-pro-preview",
-		APIKeyEnv: "GEMINI_API_KEY",
-		WorkDir:   workdir,
-		Tools:     []string{"files", "terminal"},
-		MaxTurns:  8,
+		WorkDir: workdir,
+		Tools:   []string{"files", "terminal"},
+		Native: &config.NativeProfile{
+			Provider:  "gemini",
+			Model:     "gemini-3.1-pro-preview",
+			APIKeyEnv: "GEMINI_API_KEY",
+			MaxTurns:  8,
+		},
 	}, BuildDeps{BaseDir: workdir, Logger: logger})
 	if err != nil {
 		t.Fatalf("Build: %v", err)

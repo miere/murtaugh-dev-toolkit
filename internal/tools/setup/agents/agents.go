@@ -123,22 +123,29 @@ type acpBlock struct {
 	ProgressDisplay      string `yaml:"progress_display"`
 }
 
-// profileBlock is the union of ACP and native fields; omitempty keeps each
-// written profile minimal to its kind.
+// profileBlock holds an agent's shared knobs plus exactly one backend
+// sub-block; omitempty keeps each written profile minimal to its kind.
 type profileBlock struct {
-	Kind             string   `yaml:"kind,omitempty"`
-	Command          string   `yaml:"command,omitempty"`
-	Args             []string `yaml:"args,omitempty"`
-	Provider         string   `yaml:"provider,omitempty"`
-	Model            string   `yaml:"model,omitempty"`
-	BaseURL          string   `yaml:"base_url,omitempty"`
-	APIKeyEnv        string   `yaml:"api_key_env,omitempty"`
-	Tools            []string `yaml:"tools,omitempty"`
-	MCPServers       []string `yaml:"mcp_servers,omitempty"`
-	SystemPromptFile string   `yaml:"system_prompt_file,omitempty"`
-	ContextLimit     int      `yaml:"context_limit,omitempty"`
-	Compaction       string   `yaml:"compaction,omitempty"`
-	CacheRetention   string   `yaml:"cache_retention,omitempty"`
+	Tools      []string         `yaml:"tools,omitempty"`
+	MCPServers []string         `yaml:"mcp_servers,omitempty"`
+	Native     *nativeBlock     `yaml:"native,omitempty"`
+	ACP        *acpProfileBlock `yaml:"acp,omitempty"`
+}
+
+type nativeBlock struct {
+	Provider         string `yaml:"provider,omitempty"`
+	Model            string `yaml:"model,omitempty"`
+	BaseURL          string `yaml:"base_url,omitempty"`
+	APIKeyEnv        string `yaml:"api_key_env,omitempty"`
+	SystemPromptFile string `yaml:"system_prompt_file,omitempty"`
+	ContextLimit     int    `yaml:"context_limit,omitempty"`
+	Compaction       string `yaml:"compaction,omitempty"`
+	CacheRetention   string `yaml:"cache_retention,omitempty"`
+}
+
+type acpProfileBlock struct {
+	Command string   `yaml:"command,omitempty"`
+	Args    []string `yaml:"args,omitempty"`
 }
 
 // Invoke validates arguments and writes the agents.yaml document.
@@ -182,7 +189,7 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 			return nil, errors.New("kind acp requires --command")
 		}
 		doc.ACP.Enabled = true
-		doc.Agents[agentName] = profileBlock{Kind: "acp", Command: command, Args: agentArgs}
+		doc.Agents[agentName] = profileBlock{ACP: &acpProfileBlock{Command: command, Args: agentArgs}}
 		resultKind = "acp"
 	case "":
 		// No agent configured: write a disabled file (chat off). Stray agent
@@ -266,17 +273,18 @@ func buildNative(args map[string]any, provider string) (profileBlock, error) {
 		return profileBlock{}, fmt.Errorf("cache_retention %q must be one of 5m, 1h, or off", cacheRetention)
 	}
 	return profileBlock{
-		Kind:             "native",
-		Provider:         provider,
-		Model:            model,
-		BaseURL:          strings.TrimSpace(stringArg(args, "base_url")),
-		APIKeyEnv:        apiKeyEnv,
-		Tools:            tools,
-		MCPServers:       mcpServers,
-		SystemPromptFile: strings.TrimSpace(stringArg(args, "system_prompt_file")),
-		ContextLimit:     contextLimit,
-		Compaction:       compaction,
-		CacheRetention:   cacheRetention,
+		Tools:      tools,
+		MCPServers: mcpServers,
+		Native: &nativeBlock{
+			Provider:         provider,
+			Model:            model,
+			BaseURL:          strings.TrimSpace(stringArg(args, "base_url")),
+			APIKeyEnv:        apiKeyEnv,
+			SystemPromptFile: strings.TrimSpace(stringArg(args, "system_prompt_file")),
+			ContextLimit:     contextLimit,
+			Compaction:       compaction,
+			CacheRetention:   cacheRetention,
+		},
 	}, nil
 }
 

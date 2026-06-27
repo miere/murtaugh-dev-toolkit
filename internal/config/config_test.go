@@ -56,7 +56,8 @@ func TestLoadACPConfigFromAgentsFile(t *testing.T) {
   stream_min_chunk_chars: 12
 agents:
   default:
-    command: ls
+    acp:
+      command: ls
 `), 0o644); err != nil {
 		t.Fatalf("write agents config: %v", err)
 	}
@@ -391,7 +392,7 @@ func TestJobValidationAcceptsAgentPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
 	cfg.Jobs = map[string]JobProfile{
 		"review": {Agent: "default", Prompt: "Review PR {{ 1 }}"},
 	}
@@ -405,7 +406,7 @@ func TestJobValidationRejectsCommandAndAgentTogether(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
 	cfg.Jobs = map[string]JobProfile{
 		"both": {Command: "/bin/echo", Agent: "default", Prompt: "hi"},
 	}
@@ -420,7 +421,7 @@ func TestJobValidationRejectsAgentWithoutPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
 	cfg.Jobs = map[string]JobProfile{
 		"no-prompt": {Agent: "default"},
 	}
@@ -458,7 +459,7 @@ func TestParseWorkflowDelegateToAgentTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate returned error: %v", err)
 	}
@@ -483,7 +484,7 @@ func TestParseReplyToSlackDelegateToAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate returned error: %v", err)
 	}
@@ -509,7 +510,7 @@ func TestParseReplyToSlackRejectsTemplateAndDelegate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
 	err = cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "exactly one of template, run, or delegate-to-agent") {
 		t.Fatalf("expected reply-to-slack exclusivity error, got: %v", err)
@@ -529,7 +530,7 @@ func TestParseUnfurlDelegateToAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	cfg.Agents = map[string]AgentProfile{"default": {Command: "/bin/agent"}}
+	cfg.Agents = map[string]AgentProfile{"default": {ACP: &ACPProfile{Command: "/bin/agent"}}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate returned error: %v", err)
 	}
@@ -760,12 +761,12 @@ func TestParseUnfurlRejectsBadRegex(t *testing.T) {
 
 func TestAgentEnvOverridesExpandsAndSorts(t *testing.T) {
 	t.Setenv("MURTAUGH_TEST_HOME", "/home/murtaugh")
-	profile := AgentProfile{Env: map[string]string{
+	profile := AgentProfile{ACP: &ACPProfile{Env: map[string]string{
 		"ZZZ":  "last",
 		"DATA": "${MURTAUGH_TEST_HOME}/data",
 		"AAA":  "first",
 		"":     "skip-blank-key",
-	}}
+	}}}
 	got := profile.EnvOverrides()
 	want := []string{"AAA=first", "DATA=/home/murtaugh/data", "ZZZ=last"}
 	if len(got) != len(want) {
@@ -792,7 +793,7 @@ func channelAgentsValidationConfig(channelAgents map[string]string) Config {
 		OAuth: OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"},
 		ACP:   ACPConfig{Enabled: true},
 		Agents: map[string]AgentProfile{
-			"coding": {Command: "/bin/agent"},
+			"coding": {ACP: &ACPProfile{Command: "/bin/agent"}},
 		},
 		Chat: ChatConfig{DefaultAgent: "coding", ChannelAgents: channelAgents},
 	}
@@ -830,7 +831,7 @@ func TestValidateExportSkillsToFS(t *testing.T) {
 		return Config{
 			OAuth:  OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"},
 			ACP:    ACPConfig{Enabled: true},
-			Agents: map[string]AgentProfile{"coding": {Command: "/bin/agent", ExportSkillsToFS: list}},
+			Agents: map[string]AgentProfile{"coding": {ExportSkillsToFS: list, ACP: &ACPProfile{Command: "/bin/agent"}}},
 			Chat:   ChatConfig{DefaultAgent: "coding"},
 		}
 	}
@@ -859,7 +860,7 @@ func noMentionValidationConfig(perChannel map[string][]string) Config {
 		OAuth: OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"},
 		ACP:   ACPConfig{Enabled: true},
 		Agents: map[string]AgentProfile{
-			"coding": {Command: "/bin/agent"},
+			"coding": {ACP: &ACPProfile{Command: "/bin/agent"}},
 		},
 		Chat: ChatConfig{DefaultAgent: "coding", ChannelDoNotRequireMention: perChannel},
 	}
@@ -890,7 +891,7 @@ func TestValidateRejectsEnvKeyWithEquals(t *testing.T) {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	cfg.Agents = map[string]AgentProfile{
-		"default": {Command: "/bin/agent", Env: map[string]string{"BAD=KEY": "x"}},
+		"default": {ACP: &ACPProfile{Command: "/bin/agent", Env: map[string]string{"BAD=KEY": "x"}}},
 	}
 	err = cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "must not contain '='") {
