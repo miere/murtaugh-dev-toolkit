@@ -457,6 +457,15 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 					h.logger.Warn("agent session cancel on idle timeout failed", "error", cerr, "session_id", sid)
 				}
 				cancel()
+				// Drop the wedged session so the next turn opens a fresh one rather
+				// than reusing a session that may still hold an in-flight tool call —
+				// agents without session/cancel cannot be told to abandon it. The
+				// shared agent process keeps running; only this binding is reset.
+				if d, ok := sessions.(interface {
+					Discard(agent.ConversationKey)
+				}); ok {
+					d.Discard(key)
+				}
 			}
 			if nerr := renderer.Note(ctx, fmt.Sprintf(idleTimeoutNotice, h.effectiveIdleTimeout().Round(time.Second))); nerr != nil {
 				h.logger.Warn("failed to post idle-timeout notice", "error", nerr)

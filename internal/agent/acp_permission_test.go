@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -143,7 +145,10 @@ func TestACPPermissionEmptyPolicyDefaultsToAsk(t *testing.T) {
 }
 
 func TestACPUnhandledAgentRequestRepliesMethodNotFound(t *testing.T) {
-	line := `{"jsonrpc":"2.0","id":5,"method":"fs/read_text_file","params":{}}`
+	// terminal/create is a real ACP method Murtaugh does not serve; it must be
+	// rejected fast so the agent fails instead of blocking on a reply we'd never
+	// send. (fs/* is handled — see the filesystem tests below.)
+	line := `{"jsonrpc":"2.0","id":5,"method":"terminal/create","params":{}}`
 	resp := runAgentRequest(t, ProcessOptions{}, nil, line)
 	errObj, ok := resp["error"].(map[string]any)
 	if !ok {
@@ -151,6 +156,67 @@ func TestACPUnhandledAgentRequestRepliesMethodNotFound(t *testing.T) {
 	}
 	if code, _ := errObj["code"].(float64); int(code) != jsonRPCMethodNotFound {
 		t.Fatalf("expected method-not-found (%d), got %v", jsonRPCMethodNotFound, errObj["code"])
+	}
+}
+
+func TestACPReadTextFileWithinWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("line1\nline2\nline3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"jsonrpc":"2.0","id":7,"method":"fs/read_text_file","params":{"path":"` + filepath.Join(dir, "a.txt") + `"}}`
+	resp := runAgentRequest(t, ProcessOptions{WorkDir: dir}, nil, line)
+	res, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a result, got %v", resp)
+	}
+	if res["content"] != "line1\nline2\nline3\n" {
+		t.Fatalf("unexpected content: %q", res["content"])
+	}
+}
+
+func TestACPReadTextFileHonoursLineAndLimit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("l1\nl2\nl3\nl4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"jsonrpc":"2.0","id":8,"method":"fs/read_text_file","params":{"path":"` + filepath.Join(dir, "a.txt") + `","line":2,"limit":2}}`
+	resp := runAgentRequest(t, ProcessOptions{WorkDir: dir}, nil, line)
+	res := resp["result"].(map[string]any)
+	if res["content"] != "l2\nl3" {
+		t.Fatalf("line/limit window wrong: %q", res["content"])
+	}
+}
+
+func TestACPReadTextFileOutsideWorkDirRejected(t *testing.T) {
+	dir := t.TempDir()
+	// Escape the workdir via the parent — must be refused with invalid-params,
+	// not served, so a read can never exfiltrate host files outside the project.
+	line := `{"jsonrpc":"2.0","id":9,"method":"fs/read_text_file","params":{"path":"` + filepath.Join(dir, "..", "secret.txt") + `"}}`
+	resp := runAgentRequest(t, ProcessOptions{WorkDir: dir}, nil, line)
+	errObj, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected an error response, got %v", resp)
+	}
+	if code, _ := errObj["code"].(float64); int(code) != jsonRPCInvalidParams {
+		t.Fatalf("expected invalid-params (%d), got %v", jsonRPCInvalidParams, errObj["code"])
+	}
+}
+
+func TestACPWriteTextFileWithinWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sub", "out.txt")
+	line := `{"jsonrpc":"2.0","id":10,"method":"fs/write_text_file","params":{"path":"` + target + `","content":"hello"}}`
+	resp := runAgentRequest(t, ProcessOptions{WorkDir: dir}, nil, line)
+	if _, isErr := resp["error"]; isErr {
+		t.Fatalf("write returned an error: %v", resp["error"])
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("file was not written: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Fatalf("unexpected written content: %q", got)
 	}
 }
 

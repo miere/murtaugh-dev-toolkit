@@ -127,3 +127,28 @@ func TestSessionManagerCreatesDistinctSessionsForDistinctThreads(t *testing.T) {
 		t.Fatalf("expected two sessions, got %d", client.sessions.Load())
 	}
 }
+
+func TestSessionManagerDiscardForcesFreshSession(t *testing.T) {
+	client := &fakeClient{}
+	manager := NewSessionManager(client, time.Hour, 10)
+	key := ConversationKey{TeamID: "T1", ChannelID: "C1", ThreadTS: "123.4"}
+
+	prompt := func() {
+		ch, err := manager.Prompt(context.Background(), key, SessionMetadata{}, PromptRequest{Text: "hi"})
+		if err != nil {
+			t.Fatalf("Prompt returned error: %v", err)
+		}
+		for range ch {
+		}
+	}
+
+	prompt()
+	// After discarding the wedged session, the next prompt for the same
+	// conversation must open a brand-new session rather than reuse the old one.
+	manager.Discard(key)
+	prompt()
+
+	if client.sessions.Load() != 2 {
+		t.Fatalf("expected a fresh session after Discard, got %d sessions", client.sessions.Load())
+	}
+}

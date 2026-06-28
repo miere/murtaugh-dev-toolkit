@@ -164,6 +164,19 @@ func (m *SessionManager) Cancel(ctx context.Context, sessionID string) error {
 	return m.client.Cancel(ctx, sessionID)
 }
 
+// Discard forgets the cached session for a conversation so the next prompt opens
+// a fresh session/new instead of reusing it. Used when a turn is abandoned on the
+// idle watchdog: the agent may have left an in-flight tool call wedged in that
+// session (and agents that lack session/cancel cannot be told to drop it), so
+// reusing it risks inheriting the stall. The underlying agent process — shared
+// across every conversation — is left running; only this conversation's binding
+// is reset. No-op when the conversation has no live session.
+func (m *SessionManager) Discard(key ConversationKey) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.sessions, key)
+}
+
 func (m *SessionManager) session(ctx context.Context, key ConversationKey, metadata SessionMetadata) (Session, error) {
 	m.mu.Lock()
 	if session, ok := m.sessions[key]; ok {
