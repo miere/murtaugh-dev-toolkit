@@ -23,6 +23,7 @@ import (
 	slackclient "github.com/miere/murtaugh/internal/slack/client"
 	askbroker "github.com/miere/murtaugh/internal/slack/interaction"
 	"github.com/miere/murtaugh/internal/tools"
+	"github.com/miere/murtaugh/internal/toolset"
 	"github.com/miere/murtaugh/internal/unfurl"
 	"github.com/miere/murtaugh/internal/updates"
 	"github.com/miere/murtaugh/internal/workflow"
@@ -74,6 +75,10 @@ type Gateway struct {
 	// build — without re-reading the full config.
 	chatRouting   config.ChatConfig
 	agentProfiles map[string]config.AgentProfile
+	// agentToolProblems records, per agent, the workdir-rooted tool groups that
+	// were dropped at build time because the agent had no resolvable workspace.
+	// The agent still answers; the startup summary reports each dropped feature.
+	agentToolProblems map[string][]toolset.Problem
 	// cancelGrace is how long the interrupt path waits after asking the
 	// ACP agent to cancel its in-flight prompt before hard-cancelling the
 	// chat goroutine's context. Short enough that the user does not stare
@@ -228,6 +233,10 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 
 	var chat *ChatHandler
 	var sessions map[string]ChatSessionManager
+	// agentToolProblems records tool groups dropped while building each agent (a
+	// degraded feature, not a failed agent) so the startup summary can surface
+	// them in logs and the journal.
+	agentToolProblems := make(map[string][]toolset.Problem)
 	if !cfg.Chat.Enabled {
 		logger.Warn("chat disabled: set chat.enabled: true to enable DM and app_mention replies (delegation still runs)")
 	}
@@ -252,26 +261,38 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 			acpPermissionAsker = askbroker.NewPermissionGate(broker)
 		}
 		for name, profile := range cfg.Agents {
-			// Default an agent's working directory to the workspace (the
-			// config dir, e.g. ~/.config/murtaugh) when it leaves workdir
-			// unset, so agents start where the templates live.
-			agentWorkDir := strings.TrimSpace(profile.WorkDir)
-			if agentWorkDir == "" {
-				agentWorkDir = cfg.BaseDir
+			// Resolve the agent's workspace once (workdir → base dir fallback),
+			// validated here at the build seam. Any workdir-rooted tool that
+			// cannot be rooted is dropped (degraded) rather than failing the
+			// agent; the dropped features are surfaced at startup below.
+			resolved, err := agentbuild.Resolve(name, profile, cfg.BaseDir)
+			if err != nil {
+				logger.Error("agent disabled: could not resolve agent", "agent", name, "kind", profile.ResolvedKind(), "error", err)
+				continue
+			}
+			agentWorkDir := resolved.Dir()
+			if problems := resolved.Problems(); len(problems) > 0 {
+				agentToolProblems[name] = problems
+				for _, p := range problems {
+					logger.Warn("agent tool disabled", "agent", name, "tool", p.Group, "reason", p.Reason)
+				}
 			}
 			// Mirror the bundled skills this agent opted to export into its
 			// workdir so a filesystem-discovering backend can load them; the
 			// default (empty) leaves them in-binary only. Non-fatal: a failure
-			// just means no filesystem skills for this agent.
-			if exported, err := config.ReconcileExportedSkills(agentWorkDir, profile.ExportSkillsToFS); err != nil {
-				logger.Warn("skill export failed", "agent", name, "error", err)
-			} else if len(exported) > 0 {
-				logger.Info("exported bundled skills to workdir", "agent", name, "skills", exported, "dir", filepath.Join(agentWorkDir, ".agents", "skills"))
+			// just means no filesystem skills for this agent. Skipped when the
+			// agent has no workspace (nothing to export into).
+			if agentWorkDir != "" {
+				if exported, err := config.ReconcileExportedSkills(agentWorkDir, profile.ExportSkillsToFS); err != nil {
+					logger.Warn("skill export failed", "agent", name, "error", err)
+				} else if len(exported) > 0 {
+					logger.Info("exported bundled skills to workdir", "agent", name, "skills", exported, "dir", filepath.Join(agentWorkDir, ".agents", "skills"))
+				}
 			}
-			client, err := agentbuild.Client(profile, agentbuild.Deps{
+			client, err := agentbuild.Client(resolved, agentbuild.Deps{
 				Registry:           registry,
 				MCPServers:         cfg.MCPServers,
-				BaseDir:            cfg.BaseDir,
+				WorkspaceDir:       cfg.BaseDir,
 				Logger:             logger.With("agent", name),
 				Approver:           approver,
 				ACPPermissionAsker: acpPermissionAsker,
@@ -369,32 +390,33 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		}
 	}
 	return &Gateway{
-		api:             api,
-		webClient:       api,
-		socket:          socket,
-		now:             time.Now,
-		handler:         NewDefaultSlashCommandHandler(),
-		workflow:        workflow.NewEngine(cfg, workflow.Options{Logger: logger, Delegator: workflowDelegator, Recorder: recorder}),
-		interactions:    broker,
-		bridge:          bridge,
-		chat:            chat,
-		chatSessions:    sessions,
-		chatRouting:     cfg.Chat,
-		agentProfiles:   cfg.Agents,
-		chatWarmTimeout: cfg.Defaults.EffectiveStartupTimeout(),
-		cancelGrace:     cfg.Defaults.EffectiveCancelGracePeriod(),
-		inFlight:        NewInFlightRegistry(),
-		recentEvents:    newEventDedup(0),
-		unfurl:          unfurlHandler,
-		unfurlTimeout:   2 * time.Minute,
-		startupNotifier: startupNotifier,
-		logger:          logger,
-		cfg:             cfg.Access,
-		messaging:       api,
-		scheduledJobs:   cfg.Jobs,
-		recorder:        recorder,
-		botToken:        cfg.OAuth.BotToken,
-		channelCache:    channelCache,
+		api:               api,
+		webClient:         api,
+		socket:            socket,
+		now:               time.Now,
+		handler:           NewDefaultSlashCommandHandler(),
+		workflow:          workflow.NewEngine(cfg, workflow.Options{Logger: logger, Delegator: workflowDelegator, Recorder: recorder}),
+		interactions:      broker,
+		bridge:            bridge,
+		chat:              chat,
+		chatSessions:      sessions,
+		chatRouting:       cfg.Chat,
+		agentProfiles:     cfg.Agents,
+		agentToolProblems: agentToolProblems,
+		chatWarmTimeout:   cfg.Defaults.EffectiveStartupTimeout(),
+		cancelGrace:       cfg.Defaults.EffectiveCancelGracePeriod(),
+		inFlight:          NewInFlightRegistry(),
+		recentEvents:      newEventDedup(0),
+		unfurl:            unfurlHandler,
+		unfurlTimeout:     2 * time.Minute,
+		startupNotifier:   startupNotifier,
+		logger:            logger,
+		cfg:               cfg.Access,
+		messaging:         api,
+		scheduledJobs:     cfg.Jobs,
+		recorder:          recorder,
+		botToken:          cfg.OAuth.BotToken,
+		channelCache:      channelCache,
 		// Captured here so the no-mention check in handleEventsAPI runs without
 		// re-importing the full cfg.
 		noMentionPerChannel: cfg.Chat.NoMention.ByChannel,

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/toolset"
 )
 
 func TestBuildStartupSummary_FlagsUnavailableTargets(t *testing.T) {
@@ -54,6 +55,34 @@ func TestBuildStartupSummary_FlagsUnavailableTargets(t *testing.T) {
 	// default_agent is built → must NOT be a problem.
 	if strings.Contains(joined, "default_agent") {
 		t.Errorf("default_agent is available and should not be flagged; got:\n%s", joined)
+	}
+}
+
+// TestBuildStartupSummary_SurfacesDroppedTools asserts a built (ready) agent that
+// shed a workdir-rooted tool still surfaces the dropped feature as a startup
+// problem — naming the agent and the actual tool — so it lands in the journal and
+// the troubleshoot bundle.
+func TestBuildStartupSummary_SurfacesDroppedTools(t *testing.T) {
+	a := &Gateway{
+		agentProfiles: map[string]config.AgentProfile{
+			"coder": {ACP: &config.ACPProfile{Command: "/x"}},
+		},
+		chatSessions: map[string]ChatSessionManager{"coder": nil}, // built/ready
+		chatRouting:  config.ChatConfig{DefaultAgent: "coder"},
+		agentToolProblems: map[string][]toolset.Problem{
+			"coder": {{Agent: "coder", Group: "attach", Reason: "no workdir is set"}},
+		},
+	}
+
+	s := a.buildStartupSummary()
+
+	joined := strings.Join(s.Problems, "\n")
+	if !strings.Contains(joined, `agent "coder": tool "attach" disabled`) {
+		t.Fatalf("expected a dropped-tool problem naming agent+attach; got:\n%s", joined)
+	}
+	// The agent itself is ready, so it must NOT be flagged as failed-to-build.
+	if strings.Contains(joined, "failed to build") {
+		t.Errorf("a degraded agent must not be reported as failed-to-build; got:\n%s", joined)
 	}
 }
 

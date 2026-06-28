@@ -7,7 +7,18 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/miere/murtaugh/internal/tools"
+	"github.com/miere/murtaugh/internal/tools/files"
 )
+
+// mustRoot builds a *files.Root for tests, failing the test on error.
+func mustRoot(t *testing.T, dir string) *files.Root {
+	t.Helper()
+	r, err := files.NewRoot(dir)
+	if err != nil {
+		t.Fatalf("files.NewRoot(%q): %v", dir, err)
+	}
+	return r
+}
 
 // fakeTool is a minimal tools.Tool for registry-selection tests.
 type fakeTool struct{ name string }
@@ -37,7 +48,7 @@ func newRegistry(toolNames ...string) *tools.Registry {
 
 func TestResolve_RegistrySelectionByNameAndNamespace(t *testing.T) {
 	reg := newRegistry("ping", "slack.send-msg", "slack.fetch-msgs", "jobs.run", "restart")
-	got, err := Resolve([]string{"ping", "slack"}, nil, Deps{Registry: reg})
+	got, _, err := Resolve([]string{"ping", "slack"}, nil, Deps{Registry: reg})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -54,9 +65,12 @@ func TestResolve_RegistrySelectionByNameAndNamespace(t *testing.T) {
 
 func TestResolve_NativeGroups(t *testing.T) {
 	dir := t.TempDir()
-	got, err := Resolve([]string{"files", "terminal", "skills"}, nil, Deps{WorkDir: dir, ManagedSkillsFS: os.DirFS(dir)})
+	got, probs, err := Resolve([]string{"files", "terminal", "skills"}, nil, Deps{Root: mustRoot(t, dir), ManagedSkillsFS: os.DirFS(dir)})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
+	}
+	if len(probs) != 0 {
+		t.Fatalf("expected no problems with a root + skills FS, got %v", probs)
 	}
 	have := names(got)
 	// 4 file tools + terminal + skills = 6
@@ -67,34 +81,54 @@ func TestResolve_NativeGroups(t *testing.T) {
 
 func TestResolve_AttachGroup(t *testing.T) {
 	dir := t.TempDir()
-	got, err := Resolve([]string{"attach"}, nil, Deps{WorkDir: dir})
+	got, probs, err := Resolve([]string{"attach"}, nil, Deps{Root: mustRoot(t, dir)})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
+	}
+	if len(probs) != 0 {
+		t.Fatalf("expected no problems, got %v", probs)
 	}
 	if !names(got)["attach"] {
 		t.Fatalf("expected attach tool, got %v", names(got))
 	}
 }
 
-func TestResolve_MissingWorkdirForFiles(t *testing.T) {
-	if _, err := Resolve([]string{"files"}, nil, Deps{}); err == nil {
-		t.Fatal("expected error when files group requested without a workdir")
+// TestResolve_MissingWorkdirDegrades asserts the decided policy: a workdir-rooted
+// group requested without a Root is DROPPED with a Problem (agent stays alive),
+// not a fatal error. skills with no managed FS degrades the same way.
+func TestResolve_MissingWorkdirDegrades(t *testing.T) {
+	for _, group := range []string{"files", "terminal", "attach"} {
+		got, probs, err := Resolve([]string{group, "ping"}, nil, Deps{AgentName: "coder", RootReason: "no workdir is set", Registry: newRegistry("ping")})
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", group, err)
+		}
+		if len(probs) != 1 || probs[0].Group != group || probs[0].Agent != "coder" {
+			t.Fatalf("%s: expected one Problem naming the group+agent, got %v", group, probs)
+		}
+		if probs[0].Reason != "no workdir is set" {
+			t.Fatalf("%s: expected the supplied RootReason, got %q", group, probs[0].Reason)
+		}
+		if names(got)[group] {
+			t.Fatalf("%s: dropped group must be absent from the toolset, got %v", group, names(got))
+		}
+		if !names(got)["ping"] {
+			t.Fatalf("%s: the rest of the toolset must survive, got %v", group, names(got))
+		}
 	}
-	if _, err := Resolve([]string{"terminal"}, nil, Deps{}); err == nil {
-		t.Fatal("expected error when terminal requested without a workdir")
+	// skills without a managed FS degrades too.
+	_, probs, err := Resolve([]string{"skills"}, nil, Deps{})
+	if err != nil {
+		t.Fatalf("skills: unexpected error: %v", err)
 	}
-	if _, err := Resolve([]string{"attach"}, nil, Deps{}); err == nil {
-		t.Fatal("expected error when attach requested without a workdir")
-	}
-	if _, err := Resolve([]string{"skills"}, nil, Deps{}); err == nil {
-		t.Fatal("expected error when skills requested without a skills_dir")
+	if len(probs) != 1 || probs[0].Group != "skills" {
+		t.Fatalf("skills: expected one skills Problem, got %v", probs)
 	}
 }
 
 func TestResolve_IncludesMCPToolsAndDedupes(t *testing.T) {
 	reg := newRegistry("ping")
 	mcp := []tools.Tool{fakeTool{name: "vaultre__get_contact"}, fakeTool{name: "ping"}}
-	got, err := Resolve([]string{"ping"}, mcp, Deps{Registry: reg})
+	got, _, err := Resolve([]string{"ping"}, mcp, Deps{Registry: reg})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}

@@ -50,7 +50,7 @@ func TestLive_NativeTurn(t *testing.T) {
 			APIKeyEnv: "GEMINI_API_KEY",
 			MaxTurns:  8,
 		},
-	}, BuildDeps{BaseDir: workdir, Logger: logger})
+	}, BuildDeps{WorkspaceDir: workdir, Root: rootFor(t, workdir), Tools: []string{"files", "terminal"}, Logger: logger})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

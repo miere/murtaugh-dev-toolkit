@@ -10,7 +10,24 @@ import (
 	"github.com/miere/murtaugh/internal/agent"
 	"github.com/miere/murtaugh/internal/mcpbridge"
 	"github.com/miere/murtaugh/internal/tools"
+	"github.com/miere/murtaugh/internal/tools/files"
 )
+
+// resolvedFor builds a ResolvedAgent for aggregator tests: a workspace root from
+// dir (nil when dir is empty) and the given effective allowlist. In-package, so
+// it sets the unexported fields directly.
+func resolvedFor(t *testing.T, dir string, toolList ...string) ResolvedAgent {
+	t.Helper()
+	var root *files.Root
+	if dir != "" {
+		r, err := files.NewRoot(dir)
+		if err != nil {
+			t.Fatalf("files.NewRoot(%q): %v", dir, err)
+		}
+		root = r
+	}
+	return ResolvedAgent{name: "test", root: root, tools: toolList}
+}
 
 type fakeTool struct{ name string }
 
@@ -39,7 +56,9 @@ func TestResolveBuiltinsCuratesAndStripsGroups(t *testing.T) {
 	reg := registryWith("ping", "ask", "slack.send-msg", "slack.fetch-msgs", "setup.env", "restart")
 	// Allow a namespace (slack), an exact tool (ask), a curated-out namespace
 	// (setup), and a native-only group (files) that must not synthesize anything.
-	got, err := resolveBuiltins(reg, []string{"ask", "slack", "setup", "files"})
+	// A real workdir is supplied so files survives the seam's prune and we are
+	// genuinely exercising the ACP strip (not the prune).
+	got, err := resolveBuiltins(reg, resolvedFor(t, t.TempDir(), "ask", "slack", "setup", "files"))
 	if err != nil {
 		t.Fatalf("resolveBuiltins: %v", err)
 	}
@@ -63,6 +82,26 @@ func TestResolveBuiltinsCuratesAndStripsGroups(t *testing.T) {
 	}
 }
 
+// TestResolveBuiltinsKeepsAttach is the unit-level guard for the bug: `attach` is
+// workdir-rooted but NOT native-only, so an ACP agent with a workspace must be
+// served the attach tool — while files/terminal/skills stay stripped.
+func TestResolveBuiltinsKeepsAttach(t *testing.T) {
+	reg := registryWith("ask")
+	got, err := resolveBuiltins(reg, resolvedFor(t, t.TempDir(), "ask", "attach", "files", "terminal", "skills"))
+	if err != nil {
+		t.Fatalf("resolveBuiltins: %v", err)
+	}
+	names := toolNames(got)
+	if !slices.Contains(names, "attach") {
+		t.Fatalf("attach must be served to ACP agents, got %v", names)
+	}
+	for _, banned := range []string{"files", "terminal", "skills"} {
+		if slices.Contains(names, banned) {
+			t.Fatalf("native-only group %q must be stripped, got %v", banned, names)
+		}
+	}
+}
+
 func TestBridgeUnsafe(t *testing.T) {
 	for _, n := range []string{"setup", "setup.env", "setup.slack"} {
 		if !bridgeUnsafe(n) {
@@ -79,7 +118,7 @@ func TestBridgeUnsafe(t *testing.T) {
 func TestACPAggregatorRegisterSession(t *testing.T) {
 	reg := registryWith("ask")
 	srv := mcpbridge.NewServer("/tmp/murtaugh-test-agg.sock", nil)
-	aggr, err := newACPAggregator(srv, reg, []string{"ask"}, nil, nil, nil)
+	aggr, err := newACPAggregator(srv, reg, resolvedFor(t, "", "ask"), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("newACPAggregator: %v", err)
 	}
@@ -107,7 +146,7 @@ func TestACPAggregatorToolsetAndClose(t *testing.T) {
 	reg := registryWith("ask", "slack.send-msg")
 	srv := mcpbridge.NewServer("/tmp/murtaugh-test-agg2.sock", nil)
 	// No external MCP servers configured: the toolset is just the built-ins.
-	aggr, err := newACPAggregator(srv, reg, []string{"ask", "slack"}, nil, nil, nil)
+	aggr, err := newACPAggregator(srv, reg, resolvedFor(t, "", "ask", "slack"), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("newACPAggregator: %v", err)
 	}

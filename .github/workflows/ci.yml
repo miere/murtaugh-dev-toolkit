@@ -44,6 +44,12 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Architecture guards
+        # Type-precise go/analysis passes enforcing structural invariants the
+        # compiler can't — e.g. no downstream reads of config.AgentProfile.WorkDir
+        # (the validated-core rule; see specs-wip/017).
+        run: go run ./cmd/archcheck ./...
+
       - name: Build
         run: go build ./...
 

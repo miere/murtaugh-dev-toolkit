@@ -24,6 +24,7 @@ import (
 	"github.com/miere/murtaugh/internal/llm"
 	"github.com/miere/murtaugh/internal/mcpclient"
 	"github.com/miere/murtaugh/internal/tools"
+	"github.com/miere/murtaugh/internal/tools/files"
 	"github.com/miere/murtaugh/internal/tools/skills"
 	"github.com/miere/murtaugh/internal/tools/terminal"
 	"github.com/miere/murtaugh/internal/toolset"
@@ -62,6 +63,7 @@ type Client struct {
 	skillsIndex      string
 	maxTurns         int
 	workDir          string
+	root             *files.Root
 	managedSkillsFS  fs.FS
 	bespokeSkillsDir string
 	registry         *tools.Registry
@@ -97,13 +99,24 @@ type inflight struct {
 
 // BuildDeps carries the shared context Build needs to turn a profile into a
 // live Client: the in-process tool registry (for the `tools:` allowlist), the
-// MCP server definitions to resolve references against, and the config base dir
-// (workdir fallback + skills location).
+// MCP server definitions to resolve references against, the workspace/config dir
+// (persona + system-prompt + skills location), and the agent's already-resolved
+// workspace root and effective allowlist.
 type BuildDeps struct {
 	Registry   *tools.Registry
 	MCPServers map[string]config.MCPServerConfig
-	BaseDir    string
-	Logger     *slog.Logger
+	// WorkspaceDir is the workspace/config root for persona (SOUL.md), the
+	// system-prompt file, and the bespoke-skills dir. It is NOT the agent workdir
+	// (that is Root) — the two were disentangled by the validated-core refactor.
+	WorkspaceDir string
+	// Root is the agent's resolved workspace root (the files/terminal/attach
+	// root and the turn-context cwd). nil means the agent has no workspace; the
+	// workdir-rooted groups were already dropped from Tools upstream.
+	Root *files.Root
+	// Tools is the effective (already-pruned) tool allowlist. Build uses this
+	// rather than profile.Tools so a group dropped at the seam stays dropped.
+	Tools  []string
+	Logger *slog.Logger
 	// Approver gates side-effecting tool calls behind human approval. nil
 	// disables gating — set only on the interactive chat path (the gateway),
 	// never for headless/delegated agents that have no human to ask.
@@ -137,17 +150,19 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 	if contextLimit <= 0 {
 		contextLimit = llm.DefaultContextLimit(family)
 	}
-	systemPrompt, err := resolveSystemPrompt(profile, deps.BaseDir)
+	systemPrompt, err := resolveSystemPrompt(profile, deps.WorkspaceDir)
 	if err != nil {
 		return nil, err
 	}
 	// The shared persona (SOUL.md, set up once for Murtaugh) is prepended to the
 	// static system prompt so it stays in the cacheable prefix. It is the same
 	// persona an ACP agent gets injected, keeping the two backends' voice aligned.
-	systemPrompt = PrependPersona(ReadSoul(deps.BaseDir), systemPrompt)
-	workDir := strings.TrimSpace(profile.WorkDir)
-	if workDir == "" {
-		workDir = deps.BaseDir
+	systemPrompt = PrependPersona(ReadSoul(deps.WorkspaceDir), systemPrompt)
+	// The agent workdir is resolved upstream (the seam) into deps.Root; an absent
+	// root means no workspace (the workdir-rooted tools were already pruned).
+	var workDir string
+	if deps.Root != nil {
+		workDir = deps.Root.Dir()
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -166,10 +181,10 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 	// Managed (murtaugh-*) skills are served from the embedded FS, never disk;
 	// the on-disk dir holds only the user's bespoke skills, layered in.
 	managedSkillsFS := assets.Skills()
-	bespokeSkillsDir := filepath.Join(deps.BaseDir, ".agents", "skills")
+	bespokeSkillsDir := filepath.Join(deps.WorkspaceDir, ".agents", "skills")
 	var skillsIndex string
-	if containsString(profile.Tools, toolset.GroupSkills) {
-		skillsIndex = renderSkillsIndex(managedSkillsFS, bespokeSkillsDir, profile.Tools)
+	if containsString(deps.Tools, toolset.GroupSkills) {
+		skillsIndex = renderSkillsIndex(managedSkillsFS, bespokeSkillsDir, deps.Tools)
 	}
 
 	return &Client{
@@ -180,10 +195,11 @@ func Build(profile config.AgentProfile, deps BuildDeps) (*Client, error) {
 		skillsIndex:      skillsIndex,
 		maxTurns:         n.MaxTurns,
 		workDir:          workDir,
+		root:             deps.Root,
 		managedSkillsFS:  managedSkillsFS,
 		bespokeSkillsDir: bespokeSkillsDir,
 		registry:         deps.Registry,
-		toolAllow:        profile.Tools,
+		toolAllow:        deps.Tools,
 		serverCfgs:       serverCfgs,
 		contextLimit:     contextLimit,
 		compaction:       parseCompaction(n.Compaction),
@@ -207,15 +223,21 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return nil
 	}
 	c.mcp = mcpclient.Open(ctx, c.serverCfgs, c.logger)
-	ts, err := toolset.Resolve(c.toolAllow, c.mcp.Tools(), toolset.Deps{
+	ts, problems, err := toolset.Resolve(c.toolAllow, c.mcp.Tools(), toolset.Deps{
 		Registry:         c.registry,
-		WorkDir:          c.workDir,
+		Root:             c.root,
 		ManagedSkillsFS:  c.managedSkillsFS,
 		BespokeSkillsDir: c.bespokeSkillsDir,
 		TerminalApproval: c.terminalApproval,
 	})
 	if err != nil {
 		return fmt.Errorf("native: resolve toolset: %w", err)
+	}
+	// The toolAllow is already pruned at the build seam, so problems should be
+	// empty here; log any that slip through (belt-and-suspenders) so a dropped
+	// feature is never silent.
+	for _, p := range problems {
+		c.logger.Warn("native agent tool disabled", "tool", p.Group, "reason", p.Reason)
 	}
 	c.loop = NewLoop(c.provider, c.model, ts, c.maxTurns).
 		WithCompaction(c.contextLimit, c.compaction).

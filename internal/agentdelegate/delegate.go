@@ -98,11 +98,20 @@ func (r *Runner) WithBuildContext(registry *tools.Registry, mcpServers map[strin
 // the client's Initialize (ErrorClient) so the factory keeps its no-error
 // signature and the failure surfaces on the same path as a runtime error.
 func (r *Runner) defaultClient(profile config.AgentProfile, logger *slog.Logger) agent.Client {
-	client, err := agentbuild.Client(profile, agentbuild.Deps{
-		Registry:   r.registry,
-		MCPServers: r.mcpServers,
-		BaseDir:    r.baseDir,
-		Logger:     logger,
+	resolved, err := agentbuild.Resolve("", profile, r.baseDir)
+	if err != nil {
+		return agentbuild.ErrorClient(err)
+	}
+	// No startup-routing summary on the headless path; log dropped tools as WARN
+	// so a degraded one-shot agent is still diagnosable.
+	for _, p := range resolved.Problems() {
+		logger.Warn("agent tool disabled", "tool", p.Group, "reason", p.Reason)
+	}
+	client, err := agentbuild.Client(resolved, agentbuild.Deps{
+		Registry:     r.registry,
+		MCPServers:   r.mcpServers,
+		WorkspaceDir: r.baseDir,
+		Logger:       logger,
 	})
 	if err != nil {
 		return agentbuild.ErrorClient(err)

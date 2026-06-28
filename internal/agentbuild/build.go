@@ -10,7 +10,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/miere/murtaugh/internal/agent"
 	"github.com/miere/murtaugh/internal/agent/native"
@@ -21,13 +20,16 @@ import (
 )
 
 // Deps carries the shared context needed to build either backend. Registry and
-// MCPServers are only consulted for native agents; BaseDir is the workdir
-// fallback (both kinds) and the skills/system-prompt-file root (native).
+// MCPServers are only consulted for native agents; WorkspaceDir is the
+// workspace/config root for persona (SOUL.md), the system-prompt file, and the
+// bespoke-skills dir. The agent workdir is NOT here — it is resolved once into
+// the ResolvedAgent passed to Client, so it cannot be re-derived from a raw
+// fallback at this seam.
 type Deps struct {
-	Registry   *tools.Registry
-	MCPServers map[string]config.MCPServerConfig
-	BaseDir    string
-	Logger     *slog.Logger
+	Registry     *tools.Registry
+	MCPServers   map[string]config.MCPServerConfig
+	WorkspaceDir string
+	Logger       *slog.Logger
 	// Approver gates a native agent's side-effecting tool calls behind human
 	// approval. nil disables gating — set only on the interactive chat path,
 	// never for headless/delegated agents. Ignored for ACP agents.
@@ -45,34 +47,35 @@ type Deps struct {
 	Bridge *mcpbridge.Server
 }
 
-// Client builds the backend for profile. It does no network/process I/O — both
-// backends defer that to Initialize.
-func Client(profile config.AgentProfile, deps Deps) (agent.Client, error) {
+// Client builds the backend for a resolved agent. It does no network/process I/O
+// — both backends defer that to Initialize. The agent's workdir is taken from
+// resolved (already validated); deps carries only the workspace/config root and
+// the shared wiring.
+func Client(resolved ResolvedAgent, deps Deps) (agent.Client, error) {
 	logger := deps.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	switch profile.ResolvedKind() {
+	profile := resolved.Profile
+	switch resolved.Kind {
 	case config.AgentKindNative:
 		return native.Build(profile, native.BuildDeps{
-			Registry:   deps.Registry,
-			MCPServers: deps.MCPServers,
-			BaseDir:    deps.BaseDir,
-			Logger:     logger,
-			Approver:   deps.Approver,
+			Registry:     deps.Registry,
+			MCPServers:   deps.MCPServers,
+			WorkspaceDir: deps.WorkspaceDir,
+			Root:         resolved.Root(),
+			Tools:        resolved.Tools(),
+			Logger:       logger,
+			Approver:     deps.Approver,
 		})
 	case config.AgentKindACP:
-		workDir := strings.TrimSpace(profile.WorkDir)
-		if workDir == "" {
-			workDir = deps.BaseDir
-		}
 		var aggregator agent.Aggregator
 		if deps.Bridge != nil {
 			var approver mcp.Approver
 			if deps.Approver != nil {
 				approver = mcpApprover{inner: deps.Approver}
 			}
-			aggr, err := newACPAggregator(deps.Bridge, deps.Registry, profile.Tools, approver, native.MCPServerConfigs(deps.MCPServers), logger)
+			aggr, err := newACPAggregator(deps.Bridge, deps.Registry, resolved, approver, native.MCPServerConfigs(deps.MCPServers), logger)
 			if err != nil {
 				return nil, fmt.Errorf("agentbuild: build ACP aggregator: %w", err)
 			}
@@ -81,7 +84,7 @@ func Client(profile config.AgentProfile, deps Deps) (agent.Client, error) {
 		return agent.NewProcessClient(agent.ProcessOptions{
 			Command:          profile.ACP.Command,
 			Args:             profile.ACP.Args,
-			WorkDir:          workDir,
+			WorkDir:          resolved.Dir(),
 			Env:              profile.EnvOverrides(),
 			Logger:           logger,
 			PermissionPolicy: profile.ResolvedACPPermission(),
@@ -89,10 +92,10 @@ func Client(profile config.AgentProfile, deps Deps) (agent.Client, error) {
 			Aggregator:       aggregator,
 			// Share Murtaugh's persona with the ACP agent (it has no system role of
 			// our making); read from the config/workspace dir where SOUL.md lives.
-			Persona: native.ReadSoul(deps.BaseDir),
+			Persona: native.ReadSoul(deps.WorkspaceDir),
 		}), nil
 	default:
-		return nil, fmt.Errorf("agentbuild: unknown agent kind %q", profile.ResolvedKind())
+		return nil, fmt.Errorf("agentbuild: unknown agent kind %q", resolved.Kind)
 	}
 }
 

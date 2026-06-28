@@ -68,6 +68,11 @@ func (a *Gateway) buildStartupSummary() startupSummary {
 		if chatEnabled && !ready {
 			s.Problems = append(s.Problems, fmt.Sprintf("agent %q is configured but failed to build — it will not answer (check its build error above)", name))
 		}
+		// A built agent may still have shed individual tools (a degraded feature,
+		// not a failed agent). Surface each so it is visible in the journal/bundle.
+		for _, tp := range a.agentToolProblems[name] {
+			s.Problems = append(s.Problems, fmt.Sprintf("agent %q: tool %q disabled — %s", name, tp.Group, tp.Reason))
+		}
 	}
 
 	for _, key := range sortedKeys(a.chatRouting.ChannelAgents) {

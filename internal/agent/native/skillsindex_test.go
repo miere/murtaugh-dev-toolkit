@@ -7,7 +7,19 @@ import (
 	"testing"
 
 	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/tools/files"
 )
+
+// rootFor builds a *files.Root for native Build tests (Build takes the resolved
+// root via BuildDeps, no longer deriving it from profile.WorkDir).
+func rootFor(t *testing.T, dir string) *files.Root {
+	t.Helper()
+	r, err := files.NewRoot(dir)
+	if err != nil {
+		t.Fatalf("files.NewRoot(%q): %v", dir, err)
+	}
+	return r
+}
 
 // writeSkill creates <skillsDir>/<name>/SKILL.md with optional frontmatter.
 func writeSkill(t *testing.T, skillsDir, name, frontmatterName, desc, body string) {
@@ -108,7 +120,7 @@ func TestBuild_AutoLoadsAgentsDoc(t *testing.T) {
 			Model:     "gemini-2.5-pro",
 			APIKeyEnv: "TEST_AGENTS_KEY",
 		},
-	}, BuildDeps{BaseDir: base})
+	}, BuildDeps{WorkspaceDir: base, Root: rootFor(t, work)})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -131,7 +143,7 @@ func TestBuild_NoAgentsDocWhenAbsent(t *testing.T) {
 			Model:     "gemini-2.5-pro",
 			APIKeyEnv: "TEST_AGENTS_KEY2",
 		},
-	}, BuildDeps{BaseDir: base})
+	}, BuildDeps{WorkspaceDir: base, Root: rootFor(t, base)})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -155,7 +167,7 @@ func TestBuild_SkillsIndexGatedByAllowlist(t *testing.T) {
 	}
 
 	// Without "skills" in the allowlist: nothing advertised.
-	cNo, err := Build(profile, BuildDeps{BaseDir: base})
+	cNo, err := Build(profile, BuildDeps{WorkspaceDir: base})
 	if err != nil {
 		t.Fatalf("Build (no skills): %v", err)
 	}
@@ -163,9 +175,9 @@ func TestBuild_SkillsIndexGatedByAllowlist(t *testing.T) {
 		t.Errorf("skills index populated without the skills tool allowlisted: %q", cNo.skillsIndex)
 	}
 
-	// With "skills" allowlisted: the index is populated and lands in the system.
-	profile.Tools = []string{"skills"}
-	cYes, err := Build(profile, BuildDeps{BaseDir: base})
+	// With "skills" allowlisted (the effective allowlist is passed via deps.Tools):
+	// the index is populated and lands in the system.
+	cYes, err := Build(profile, BuildDeps{WorkspaceDir: base, Tools: []string{"skills"}})
 	if err != nil {
 		t.Fatalf("Build (with skills): %v", err)
 	}

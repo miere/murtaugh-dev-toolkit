@@ -13,7 +13,6 @@
 package toolset
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"strings"
@@ -52,12 +51,24 @@ type Deps struct {
 	// Registry holds Murtaugh's in-process tools (slack.*, jobs.*, ping, …).
 	// nil means no registry tools are available (only native + MCP).
 	Registry *tools.Registry
-	// WorkDir roots the files/terminal tools. Required when the allowlist
-	// includes "files" or "terminal".
-	WorkDir string
+	// Root is the agent's already-constructed workspace root, used to build the
+	// workdir-rooted groups (files/terminal/attach). It is resolved and validated
+	// ONCE upstream at the agentbuild seam (never re-derived here), so the
+	// resolver receives a value that cannot be empty by construction. A nil Root
+	// means the agent has no resolvable workspace: each workdir-rooted group it
+	// requested is dropped (a Problem is collected) rather than failing the build.
+	Root *files.Root
+	// AgentName labels the Problems collected for dropped groups. Optional.
+	AgentName string
+	// RootReason is the precise reason Root is nil (e.g. "no workdir is set …" or
+	// `invalid workdir "<dir>": <err>`), supplied by the seam so a dropped-group
+	// Problem reads self-diagnostically. Optional; a generic reason is used when
+	// empty.
+	RootReason string
 	// ManagedSkillsFS is the embedded murtaugh-* skills source the skills tool
 	// serves from (in-binary; never on disk). Required when the allowlist
-	// includes "skills".
+	// includes "skills"; absent ⇒ the skills group is dropped (a Problem), not
+	// fatal.
 	ManagedSkillsFS fs.FS
 	// BespokeSkillsDir is the on-disk directory holding the user's own skills,
 	// layered into the skills tool alongside the managed source. Optional —
@@ -68,6 +79,16 @@ type Deps struct {
 	TerminalApproval terminal.ApprovalPolicy
 }
 
+// Problem records one tool group that could not be built and was dropped, while
+// the agent itself stays alive with the rest of its toolset. It is surfaced at
+// startup (logs + the startup.routing journal event) so a degraded feature is
+// self-diagnosable from a troubleshooting bundle.
+type Problem struct {
+	Agent  string // the agent whose tool was dropped (may be empty on headless paths)
+	Group  string // the dropped group, e.g. "attach" (the actual group, not a proxy)
+	Reason string // precise cause: missing/invalid workdir, or unavailable skills FS
+}
+
 // Resolve builds the toolset for a native agent. allow is the agent's `tools:`
 // allowlist; mcpTools are the already-resolved remote tools from its attached
 // MCP servers (always included). Native groups (files/terminal/skills/attach) are
@@ -76,8 +97,9 @@ type Deps struct {
 // — so "slack" pulls in slack.send-msg, slack.fetch-msgs, … and "ping" pulls in
 // ping. Duplicates (by tool name) are removed, preserving first-seen order:
 // native, then registry (allowlist order), then MCP.
-func Resolve(allow []string, mcpTools []tools.Tool, deps Deps) ([]tools.Tool, error) {
+func Resolve(allow []string, mcpTools []tools.Tool, deps Deps) ([]tools.Tool, []Problem, error) {
 	var out []tools.Tool
+	var problems []Problem
 	seen := make(map[string]bool)
 	add := func(t tools.Tool) {
 		if t == nil || seen[t.Name()] {
@@ -87,24 +109,27 @@ func Resolve(allow []string, mcpTools []tools.Tool, deps Deps) ([]tools.Tool, er
 		out = append(out, t)
 	}
 
-	// Shared read-before-write state across this agent's file tools.
+	// Shared read-before-write state across this agent's file tools; built once,
+	// only when a file tool is actually synthesized.
+	root := deps.Root
 	var readState *files.ReadState
-	var root *files.Root
+	ensureReadState := func() *files.ReadState {
+		if readState == nil {
+			readState = files.NewReadState()
+		}
+		return readState
+	}
 
-	ensureFileRoot := func() error {
-		if root != nil {
-			return nil
+	// dropRooted records that a workdir-rooted group could not be built (no Root)
+	// and was dropped — the agent keeps the rest of its toolset (degrade, not
+	// fail). The seam normally prunes these before we get here; this is the
+	// belt-and-suspenders path that keeps the contract enforced at the leaf.
+	dropRooted := func(group string) {
+		reason := strings.TrimSpace(deps.RootReason)
+		if reason == "" {
+			reason = "no workspace directory is available to root this tool"
 		}
-		if strings.TrimSpace(deps.WorkDir) == "" {
-			return fmt.Errorf("toolset: workdir is required for the %q tool group", GroupFiles)
-		}
-		r, err := files.NewRoot(deps.WorkDir)
-		if err != nil {
-			return fmt.Errorf("toolset: root %q: %w", deps.WorkDir, err)
-		}
-		root = r
-		readState = files.NewReadState()
-		return nil
+		problems = append(problems, Problem{Agent: deps.AgentName, Group: group, Reason: reason})
 	}
 
 	for _, raw := range allow {
@@ -114,29 +139,34 @@ func Resolve(allow []string, mcpTools []tools.Tool, deps Deps) ([]tools.Tool, er
 		}
 		switch entry {
 		case GroupFiles:
-			if err := ensureFileRoot(); err != nil {
-				return nil, err
+			if root == nil {
+				dropRooted(GroupFiles)
+				continue
 			}
-			add(fread.New(root, readState))
-			add(fwrite.New(root, readState))
-			add(fedit.New(root, readState))
+			rs := ensureReadState()
+			add(fread.New(root, rs))
+			add(fwrite.New(root, rs))
+			add(fedit.New(root, rs))
 			add(fls.New(root))
 		case GroupTerminal:
-			if strings.TrimSpace(deps.WorkDir) == "" {
-				return nil, fmt.Errorf("toolset: workdir is required for the %q tool", GroupTerminal)
+			if root == nil {
+				dropRooted(GroupTerminal)
+				continue
 			}
-			add(terminal.NewWithApproval(deps.WorkDir, deps.TerminalApproval))
+			add(terminal.NewWithApproval(root.Dir(), deps.TerminalApproval))
 		case GroupAttach:
 			// attach delivers a workspace file to the user as a reply attachment;
 			// it shares the files tools' root so it cannot exfiltrate host files
 			// outside the agent's workdir.
-			if err := ensureFileRoot(); err != nil {
-				return nil, err
+			if root == nil {
+				dropRooted(GroupAttach)
+				continue
 			}
 			add(attach.New(root))
 		case GroupSkills:
 			if deps.ManagedSkillsFS == nil {
-				return nil, fmt.Errorf("toolset: managed skills FS is required for the %q tool", GroupSkills)
+				problems = append(problems, Problem{Agent: deps.AgentName, Group: GroupSkills, Reason: "managed skills filesystem is unavailable"})
+				continue
 			}
 			// Pass the whole allowlist so the skills tool gates what it lists,
 			// reads, and serves to the same capability set that selects tools.
@@ -151,7 +181,7 @@ func Resolve(allow []string, mcpTools []tools.Tool, deps Deps) ([]tools.Tool, er
 	for _, t := range mcpTools {
 		add(t)
 	}
-	return out, nil
+	return out, problems, nil
 }
 
 // BespokeSkillsFS returns an fs.FS over the on-disk bespoke skills dir, or nil

@@ -40,11 +40,12 @@ type acpAggregator struct {
 }
 
 // newACPAggregator resolves the agent's built-in toolset and records the
-// authoritative external MCP servers to proxy. allow is the agent's tools:
-// allowlist; approver (may be nil) gates side-effecting calls; mcpCfgs is the
-// global, authoritative MCP server set (native.MCPServerConfigs).
-func newACPAggregator(server *mcpbridge.Server, registry *tools.Registry, allow []string, approver mcp.Approver, mcpCfgs []mcpclient.ServerConfig, logger *slog.Logger) (*acpAggregator, error) {
-	ts, err := resolveBuiltins(registry, allow)
+// authoritative external MCP servers to proxy. resolved carries the agent's
+// effective (pruned) allowlist and its workspace Root; approver (may be nil)
+// gates side-effecting calls; mcpCfgs is the global, authoritative MCP server set
+// (native.MCPServerConfigs).
+func newACPAggregator(server *mcpbridge.Server, registry *tools.Registry, resolved ResolvedAgent, approver mcp.Approver, mcpCfgs []mcpclient.ServerConfig, logger *slog.Logger) (*acpAggregator, error) {
+	ts, err := resolveBuiltins(registry, resolved)
 	if err != nil {
 		return nil, err
 	}
@@ -125,17 +126,25 @@ func locationDecorator(meta agent.SessionMetadata) func(context.Context) context
 // excluding the native-only synthesized groups (files/terminal/skills — the
 // agent has its own) and the bridge-unsafe tools (setup.*, which mutate
 // Murtaugh's own configuration and must never be handed to an external agent).
-func resolveBuiltins(registry *tools.Registry, allow []string) ([]tools.Tool, error) {
+// The native-only set is read from toolset.IsNativeOnlyForACP (the single source
+// of truth), so `attach` is NOT stripped — it is served to ACP agents, rooted at
+// the resolved workspace. Any workdir-rooted group whose root could not be built
+// was already pruned by the seam, so it does not reach here.
+func resolveBuiltins(registry *tools.Registry, resolved ResolvedAgent) ([]tools.Tool, error) {
+	allow := resolved.Tools()
 	filtered := make([]string, 0, len(allow))
 	for _, a := range allow {
-		switch strings.TrimSpace(a) {
-		case toolset.GroupFiles, toolset.GroupTerminal, toolset.GroupSkills:
+		if toolset.IsNativeOnlyForACP(strings.TrimSpace(a)) {
 			continue
-		default:
-			filtered = append(filtered, a)
 		}
+		filtered = append(filtered, a)
 	}
-	ts, err := toolset.Resolve(filtered, nil, toolset.Deps{Registry: registry})
+	ts, _, err := toolset.Resolve(filtered, nil, toolset.Deps{
+		Registry:   registry,
+		Root:       resolved.Root(),
+		AgentName:  resolved.Name(),
+		RootReason: resolved.RootReason(),
+	})
 	if err != nil {
 		return nil, err
 	}
