@@ -188,6 +188,7 @@ func (b *Broker) Ask(ctx context.Context, dest Destination, spec PromptSpec) (De
 			ThreadTS:  dest.ThreadTS,
 			Blocks:    blocks,
 		}); err != nil {
+			b.notePromptUndeliverable(api, dest)
 			return Decision{}, fmt.Errorf("interaction: post prompt: %w", err)
 		}
 	} else {
@@ -198,6 +199,7 @@ func (b *Broker) Ask(ctx context.Context, dest Destination, spec PromptSpec) (De
 			Blocks:    blocks,
 		})
 		if err != nil {
+			b.notePromptUndeliverable(api, dest)
 			return Decision{}, fmt.Errorf("interaction: post prompt: %w", err)
 		}
 		postedChannel, postedTS = posted.Channel, posted.TS
@@ -319,15 +321,15 @@ func buildPromptBlocks(corr string, spec PromptSpec) []slackgo.Block {
 	var blocks []slackgo.Block
 	if t := strings.TrimSpace(spec.Title); t != "" {
 		if spec.Markdown {
-			blocks = append(blocks, slackgo.NewMarkdownBlock("", "**"+t+"**"))
+			blocks = append(blocks, slackgo.NewMarkdownBlock("", clampText("**"+t+"**", slackMarkdownBlockLimit)))
 		} else {
-			blocks = append(blocks, slackgo.NewSectionBlock(markdown("*"+t+"*"), nil, nil))
+			blocks = append(blocks, slackgo.NewSectionBlock(markdown(clampText("*"+t+"*", slackSectionTextLimit)), nil, nil))
 		}
 	}
 	if spec.Markdown {
-		blocks = append(blocks, slackgo.NewMarkdownBlock("", spec.Question))
+		blocks = append(blocks, slackgo.NewMarkdownBlock("", clampText(spec.Question, slackMarkdownBlockLimit)))
 	} else {
-		blocks = append(blocks, slackgo.NewSectionBlock(markdown(spec.Question), nil, nil))
+		blocks = append(blocks, slackgo.NewSectionBlock(markdown(clampText(spec.Question, slackSectionTextLimit)), nil, nil))
 	}
 
 	buttons := make([]slackgo.BlockElement, 0, len(spec.Options))
@@ -340,7 +342,7 @@ func buildPromptBlocks(corr string, spec PromptSpec) []slackgo.Block {
 		btn := slackgo.NewButtonBlockElement(
 			fmt.Sprintf("%s%s:%d", ActionPrefix, corr, i),
 			string(value),
-			slackgo.NewTextBlockObject(slackgo.PlainTextType, opt.Label, false, false),
+			slackgo.NewTextBlockObject(slackgo.PlainTextType, clampButtonLabel(opt.Label), false, false),
 		)
 		switch opt.Style {
 		case "primary":
@@ -352,6 +354,67 @@ func buildPromptBlocks(corr string, spec PromptSpec) []slackgo.Block {
 	}
 	blocks = append(blocks, slackgo.NewActionBlock(BlockID, buttons...))
 	return blocks
+}
+
+// Slack's hard limits on the text fields of the blocks a prompt is built from.
+// Exceeding any of them makes chat.postMessage reject the whole message with
+// invalid_blocks — which, on the approval/permission path, the caller reads as
+// "couldn't ask" and denies the tool. The values are agent-supplied (an ACP
+// option name embeds the command/dir; a question echoes the command), so they
+// are of attacker-controlled length and must be clamped before assembly.
+const (
+	slackButtonLabelLimit   = 75    // a button text object (plain_text)
+	slackSectionTextLimit   = 3000  // a section block's text object (mrkdwn/plain_text)
+	slackMarkdownBlockLimit = 12000 // a markdown block's text
+)
+
+// clampText shortens s to limit runes, appending an ellipsis so the truncation is
+// visible. It counts runes (not bytes) so multibyte text isn't cut mid-character.
+func clampText(s string, limit int) string {
+	r := []rune(s)
+	if len(r) <= limit {
+		return s
+	}
+	return string(r[:limit-1]) + "…"
+}
+
+// clampButtonLabel clamps a button label to Slack's limit. The label is
+// display-only: the chosen option's stable ID travels in the button value
+// (clickValue.ID) and is what's returned to the caller, so truncating the label
+// never changes which option a click selects.
+func clampButtonLabel(label string) string { return clampText(label, slackButtonLabelLimit) }
+
+// undeliverableNotice is the plain-text message posted when a prompt could not be
+// delivered. It is deliberately generic — naming no command or path — so it is safe
+// to fall back to a public channel post without leaking what the (possibly private)
+// prompt was about.
+const undeliverableNotice = "⚠️ Couldn't show an approval prompt here, so the action was not run. This is a display issue on our side, not your request — please ask again."
+
+// notePromptUndeliverable makes a posting failure visible instead of letting it
+// become a silent denial: when the prompt itself can't be delivered, the caller
+// still returns "not run", but without this the thread shows nothing and the agent
+// appears to stall. It posts a plain-text notice (no Block Kit — so it can't hit
+// the same rejection that sank the prompt), preferring an ephemeral notice when the
+// prompt was meant to be private and falling back to a channel message otherwise.
+// Best-effort and on a fresh context: the ctx that drove Ask may be the failed one.
+func (b *Broker) notePromptUndeliverable(api slacklib.SlackAPI, dest Destination) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if dest.UserID != "" {
+		if _, err := api.PostEphemeral(ctx, slacklib.PostEphemeralParams{
+			ChannelID: dest.ChannelID,
+			UserID:    dest.UserID,
+			ThreadTS:  dest.ThreadTS,
+			Text:      undeliverableNotice,
+		}); err == nil {
+			return
+		}
+	}
+	_, _ = api.PostMessage(ctx, slacklib.PostMessageParams{
+		ChannelID: dest.ChannelID,
+		ThreadTS:  dest.ThreadTS,
+		Text:      undeliverableNotice,
+	})
 }
 
 func buildOutcomeBlocks(spec PromptSpec, d Decision) []slackgo.Block {

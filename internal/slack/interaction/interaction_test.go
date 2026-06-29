@@ -3,6 +3,7 @@ package interaction
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -234,6 +235,109 @@ func TestBuildPromptBlocks_Markdown(t *testing.T) {
 	plain := buildPromptBlocks("c2", PromptSpec{Question: "Proceed?", Options: []Option{{ID: "y", Label: "Y"}}})
 	if _, ok := plain[0].(*slackgo.SectionBlock); !ok {
 		t.Fatalf("non-markdown question block = %T, want *slackgo.SectionBlock", plain[0])
+	}
+}
+
+// TestBuildPromptBlocks_ClampsLongButtonLabel guards the invalid_blocks bug: an
+// ACP agent can offer an "always allow" option whose name embeds the full command
+// or a long directory, blowing past Slack's 75-char button-text limit and making
+// chat.postMessage reject the whole prompt. The button text must be clamped, while
+// the stable option ID still round-trips through the value untouched.
+func TestBuildPromptBlocks_ClampsLongButtonLabel(t *testing.T) {
+	longLabel := "Yes, and don't ask again for reads in " +
+		"/Users/miere/Library/Mobile Documents/iCloud~md~obsidian/Documents/NurtureCloud/Engineering/NYX-3421"
+	if len([]rune(longLabel)) <= slackButtonLabelLimit {
+		t.Fatalf("test fixture should exceed %d runes, got %d", slackButtonLabelLimit, len([]rune(longLabel)))
+	}
+
+	spec := PromptSpec{Question: "Allow?", Options: []Option{{ID: "allow_always", Label: longLabel}}}
+	blocks := buildPromptBlocks("c1", spec)
+
+	action := blocks[len(blocks)-1].(*slackgo.ActionBlock)
+	btn := action.Elements.ElementSet[0].(*slackgo.ButtonBlockElement)
+
+	if n := len([]rune(btn.Text.Text)); n > slackButtonLabelLimit {
+		t.Fatalf("button text = %d runes, exceeds Slack's %d-char limit: %q", n, slackButtonLabelLimit, btn.Text.Text)
+	}
+	if !strings.HasSuffix(btn.Text.Text, "…") {
+		t.Fatalf("clamped label should end with an ellipsis, got %q", btn.Text.Text)
+	}
+
+	// The click must still resolve to the full ID/label, not the truncated text.
+	var cv clickValue
+	if err := json.Unmarshal([]byte(btn.Value), &cv); err != nil {
+		t.Fatalf("button value not valid clickValue JSON: %v", err)
+	}
+	if cv.ID != "allow_always" || cv.Label != longLabel {
+		t.Fatalf("value must carry the full id/label untruncated, got %+v", cv)
+	}
+
+	// A label within the limit is left exactly as-is.
+	short := buildPromptBlocks("c2", PromptSpec{Question: "Allow?", Options: []Option{{ID: "y", Label: "Yes"}}})
+	shortBtn := short[len(short)-1].(*slackgo.ActionBlock).Elements.ElementSet[0].(*slackgo.ButtonBlockElement)
+	if shortBtn.Text.Text != "Yes" {
+		t.Fatalf("short label should be untouched, got %q", shortBtn.Text.Text)
+	}
+}
+
+// TestBuildPromptBlocks_ClampsLongQuestion guards the same invalid_blocks class
+// on the question text: a section block's text caps at 3000 chars and a markdown
+// block's at 12000. A question echoing a long command must be clamped, not sent
+// whole, on both the plain (section) and Markdown rendering paths.
+func TestBuildPromptBlocks_ClampsLongQuestion(t *testing.T) {
+	section := buildPromptBlocks("c1", PromptSpec{
+		Question: strings.Repeat("x", slackSectionTextLimit+500),
+		Options:  []Option{{ID: "y", Label: "Y"}},
+	})
+	sec, ok := section[0].(*slackgo.SectionBlock)
+	if !ok {
+		t.Fatalf("question block = %T, want *slackgo.SectionBlock", section[0])
+	}
+	if n := len([]rune(sec.Text.Text)); n > slackSectionTextLimit {
+		t.Fatalf("section question = %d runes, exceeds Slack's %d-char limit", n, slackSectionTextLimit)
+	}
+
+	md := buildPromptBlocks("c2", PromptSpec{
+		Question: strings.Repeat("y", slackMarkdownBlockLimit+500),
+		Markdown: true,
+		Options:  []Option{{ID: "y", Label: "Y"}},
+	})
+	mb, ok := md[0].(*slackgo.MarkdownBlock)
+	if !ok {
+		t.Fatalf("question block = %T, want *slackgo.MarkdownBlock", md[0])
+	}
+	if n := len([]rune(mb.Text)); n > slackMarkdownBlockLimit {
+		t.Fatalf("markdown question = %d runes, exceeds Slack's %d-char limit", n, slackMarkdownBlockLimit)
+	}
+}
+
+// TestAsk_PostFailureSurfacesNotice verifies a prompt that can't be posted is made
+// visible (a plain-text, block-free notice) instead of silently becoming a denial
+// with nothing shown in the thread — the failure mode behind the "stopped
+// communicating" cascade.
+func TestAsk_PostFailureSurfacesNotice(t *testing.T) {
+	fake := &slacktest.FakeAPI{PostErr: errors.New("invalid_blocks")}
+	broker := NewWith(fake.LazyClient())
+
+	_, err := broker.Ask(context.Background(), Destination{ChannelID: "C1", ThreadTS: "t1"},
+		PromptSpec{Question: "Allow?", Options: []Option{{ID: "y", Label: "Yes"}}})
+	if err == nil {
+		t.Fatal("Ask should error when the prompt can't be posted")
+	}
+
+	// Two PostMessage calls: the failed prompt, then the plain-text notice.
+	if len(fake.Posted) != 2 {
+		t.Fatalf("expected prompt attempt + fallback notice, got %d posts", len(fake.Posted))
+	}
+	notice := fake.Posted[1]
+	if notice.Text != undeliverableNotice {
+		t.Fatalf("fallback notice text = %q, want the undeliverable notice", notice.Text)
+	}
+	if len(notice.Blocks) != 0 {
+		t.Fatalf("fallback notice must be plain text (no blocks), got %d bytes of blocks", len(notice.Blocks))
+	}
+	if notice.ChannelID != "C1" || notice.ThreadTS != "t1" {
+		t.Fatalf("notice posted to wrong destination: %q / %q", notice.ChannelID, notice.ThreadTS)
 	}
 }
 
