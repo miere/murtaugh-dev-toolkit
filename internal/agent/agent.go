@@ -193,10 +193,17 @@ type PermissionOption struct {
 }
 
 // PermissionRequest is an agent-initiated session/request_permission: the agent is
-// about to use a tool (ToolName) and wants the client to pick one of Options.
+// about to use a tool and wants the client to pick one of Options.
+//
+// ToolKind is the ACP toolCall.kind (e.g. "execute", "edit", "read") — a stable,
+// concise identifier used for the short tool label shown to the human. ToolTitle
+// is the agent's human-readable title for the call (the ACP toolCall.title); for
+// an execute call this is the command line, which the approval prompt renders as a
+// fenced code block.
 type PermissionRequest struct {
 	SessionID string
-	ToolName  string
+	ToolKind  string
+	ToolTitle string
 	Options   []PermissionOption
 }
 

@@ -44,15 +44,23 @@ func (g *PermissionGate) AskPermission(ctx context.Context, loc agent.TurnLocati
 	if len(options) == 0 {
 		return "", nil
 	}
-	tool := req.ToolName
-	if tool == "" {
-		tool = "a tool"
+	// Mirror the native approval gate: name the tool concisely and, when the agent
+	// supplied a title (for an execute call, the command line), render it in a
+	// language-hinted fenced code block via Slack's markdown block — the same
+	// syntax-highlighted treatment the agent's own code output gets — rather than
+	// echoing the whole command inline.
+	name := friendlyToolName(req.ToolKind)
+	detail := strings.TrimRight(req.ToolTitle, "\n")
+	question := fmt.Sprintf("The agent wants to use the `%s` tool. Allow?", name)
+	if detail != "" {
+		question = fmt.Sprintf("The agent wants to use the `%s` tool:\n\n```%s\n%s\n```\n\nAllow?", name, codeLang(name), detail)
 	}
 	decision, err := g.broker.Ask(ctx, Destination{ChannelID: loc.ChannelID, ThreadTS: loc.ThreadTS, UserID: loc.UserID}, PromptSpec{
 		Title:       ":lock: Permission needed",
-		Question:    fmt.Sprintf("The agent wants to use *%s*. Allow?", tool),
+		Question:    question,
+		Markdown:    true,
 		Options:     options,
-		OutcomeText: permissionOutcome(tool, kindByID),
+		OutcomeText: permissionOutcome(name, kindByID),
 	})
 	if err != nil {
 		return "", err
@@ -89,6 +97,23 @@ func permissionOutcome(toolName string, kindByID map[string]string) func(Decisio
 			}
 			return fmt.Sprintf("✓ Tool `%s`: *%s*%s", toolName, label, decidedBy(d.UserID))
 		}
+	}
+}
+
+// friendlyToolName maps an ACP toolCall kind to the short, stable label shown in
+// the permission prompt and its outcome line. The execute kind is surfaced as
+// "terminal" so the ACP gate reads identically to the native one (whose tool is
+// literally named "terminal", and which codeLang keys on for bash highlighting);
+// other known kinds use the kind verbatim, and an empty/unknown kind falls back to
+// a neutral "tool".
+func friendlyToolName(kind string) string {
+	switch k := strings.ToLower(strings.TrimSpace(kind)); k {
+	case "":
+		return "tool"
+	case "execute":
+		return "terminal"
+	default:
+		return k
 	}
 }
 

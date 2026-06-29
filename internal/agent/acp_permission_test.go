@@ -114,7 +114,7 @@ func TestACPPermissionAskRoutesToAsker(t *testing.T) {
 	if asker.loc.ChannelID != "C1" || asker.loc.ThreadTS != "T1" {
 		t.Fatalf("asker got wrong location: %+v", asker.loc)
 	}
-	if asker.req.ToolName != "Edit agents.yaml" || len(asker.req.Options) != 2 {
+	if asker.req.ToolTitle != "Edit agents.yaml" || len(asker.req.Options) != 2 {
 		t.Fatalf("asker got wrong request: %+v", asker.req)
 	}
 	out := outcomeOf(t, resp)
@@ -238,13 +238,16 @@ func TestPickOptionByKind(t *testing.T) {
 }
 
 func TestParsePermissionRequest(t *testing.T) {
-	raw := json.RawMessage(`{"sessionId":"S9","toolCall":{"kind":"execute"},"options":[{"optionId":"o1","name":"Yes","kind":"allow_once"}]}`)
-	sid, tool, opts := parsePermissionRequest(raw)
+	raw := json.RawMessage(`{"sessionId":"S9","toolCall":{"title":"go test ./...","kind":"execute"},"options":[{"optionId":"o1","name":"Yes","kind":"allow_once"}]}`)
+	sid, title, kind, opts := parsePermissionRequest(raw)
 	if sid != "S9" {
 		t.Fatalf("sessionID: got %q", sid)
 	}
-	if tool != "execute" { // falls back to kind when title is absent
-		t.Fatalf("toolName: got %q", tool)
+	if title != "go test ./..." {
+		t.Fatalf("title: got %q", title)
+	}
+	if kind != "execute" {
+		t.Fatalf("kind: got %q", kind)
 	}
 	if len(opts) != 1 || opts[0].ID != "o1" || opts[0].Kind != "allow_once" {
 		t.Fatalf("options: got %+v", opts)
