@@ -2,10 +2,58 @@ package interaction
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/miere/murtaugh/internal/agent"
 )
+
+// TestGateApprover_EphemeralOutcome verifies the full approval experience: with a
+// triggering user on the turn, the prompt is posted ephemerally to that user, and
+// the decision rewrites it (via the click's response_url) to a concise outcome
+// line — approved with a check, denied struck through, both naming the decider.
+func TestGateApprover_EphemeralOutcome(t *testing.T) {
+	cases := []struct {
+		name     string
+		optionID string
+		label    string
+		want     string
+	}{
+		{"approve", "approve", "Approve", "✓ Tool `terminal` approved by <@U1>"},
+		{"deny", "deny", "Deny", "~Tool `terminal` denied by <@U1>~"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			broker, sig := newSignalingBroker(t)
+			ctx := agent.WithTurnLocation(context.Background(), agent.TurnLocation{ChannelID: "C1", ThreadTS: "t1", UserID: "U1"})
+
+			done := make(chan struct{})
+			go func() {
+				NewApprover(broker).Approve(ctx, "terminal", "rm -rf x")
+				close(done)
+			}()
+
+			posted := <-sig.posted
+			if len(sig.Ephemeral) != 1 || sig.Ephemeral[0].UserID != "U1" {
+				t.Fatalf("approval prompt should be ephemeral to the triggering user, got %+v", sig.Ephemeral)
+			}
+			broker.Resolve(corrFromPosted(t, posted), Decision{OptionID: tc.optionID, Label: tc.label, UserID: "U1", ResponseURL: "https://hooks.slack/x"})
+			<-done
+
+			if len(sig.Webhooks) != 1 {
+				t.Fatalf("expected the outcome written once via response_url, got %d", len(sig.Webhooks))
+			}
+			if got := sig.Webhooks[0].Params.Text; got != tc.want {
+				t.Fatalf("outcome text = %q, want %q", got, tc.want)
+			}
+			// Blocks carry the same outcome line (modulo JSON's <,> escaping), so
+			// the rewritten message is button-less and self-describing.
+			if !strings.Contains(string(sig.Webhooks[0].Params.Blocks), "Tool `terminal`") {
+				t.Fatalf("outcome blocks should carry the outcome line, got %s", sig.Webhooks[0].Params.Blocks)
+			}
+		})
+	}
+}
 
 func TestGateApprover_NoLocationProceeds(t *testing.T) {
 	broker, _ := newSignalingBroker(t)

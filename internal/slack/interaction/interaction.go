@@ -44,10 +44,14 @@ const (
 // the watchdog — is the governing bound; on expiry the Decision reports TimedOut.
 const DefaultTimeout = 10 * time.Minute
 
-// Destination is the Slack conversation a prompt is posted to.
+// Destination is the Slack conversation a prompt is posted to. When UserID is
+// set the prompt is posted ephemerally — visible only to that user — instead of
+// to the whole conversation; the outcome is then written back through the click's
+// response_url (an ephemeral message cannot be edited any other way).
 type Destination struct {
 	ChannelID string
 	ThreadTS  string
+	UserID    string
 }
 
 // Option is a single selectable answer, rendered as a button.
@@ -65,6 +69,13 @@ type PromptSpec struct {
 	Question string
 	Options  []Option
 	Timeout  time.Duration
+
+	// OutcomeText, when set, renders the terminal message the prompt is rewritten
+	// to once it resolves (answered, timed out, or cancelled), replacing the
+	// default "<@user> chose *Label*" line. The approval gate uses it to show a
+	// concise "Tool `x` approved/denied by <@user>" instead of echoing the
+	// (code-laden) question. nil falls back to the default renderer.
+	OutcomeText func(Decision) string
 }
 
 // Decision is the outcome of an Ask.
@@ -74,6 +85,10 @@ type Decision struct {
 	UserID    string // who clicked
 	TimedOut  bool   // no response within the timeout
 	Cancelled bool   // the turn was cancelled (interrupt / idle) before a response
+	// ResponseURL is the click's Slack response_url, carried so an ephemeral
+	// prompt can be rewritten to its outcome (chat.update cannot touch it). Empty
+	// on the timeout/cancel paths, where no click ever arrived.
+	ResponseURL string
 }
 
 // Answered reports whether the user actually picked an option.
@@ -154,14 +169,31 @@ func (b *Broker) Ask(ctx context.Context, dest Destination, spec PromptSpec) (De
 		b.mu.Unlock()
 	}()
 
-	posted, err := api.PostMessage(ctx, slacklib.PostMessageParams{
-		ChannelID: dest.ChannelID,
-		Text:      promptFallback(spec),
-		ThreadTS:  dest.ThreadTS,
-		Blocks:    blocks,
-	})
-	if err != nil {
-		return Decision{}, fmt.Errorf("interaction: post prompt: %w", err)
+	var postedChannel, postedTS string
+	if dest.UserID != "" {
+		// Ephemeral: visible only to the triggering user. Slack returns a
+		// timestamp but it is not addressable by chat.update, so the outcome is
+		// written back via the click's response_url (see editOutcome).
+		if postedTS, err = api.PostEphemeral(ctx, slacklib.PostEphemeralParams{
+			ChannelID: dest.ChannelID,
+			UserID:    dest.UserID,
+			Text:      promptFallback(spec),
+			ThreadTS:  dest.ThreadTS,
+			Blocks:    blocks,
+		}); err != nil {
+			return Decision{}, fmt.Errorf("interaction: post prompt: %w", err)
+		}
+	} else {
+		posted, err := api.PostMessage(ctx, slacklib.PostMessageParams{
+			ChannelID: dest.ChannelID,
+			Text:      promptFallback(spec),
+			ThreadTS:  dest.ThreadTS,
+			Blocks:    blocks,
+		})
+		if err != nil {
+			return Decision{}, fmt.Errorf("interaction: post prompt: %w", err)
+		}
+		postedChannel, postedTS = posted.Channel, posted.TS
 	}
 
 	timeout := spec.Timeout
@@ -180,7 +212,7 @@ func (b *Broker) Ask(ctx context.Context, dest Destination, spec PromptSpec) (De
 		decision = Decision{Cancelled: true}
 	}
 
-	b.editOutcome(api, posted.Channel, posted.TS, spec, decision)
+	b.editOutcome(api, dest, postedChannel, postedTS, spec, decision)
 	return decision, nil
 }
 
@@ -208,20 +240,38 @@ func (b *Broker) Resolve(corr string, d Decision) bool {
 // editOutcome rewrites the posted prompt to a terminal, button-less state so the
 // thread shows what happened. Best-effort and on a fresh context: the ctx that
 // drove Ask may already be cancelled on the interrupt path.
-func (b *Broker) editOutcome(api slacklib.SlackAPI, channel, ts string, spec PromptSpec, d Decision) {
-	if channel == "" || ts == "" {
-		return
-	}
+//
+// For an ephemeral prompt (dest.UserID set) the rewrite must go through the
+// click's response_url — chat.update cannot address an ephemeral message. When no
+// click arrived (timeout/cancel) there is no response_url, so the prompt is left
+// as-is; an ephemeral message vanishes on the next reload anyway.
+func (b *Broker) editOutcome(api slacklib.SlackAPI, dest Destination, channel, ts string, spec PromptSpec, d Decision) {
 	blocks, err := json.Marshal(slackgo.Blocks{BlockSet: buildOutcomeBlocks(spec, d)})
 	if err != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	if dest.UserID != "" {
+		if d.ResponseURL == "" {
+			return
+		}
+		_ = api.RespondURL(ctx, d.ResponseURL, slacklib.WebhookParams{
+			Text:            renderOutcomeText(spec, d),
+			Blocks:          blocks,
+			ReplaceOriginal: true,
+		})
+		return
+	}
+
+	if channel == "" || ts == "" {
+		return
+	}
 	_, _ = api.UpdateMessage(ctx, slacklib.UpdateMessageParams{
 		ChannelID: channel,
 		TS:        ts,
-		Text:      outcomeText(spec, d),
+		Text:      renderOutcomeText(spec, d),
 		Blocks:    blocks,
 	})
 }
@@ -253,7 +303,7 @@ func ParseClick(ic slackgo.InteractionCallback) (corr string, d Decision, ok boo
 		corr = correlationFromActionID(a.ActionID)
 		var cv clickValue
 		_ = json.Unmarshal([]byte(a.Value), &cv)
-		return corr, Decision{OptionID: cv.ID, Label: cv.Label, UserID: ic.User.ID}, true
+		return corr, Decision{OptionID: cv.ID, Label: cv.Label, UserID: ic.User.ID, ResponseURL: ic.ResponseURL}, true
 	}
 	return "", Decision{}, false
 }
@@ -290,7 +340,19 @@ func buildPromptBlocks(corr string, spec PromptSpec) []slackgo.Block {
 }
 
 func buildOutcomeBlocks(spec PromptSpec, d Decision) []slackgo.Block {
-	return []slackgo.Block{slackgo.NewSectionBlock(markdown(outcomeText(spec, d)), nil, nil)}
+	return []slackgo.Block{slackgo.NewSectionBlock(markdown(renderOutcomeText(spec, d)), nil, nil)}
+}
+
+// renderOutcomeText picks the caller's custom outcome renderer when the spec
+// supplies one, otherwise the default. A custom renderer that returns "" falls
+// back to the default so the message is never left blank.
+func renderOutcomeText(spec PromptSpec, d Decision) string {
+	if spec.OutcomeText != nil {
+		if s := strings.TrimSpace(spec.OutcomeText(d)); s != "" {
+			return s
+		}
+	}
+	return outcomeText(spec, d)
 }
 
 func outcomeText(spec PromptSpec, d Decision) string {

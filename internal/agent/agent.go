@@ -60,6 +60,12 @@ type PromptRequest struct {
 	Channel string `json:"channel,omitempty"`
 	Thread  string `json:"thread,omitempty"`
 
+	// User is the Slack user who sent the message driving this turn. It rides
+	// alongside Channel/Thread so the native loop can scope an approval prompt
+	// to that one person (an ephemeral message) instead of the whole thread.
+	// Empty for non-chat callers.
+	User string `json:"user,omitempty"`
+
 	// History carries a pre-rendered transcript of the Slack thread that
 	// preceded this prompt. ACP's session/prompt is a single user turn with no
 	// way to replay prior turns, so when a brand-new session is opened for an
@@ -152,9 +158,14 @@ type ConversationKey struct {
 // stashes it on the per-turn context so interactive tools (e.g. `ask`) can post
 // their prompt into the same thread — reliably, without depending on the model to
 // pass the channel/thread as arguments.
+//
+// UserID is the person who triggered this turn. The approval gate uses it to post
+// its confirmation prompt ephemerally — visible only to that user — rather than to
+// the whole conversation. Empty for non-chat callers.
 type TurnLocation struct {
 	ChannelID string
 	ThreadTS  string
+	UserID    string
 }
 
 type turnLocationKey struct{}

@@ -138,6 +138,9 @@ func (m *SessionManager) Prompt(ctx context.Context, key ConversationKey, metada
 	if request.Thread == "" {
 		request.Thread = metadata.ThreadTS
 	}
+	if request.User == "" {
+		request.User = metadata.UserID
+	}
 	return m.client.Prompt(ctx, session.ID, request)
 }
 

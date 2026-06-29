@@ -26,6 +26,15 @@ func (s *signalingAPI) PostMessage(ctx context.Context, p slacklib.PostMessagePa
 	return res, err
 }
 
+// PostEphemeral records the ephemeral post and signals on the same channel
+// (as an equivalent PostMessageParams) so a test can read the correlation id
+// regardless of which transport the broker chose.
+func (s *signalingAPI) PostEphemeral(ctx context.Context, p slacklib.PostEphemeralParams) (string, error) {
+	ts, err := s.FakeAPI.PostEphemeral(ctx, p)
+	s.posted <- slacklib.PostMessageParams{ChannelID: p.ChannelID, ThreadTS: p.ThreadTS, Blocks: p.Blocks}
+	return ts, err
+}
+
 func newSignalingBroker(t *testing.T) (*Broker, *signalingAPI) {
 	t.Helper()
 	sig := &signalingAPI{
@@ -88,6 +97,66 @@ func TestAsk_ResolvedByClick(t *testing.T) {
 	// The prompt is rewritten to a terminal, button-less state.
 	if len(sig.Updated) != 1 {
 		t.Fatalf("expected the prompt to be edited once on resolution, got %d updates", len(sig.Updated))
+	}
+}
+
+// TestAsk_EphemeralUsesResponseURL verifies that a Destination with a UserID
+// posts the prompt ephemerally and writes the outcome back through the click's
+// response_url (chat.update cannot touch an ephemeral message).
+func TestAsk_EphemeralUsesResponseURL(t *testing.T) {
+	broker, sig := newSignalingBroker(t)
+	spec := PromptSpec{Question: "Proceed?", Options: []Option{{ID: "yes", Label: "Yes"}}}
+
+	resultCh := make(chan Decision, 1)
+	go func() {
+		d, err := broker.Ask(context.Background(), Destination{ChannelID: "C1", ThreadTS: "t1", UserID: "U7"}, spec)
+		if err != nil {
+			t.Errorf("Ask error: %v", err)
+		}
+		resultCh <- d
+	}()
+
+	posted := <-sig.posted
+	if len(sig.Ephemeral) != 1 || sig.Ephemeral[0].UserID != "U7" {
+		t.Fatalf("expected one ephemeral post to U7, got %+v", sig.Ephemeral)
+	}
+	if len(sig.Posted) != 0 {
+		t.Fatalf("ephemeral prompt must not post a channel message, got %d", len(sig.Posted))
+	}
+	corr := corrFromPosted(t, posted)
+	broker.Resolve(corr, Decision{OptionID: "yes", Label: "Yes", UserID: "U7", ResponseURL: "https://hooks.slack/x"})
+	<-resultCh
+
+	if len(sig.Webhooks) != 1 {
+		t.Fatalf("expected outcome written via response_url once, got %d", len(sig.Webhooks))
+	}
+	if sig.Webhooks[0].ResponseURL != "https://hooks.slack/x" || !sig.Webhooks[0].Params.ReplaceOriginal {
+		t.Fatalf("outcome should replace the original via the click's response_url, got %+v", sig.Webhooks[0])
+	}
+	if len(sig.Updated) != 0 {
+		t.Fatalf("ephemeral outcome must not use chat.update, got %d", len(sig.Updated))
+	}
+}
+
+// TestAsk_EphemeralTimeoutLeavesPrompt verifies that when an ephemeral prompt
+// times out there is no response_url to write back through, so nothing is edited.
+func TestAsk_EphemeralTimeoutLeavesPrompt(t *testing.T) {
+	fake := &slacktest.FakeAPI{}
+	broker := NewWith(fake.LazyClient())
+
+	d, err := broker.Ask(context.Background(), Destination{ChannelID: "C1", UserID: "U7"}, PromptSpec{
+		Question: "Proceed?",
+		Options:  []Option{{Label: "Yes"}},
+		Timeout:  20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Ask error: %v", err)
+	}
+	if !d.TimedOut {
+		t.Fatalf("expected a timed-out decision, got %+v", d)
+	}
+	if len(fake.Webhooks) != 0 || len(fake.Updated) != 0 {
+		t.Fatalf("a timed-out ephemeral prompt has no response_url to edit through, got webhooks=%d updates=%d", len(fake.Webhooks), len(fake.Updated))
 	}
 }
 

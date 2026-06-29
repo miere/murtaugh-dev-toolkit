@@ -80,6 +80,51 @@ func (c *SlackClient) UpdateMessage(ctx context.Context, p UpdateMessageParams) 
 	return PostMessageResult{Channel: channel, TS: ts}, nil
 }
 
+// PostEphemeral posts a message visible only to p.UserID via chat.postEphemeral.
+// When Blocks is non-empty it's parsed as Block Kit and forwarded alongside Text
+// (the notification/fallback string). Returns the message timestamp; ephemeral
+// messages cannot be edited with chat.update, so callers rewrite them via the
+// interaction response_url (RespondURL).
+func (c *SlackClient) PostEphemeral(ctx context.Context, p PostEphemeralParams) (string, error) {
+	opts := []slackgo.MsgOption{slackgo.MsgOptionText(p.Text, false)}
+	if p.ThreadTS != "" {
+		opts = append(opts, slackgo.MsgOptionTS(p.ThreadTS))
+	}
+	if len(p.Blocks) > 0 {
+		var blocks slackgo.Blocks
+		if err := json.Unmarshal(p.Blocks, &blocks); err != nil {
+			return "", fmt.Errorf("Error parsing blocks JSON: %s", err.Error())
+		}
+		opts = append(opts, slackgo.MsgOptionBlocks(blocks.BlockSet...))
+	}
+	ts, err := c.api.PostEphemeralContext(ctx, p.ChannelID, p.UserID, opts...)
+	if err != nil {
+		return "", slackError("chat.postEphemeral", err)
+	}
+	return ts, nil
+}
+
+// RespondURL POSTs to a Slack interaction response_url. With ReplaceOriginal set
+// it rewrites the message the clicked button belonged to — the only way to edit
+// an ephemeral prompt. Empty Blocks means "text only".
+func (c *SlackClient) RespondURL(ctx context.Context, responseURL string, p WebhookParams) error {
+	msg := &slackgo.WebhookMessage{
+		Text:            p.Text,
+		ReplaceOriginal: p.ReplaceOriginal,
+	}
+	if len(p.Blocks) > 0 {
+		var blocks slackgo.Blocks
+		if err := json.Unmarshal(p.Blocks, &blocks); err != nil {
+			return fmt.Errorf("Error parsing blocks JSON: %s", err.Error())
+		}
+		msg.Blocks = &blocks
+	}
+	if err := slackgo.PostWebhookContext(ctx, responseURL, msg); err != nil {
+		return slackError("response_url", err)
+	}
+	return nil
+}
+
 // OpenView opens a modal via views.open. The trigger_id must come from a fresh
 // user interaction; Slack expires it within a few seconds. The ViewResponse is
 // discarded — only the error matters to callers.

@@ -61,7 +61,7 @@ func (g *GateApprover) Approve(ctx context.Context, toolName, summary string) (b
 	}
 
 	question := fmt.Sprintf("The agent wants to run the `%s` tool:\n```%s```\nApprove?", toolName, summary)
-	decision, err := g.broker.Ask(ctx, Destination{ChannelID: loc.ChannelID, ThreadTS: loc.ThreadTS}, PromptSpec{
+	decision, err := g.broker.Ask(ctx, Destination{ChannelID: loc.ChannelID, ThreadTS: loc.ThreadTS, UserID: loc.UserID}, PromptSpec{
 		Title:    ":lock: Approval needed",
 		Question: question,
 		Options: []Option{
@@ -69,6 +69,7 @@ func (g *GateApprover) Approve(ctx context.Context, toolName, summary string) (b
 			{ID: "approve_always", Label: "Approve & always allow", Style: "primary"},
 			{ID: "deny", Label: "Deny", Style: "danger"},
 		},
+		OutcomeText: approvalOutcome(toolName),
 	})
 	if err != nil {
 		return false, fmt.Sprintf("Skipped: couldn't ask for approval (%v). Not run.", err)
@@ -86,6 +87,33 @@ func (g *GateApprover) Approve(ctx context.Context, toolName, summary string) (b
 	default:
 		return false, "Denied by the user. The action was not run; do not retry it without their go-ahead."
 	}
+}
+
+// approvalOutcome renders the terminal line the approval prompt is rewritten to,
+// keyed by the decision. It is deliberately concise — naming the tool and the
+// decider — rather than echoing the (code-laden) question. A denial is struck
+// through; a timeout/dismissal is reported plainly without a decider.
+func approvalOutcome(toolName string) func(Decision) string {
+	return func(d Decision) string {
+		switch {
+		case d.TimedOut:
+			return fmt.Sprintf(":hourglass_flowing_sand: Tool `%s` approval timed out", toolName)
+		case d.Cancelled:
+			return fmt.Sprintf(":no_entry_sign: Tool `%s` approval dismissed", toolName)
+		case d.OptionID == "deny":
+			return fmt.Sprintf("~Tool `%s` denied%s~", toolName, decidedBy(d.UserID))
+		default: // approve / approve_always
+			return fmt.Sprintf("✓ Tool `%s` approved%s", toolName, decidedBy(d.UserID))
+		}
+	}
+}
+
+// decidedBy renders the " by <@user>" suffix, or "" when the user is unknown.
+func decidedBy(userID string) string {
+	if userID == "" {
+		return ""
+	}
+	return fmt.Sprintf(" by <@%s>", userID)
 }
 
 // isAllowed reports whether key is in the session-scoped always-allow set.

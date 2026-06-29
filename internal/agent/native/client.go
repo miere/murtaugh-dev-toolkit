@@ -307,7 +307,7 @@ func (c *Client) Prompt(ctx context.Context, sessionID string, req agent.PromptR
 	// `ask` tool, and later the approval gate) post into this thread without
 	// relying on the model to pass it. Empty for non-chat callers, which makes
 	// those tools refuse rather than block.
-	runCtx = agent.WithTurnLocation(runCtx, agent.TurnLocation{ChannelID: req.Channel, ThreadTS: req.Thread})
+	runCtx = agent.WithTurnLocation(runCtx, agent.TurnLocation{ChannelID: req.Channel, ThreadTS: req.Thread, UserID: req.User})
 	inf := &inflight{cancel: cancel}
 	c.mu.Lock()
 	c.cancels[sessionID] = inf

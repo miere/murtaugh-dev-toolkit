@@ -24,19 +24,24 @@ type FakeAPI struct {
 	ListUsersErr    error
 	OpenDMErr       error
 
-	Posted   []slacklib.PostMessageParams
-	Updated  []slacklib.UpdateMessageParams
-	Uploaded []slacklib.UploadFileParams
-	Created  []slacklib.CreateChannelParams
+	Posted    []slacklib.PostMessageParams
+	Ephemeral []slacklib.PostEphemeralParams
+	Webhooks  []WebhookCall
+	Updated   []slacklib.UpdateMessageParams
+	Uploaded  []slacklib.UploadFileParams
+	Created   []slacklib.CreateChannelParams
 
-	PostResult   slacklib.PostMessageResult
-	PostErr      error
-	UpdateResult slacklib.PostMessageResult
-	UpdateErr    error
-	UploadResult slacklib.PostMessageResult
-	UploadErr    error
-	CreateResult slacklib.CreateChannelResult
-	CreateErr    error
+	PostResult    slacklib.PostMessageResult
+	PostErr       error
+	EphemeralTS   string
+	EphemeralErr  error
+	RespondURLErr error
+	UpdateResult  slacklib.PostMessageResult
+	UpdateErr     error
+	UploadResult  slacklib.PostMessageResult
+	UploadErr     error
+	CreateResult  slacklib.CreateChannelResult
+	CreateErr     error
 
 	History    []slacklib.Message
 	HistoryErr error
@@ -49,6 +54,12 @@ type FakeAPI struct {
 	OpenedViews  []slackgo.ModalViewRequest
 	OpenTriggers []string
 	OpenViewErr  error
+}
+
+// WebhookCall captures one RespondURL invocation.
+type WebhookCall struct {
+	ResponseURL string
+	Params      slacklib.WebhookParams
 }
 
 // HistoryCall captures one GetHistory invocation.
@@ -69,6 +80,18 @@ type RepliesCall struct {
 func (f *FakeAPI) PostMessage(_ context.Context, p slacklib.PostMessageParams) (slacklib.PostMessageResult, error) {
 	f.Posted = append(f.Posted, p)
 	return f.PostResult, f.PostErr
+}
+
+// PostEphemeral records p and returns the configured timestamp/err.
+func (f *FakeAPI) PostEphemeral(_ context.Context, p slacklib.PostEphemeralParams) (string, error) {
+	f.Ephemeral = append(f.Ephemeral, p)
+	return f.EphemeralTS, f.EphemeralErr
+}
+
+// RespondURL records the call and returns the configured err.
+func (f *FakeAPI) RespondURL(_ context.Context, responseURL string, p slacklib.WebhookParams) error {
+	f.Webhooks = append(f.Webhooks, WebhookCall{ResponseURL: responseURL, Params: p})
+	return f.RespondURLErr
 }
 
 // UploadFile records p and returns the configured result/err.
