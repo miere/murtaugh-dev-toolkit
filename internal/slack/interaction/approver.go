@@ -60,7 +60,10 @@ func (g *GateApprover) Approve(ctx context.Context, toolName, summary string) (b
 		return true, ""
 	}
 
-	question := fmt.Sprintf("The agent wants to run the `%s` tool:\n```%s```\nApprove?", toolName, summary)
+	// The summary (for the terminal tool, the command line) goes in a fenced code
+	// block with the fences on their own lines, so Slack always renders it as a
+	// code block — including multi-line commands — rather than inline.
+	question := fmt.Sprintf("The agent wants to run the `%s` tool:\n```\n%s\n```\nApprove?", toolName, strings.TrimRight(summary, "\n"))
 	decision, err := g.broker.Ask(ctx, Destination{ChannelID: loc.ChannelID, ThreadTS: loc.ThreadTS, UserID: loc.UserID}, PromptSpec{
 		Title:    ":lock: Approval needed",
 		Question: question,
