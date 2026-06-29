@@ -786,8 +786,8 @@ func sliceLines(content string, line, limit *int) string {
 // policy and writes the ACP RequestPermissionResponse. An empty chosen option (no
 // human decision, or no allow/reject option to auto-pick) maps to "cancelled".
 func (c *ProcessClient) handlePermissionRequest(id, params json.RawMessage) {
-	sessionID, toolName, options := parsePermissionRequest(params)
-	optionID := c.decidePermission(sessionID, toolName, options)
+	sessionID, title, kind, options := parsePermissionRequest(params)
+	optionID := c.decidePermission(sessionID, title, kind, options)
 	var outcome map[string]any
 	if optionID == "" {
 		outcome = map[string]any{"outcome": "cancelled"}
@@ -802,7 +802,16 @@ func (c *ProcessClient) handlePermissionRequest(id, params json.RawMessage) {
 // routes to the PermissionAsker in the session's Slack thread. ask with no asker
 // or no known thread denies (returns "") — fail-safe and fast, unlike the hang it
 // replaces.
-func (c *ProcessClient) decidePermission(sessionID, toolName string, options []PermissionOption) string {
+func (c *ProcessClient) decidePermission(sessionID, title, kind string, options []PermissionOption) string {
+	// label is for logging only: the title (command/detail) when present, else the
+	// kind, else a placeholder.
+	label := title
+	if label == "" {
+		label = kind
+	}
+	if label == "" {
+		label = "a tool"
+	}
 	switch strings.ToLower(strings.TrimSpace(c.opts.PermissionPolicy)) {
 	case "auto-allow":
 		return pickOptionByKind(options, "allow")
@@ -810,23 +819,23 @@ func (c *ProcessClient) decidePermission(sessionID, toolName string, options []P
 		return pickOptionByKind(options, "reject")
 	default: // ask
 		if c.opts.PermissionAsker == nil {
-			c.log.Warn("ACP permission request but no human to ask (headless); denying", "tool", toolName, "session_id", sessionID)
+			c.log.Warn("ACP permission request but no human to ask (headless); denying", "tool", label, "session_id", sessionID)
 			return ""
 		}
 		c.mu.Lock()
 		scope, ok := c.dests[sessionID]
 		c.mu.Unlock()
 		if !ok || scope.loc.ChannelID == "" {
-			c.log.Warn("ACP permission request without a Slack location; denying", "tool", toolName, "session_id", sessionID)
+			c.log.Warn("ACP permission request without a Slack location; denying", "tool", label, "session_id", sessionID)
 			return ""
 		}
 		ctx := scope.ctx
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		optionID, err := c.opts.PermissionAsker.AskPermission(ctx, scope.loc, PermissionRequest{SessionID: sessionID, ToolName: toolName, Options: options})
+		optionID, err := c.opts.PermissionAsker.AskPermission(ctx, scope.loc, PermissionRequest{SessionID: sessionID, ToolKind: kind, ToolTitle: title, Options: options})
 		if err != nil {
-			c.log.Warn("ACP permission ask failed; denying", "tool", toolName, "error", err)
+			c.log.Warn("ACP permission ask failed; denying", "tool", label, "error", err)
 			return ""
 		}
 		return optionID
@@ -852,9 +861,12 @@ func pickOptionByKind(options []PermissionOption, want string) string {
 	return ""
 }
 
-// parsePermissionRequest extracts the session id, a human-facing tool name, and the
-// offered options from a session/request_permission params object.
-func parsePermissionRequest(raw json.RawMessage) (sessionID, toolName string, options []PermissionOption) {
+// parsePermissionRequest extracts the session id, the tool call's title and kind,
+// and the offered options from a session/request_permission params object. Title
+// is the agent's human-readable title (for an execute call, the command line);
+// kind is the ACP toolCall.kind. They are kept separate so the prompt can show a
+// concise label and render the command as its own fenced code block.
+func parsePermissionRequest(raw json.RawMessage) (sessionID, title, kind string, options []PermissionOption) {
 	var p struct {
 		SessionID string `json:"sessionId"`
 		ToolCall  struct {
@@ -869,14 +881,12 @@ func parsePermissionRequest(raw json.RawMessage) (sessionID, toolName string, op
 	}
 	_ = json.Unmarshal(raw, &p)
 	sessionID = p.SessionID
-	toolName = p.ToolCall.Title
-	if toolName == "" {
-		toolName = p.ToolCall.Kind
-	}
+	title = p.ToolCall.Title
+	kind = p.ToolCall.Kind
 	for _, o := range p.Options {
 		options = append(options, PermissionOption{ID: o.OptionID, Name: o.Name, Kind: o.Kind})
 	}
-	return sessionID, toolName, options
+	return sessionID, title, kind, options
 }
 
 // respondResult writes a JSON-RPC success response to the agent, echoing id.

@@ -2,6 +2,7 @@ package interaction
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/miere/murtaugh/internal/agent"
@@ -27,7 +28,8 @@ func TestPermissionGate_EphemeralOutcome(t *testing.T) {
 			gate := NewPermissionGate(broker)
 			loc := agent.TurnLocation{ChannelID: "C1", ThreadTS: "t1", UserID: "U1"}
 			req := agent.PermissionRequest{
-				ToolName: "terminal",
+				ToolKind:  "execute", // surfaced to the human as "terminal"
+				ToolTitle: "ls -la",
 				Options: []agent.PermissionOption{
 					{ID: "allow_once", Name: "Allow", Kind: "allow_once"},
 					{ID: "reject_once", Name: "Deny", Kind: "reject_once"},
@@ -43,6 +45,14 @@ func TestPermissionGate_EphemeralOutcome(t *testing.T) {
 			posted := <-sig.posted
 			if len(sig.Ephemeral) != 1 || sig.Ephemeral[0].UserID != "U1" {
 				t.Fatalf("permission prompt should be ephemeral to the triggering user, got %+v", sig.Ephemeral)
+			}
+			// The prompt names the tool concisely (execute → terminal) and renders
+			// the command in a bash-hinted fenced code block rather than inline.
+			if !strings.Contains(string(posted.Blocks), "`terminal`") {
+				t.Fatalf("prompt should name the tool concisely, got %s", posted.Blocks)
+			}
+			if !strings.Contains(string(posted.Blocks), "```bash") || !strings.Contains(string(posted.Blocks), "ls -la") {
+				t.Fatalf("prompt should render the command in a bash code block, got %s", posted.Blocks)
 			}
 			broker.Resolve(corrFromPosted(t, posted), Decision{OptionID: tc.optionID, Label: "x", UserID: "U1", ResponseURL: "https://hooks.slack/x"})
 			<-done
