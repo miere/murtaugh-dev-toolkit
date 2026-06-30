@@ -75,8 +75,13 @@ agents:
 #
 # chat:
 #   enabled: true               # gates DM + @mention replies (delegation runs regardless)
-#   default_agent: default
-#   # dm_agent: default
-#   # channel_agents:
-#   #   C0ENG1: default          # keys are channel IDs (or name globs), not #names
+#   defaults:
+#     agent: default
+#     # dm_agent: default
+#     # reply_on_thread: true    # global reply strategy (default true = threaded)
+#   # channels:                  # keys are channel IDs (or name globs), not #names
+#   #   C0ENG1:
+#   #     agent: default
+#   #   support-*:
+#   #     reply_on_thread: false # reply directly in the channel
 # ---------------------------------------------------------------------------

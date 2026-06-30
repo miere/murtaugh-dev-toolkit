@@ -17,9 +17,14 @@ func TestBuildStartupSummary_FlagsUnavailableTargets(t *testing.T) {
 		// Only "default" built; "broken" failed (absent = not built).
 		chatSessions: map[string]ChatSessionManager{"default": nil},
 		chatRouting: config.ChatConfig{
-			DefaultAgent:  "default",
-			DMAgent:       "support", // configured nowhere → unavailable
-			ChannelAgents: map[string]string{"C0ENG1": "broken", "support-*": "default"},
+			Defaults: config.ChatDefaults{
+				Agent:   "default",
+				DMAgent: "support", // configured nowhere → unavailable
+			},
+			Channels: map[string]config.ChannelConfig{
+				"C0ENG1":    {Agent: "broken"},
+				"support-*": {Agent: "default"},
+			},
 		},
 	}
 
@@ -68,7 +73,7 @@ func TestBuildStartupSummary_SurfacesDroppedTools(t *testing.T) {
 			"coder": {ACP: &config.ACPProfile{Command: "/x"}},
 		},
 		chatSessions: map[string]ChatSessionManager{"coder": nil}, // built/ready
-		chatRouting:  config.ChatConfig{DefaultAgent: "coder"},
+		chatRouting:  config.ChatConfig{Defaults: config.ChatDefaults{Agent: "coder"}},
 		agentToolProblems: map[string][]toolset.Problem{
 			"coder": {{Agent: "coder", Group: "attach", Reason: "no workdir is set"}},
 		},
@@ -92,7 +97,7 @@ func TestBuildStartupSummary_ChatDisabled(t *testing.T) {
 			"default": {Native: &config.NativeProfile{Model: "m"}},
 		},
 		chatSessions: nil, // chat disabled (acp.enabled: false)
-		chatRouting:  config.ChatConfig{DefaultAgent: "default"},
+		chatRouting:  config.ChatConfig{Defaults: config.ChatDefaults{Agent: "default"}},
 	}
 
 	s := a.buildStartupSummary()

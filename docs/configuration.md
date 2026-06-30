@@ -66,7 +66,14 @@ access:
 
 chat:
   enabled: false                  # gate the DM + @mention chat surface
-  default_agent: default          # required when enabled; must exist in agents.yaml
+  defaults:
+    agent: default                # required when enabled; must exist in agents.yaml
+    # dm_agent: support           # optional: a different agent for DMs
+    # reply_on_thread: true       # optional: global reply strategy (default true)
+  # channels:                     # optional: per-channel agent / reply overrides
+  #   feature-*:
+  #     agent: coding
+  #     reply_on_thread: false    # reply in-channel instead of a thread
   no_mention:                     # users who can talk without @mentioning the bot
     everywhere: []
     # by_channel:
@@ -89,8 +96,10 @@ startup and **the gateway refuses to start if any entry can't be resolved**.
 `chat.enabled` controls **only** the Slack chat surface (DM + `@mention`
 replies). Agent delegation from jobs, workflow rules, and unfurls runs whenever
 the target agent is defined, regardless of this flag. When `chat.enabled: true`,
-`chat.default_agent` is required and every routed agent name must exist in
-`agents.yaml` or the gateway won't start.
+`chat.defaults.agent` is required and every routed agent name must exist in
+`agents.yaml` or the gateway won't start. `chat.defaults.reply_on_thread`
+(default `true`) and a per-channel `chat.channels.<k>.reply_on_thread` choose
+whether the bot replies in a thread or directly in the channel.
 
 `no_mention` waives the `@mention` requirement for listed users (a waived user
 must still be in `allowed_users`). `everywhere` applies in every channel;

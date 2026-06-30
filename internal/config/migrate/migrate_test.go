@@ -81,11 +81,13 @@ func TestRunV1MigratesLegacyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(applied) != 1 || applied[0] != 1 {
-		t.Fatalf("applied = %v, want [1]", applied)
+	// A version-0 legacy dir runs the whole chain: v1 (slack.yaml split) then v2
+	// (chat block nesting).
+	if len(applied) != 2 || applied[0] != 1 || applied[1] != 2 {
+		t.Fatalf("applied = %v, want [1 2]", applied)
 	}
-	if Version(dir) != 1 {
-		t.Fatalf("version stamp = %d, want 1", Version(dir))
+	if Version(dir) != CurrentVersion {
+		t.Fatalf("version stamp = %d, want %d", Version(dir), CurrentVersion)
 	}
 
 	// Legacy anchor gone; new files present.
@@ -116,6 +118,10 @@ func TestRunV1MigratesLegacyConfig(t *testing.T) {
 	}
 	if len(cfg.Chat.NoMention.ByChannel["feature-*"]) != 1 {
 		t.Errorf("no_mention.by_channel = %v", cfg.Chat.NoMention.ByChannel)
+	}
+	// v2 nested the flat chat.default_agent under chat.defaults.agent.
+	if cfg.Chat.Defaults.Agent != "default" {
+		t.Errorf("chat.defaults.agent = %q, want default (migrated from default_agent)", cfg.Chat.Defaults.Agent)
 	}
 
 	// defaults fan-out.
@@ -191,8 +197,9 @@ func TestRunFreshDirStampsWithoutMigrating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(applied) != 1 || Version(dir) != 1 {
-		t.Fatalf("expected a no-op stamp to v1, applied=%v version=%d", applied, Version(dir))
+	// Neither v1 nor v2 detects a legacy marker, so both just advance the stamp.
+	if len(applied) != 2 || Version(dir) != CurrentVersion {
+		t.Fatalf("expected no-op stamps through v%d, applied=%v version=%d", CurrentVersion, applied, Version(dir))
 	}
 }
 
@@ -221,5 +228,79 @@ func TestRunRollsBackOnInvalidResult(t *testing.T) {
 	}
 	if Version(dir) != 0 {
 		t.Fatalf("version must remain 0 after rollback, got %d", Version(dir))
+	}
+}
+
+func TestRunV2MigratesChatBlock(t *testing.T) {
+	dir := t.TempDir()
+	// Start already stamped at v1 so only v2 is pending, isolating its transform.
+	if err := Stamp(dir, 1); err != nil {
+		t.Fatalf("stamp v1: %v", err)
+	}
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("gateway.yaml", `oauth:
+  app_token: xapp-test
+  bot_token: xoxb-test
+chat:
+  enabled: true
+  default_agent: default
+  dm_agent: support
+  channel_agents:
+    C0ENG1: coding
+    support-*: support
+  no_mention:
+    everywhere: [U0ALICE00]
+`)
+	write("agents.yaml", "agents:\n  default:\n    acp:\n      command: /x\n")
+
+	applied, err := Run(dir)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(applied) != 1 || applied[0] != 2 {
+		t.Fatalf("applied = %v, want [2]", applied)
+	}
+	if Version(dir) != 2 {
+		t.Fatalf("version stamp = %d, want 2", Version(dir))
+	}
+
+	gw := readYAML(filepath.Join(dir, "gateway.yaml"))
+	chat, _ := asMap(gw["chat"])
+	if chat == nil {
+		t.Fatal("chat block missing after migration")
+	}
+	// The three legacy keys are gone.
+	for _, k := range []string{"default_agent", "dm_agent", "channel_agents"} {
+		if _, ok := chat[k]; ok {
+			t.Errorf("legacy chat.%s should have been removed", k)
+		}
+	}
+	// defaults.{agent,dm_agent} and channels.<k>.agent now carry the routing.
+	defaults, _ := asMap(chat["defaults"])
+	if defaults["agent"] != "default" || defaults["dm_agent"] != "support" {
+		t.Errorf("chat.defaults wrong: %#v", defaults)
+	}
+	channels, _ := asMap(chat["channels"])
+	eng, _ := asMap(channels["C0ENG1"])
+	sup, _ := asMap(channels["support-*"])
+	if eng["agent"] != "coding" || sup["agent"] != "support" {
+		t.Errorf("chat.channels wrong: %#v", channels)
+	}
+	// no_mention is preserved untouched.
+	if nm, _ := asMap(chat["no_mention"]); nm == nil {
+		t.Errorf("chat.no_mention should be preserved: %#v", chat)
+	}
+
+	// Idempotent: a second run finds nothing pending.
+	again, err := Run(dir)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("second Run applied %v, want none", again)
 	}
 }

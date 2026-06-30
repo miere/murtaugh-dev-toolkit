@@ -61,7 +61,7 @@ func (t *Tool) InputSchema() *jsonschema.Schema {
 			"app_token":     {Type: "string", Description: "Slack app-level token (must start with xapp-)."},
 			"bot_token":     {Type: "string", Description: "Slack bot OAuth token (must start with xoxb-)."},
 			"admin_user":    {Type: "string", Description: "Slack admin handle (@name) or user ID (U…)."},
-			"default_agent": {Type: "string", Description: "Optional agents.yaml key wired into chat.default_agent."},
+			"default_agent": {Type: "string", Description: "Optional agents.yaml key wired into chat.defaults.agent."},
 		},
 		Required: []string{"app_token", "bot_token", "admin_user"},
 	}
@@ -100,8 +100,12 @@ type document struct {
 
 type chatBlock struct {
 	// Enabled gates the Slack chat surface; on when a default agent is set.
-	Enabled      bool   `yaml:"enabled"`
-	DefaultAgent string `yaml:"default_agent,omitempty"`
+	Enabled  bool           `yaml:"enabled"`
+	Defaults *defaultsBlock `yaml:"defaults,omitempty"`
+}
+
+type defaultsBlock struct {
+	Agent string `yaml:"agent,omitempty"`
 }
 
 type oauthBlock struct {
@@ -158,7 +162,7 @@ func (t *Tool) Invoke(_ context.Context, args map[string]any) (any, error) {
 	// A configured default agent is what makes the chat surface useful, so
 	// enable it in the same step; with no agent, chat stays off.
 	if da := strings.TrimSpace(defaultAgent); da != "" {
-		doc.Chat.DefaultAgent = da
+		doc.Chat.Defaults = &defaultsBlock{Agent: da}
 		doc.Chat.Enabled = true
 	}
 

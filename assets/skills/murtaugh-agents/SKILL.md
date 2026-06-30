@@ -32,7 +32,7 @@ streaming/timeouts, or understanding the `/chat` and `/stop` behavior.
    means a `native:` sub-block with `provider` + `model` + `api_key_env`; for a
    legacy **ACP** agent it means an `acp:` sub-block with a `command`. →
    `reference/agents-yaml.md`
-2. **`gateway.yaml`** — set `chat.enabled: true` and `chat.default_agent` to one
+2. **`gateway.yaml`** — set `chat.enabled: true` and `chat.defaults.agent` to one
    of those agent names. → `reference/routing.md`
 
 With chat disabled (the default), DMs and mentions are ignored. Note that
@@ -76,11 +76,15 @@ defined, regardless of this flag.
 - **Native agents authenticate via `~/.config/murtaugh/.env`.** The profile names
   the variable with `api_key_env`; write the value there with `setup_env` (see
   the `murtaugh-setup` skill). The key never goes in YAML.
-- **`chat.default_agent` is required when `chat.enabled`** (in `gateway.yaml`) and
+- **`chat.defaults.agent` is required when `chat.enabled`** (in `gateway.yaml`) and
   every routed agent name must exist in `agents.yaml`, or the gateway refuses to
   start (fail-closed).
-- **`channel_agents` is keyed by channel ID** (e.g. `C0ENG1`) or a channel-name
-  glob (`feature-*`), not a `#name`.
+- **`chat.channels` is keyed by channel ID** (e.g. `C0ENG1`) or a channel-name
+  glob (`feature-*`), not a `#name`; each entry sets `agent` and/or
+  `reply_on_thread`.
+- **`reply_on_thread` (global `chat.defaults`, per-channel override) picks
+  thread vs in-channel replies** — default `true` (threaded). `false` replies
+  directly in the channel and treats it as one rolling conversation.
 - **Leave `interruptible` unset** (ACP only) and let Murtaugh probe the agent at
   startup; only pin it (`true`/`false`) when the probe is wrong or you want to
   skip it. Native agents don't probe.

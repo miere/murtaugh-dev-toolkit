@@ -169,7 +169,7 @@ func TestChatHandlerResolvesACPPermissionInOrder(t *testing.T) {
 	asker := &fakePermissionAsker{ret: "a"}
 	f := &fakeChatSessionsWithPermission{gotDecision: make(chan string, 1)}
 	sessions := map[string]ChatSessionManager{"default": f}
-	handler := NewChatHandler(api, sessions, func(ChatRequest) string { return "default" }, time.Hour, 5, nil).
+	handler := NewChatHandler(api, sessions, func(ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }, time.Hour, 5, nil).
 		WithPermissionAsker(asker)
 	if err := handler.Handle(context.Background(), ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", MessageTS: "123.4", Text: "hi", Source: "test"}); err != nil {
 		t.Fatalf("Handle returned error: %v", err)
@@ -208,7 +208,7 @@ func TestChatHandlerResolvesACPPermissionInOrder(t *testing.T) {
 func TestChatHandlerFinalisesRenamedTaskOnSuccess(t *testing.T) {
 	api := &fakeStreamAPI{}
 	sessions := map[string]ChatSessionManager{"default": &fakeChatSessionsRenamedTask{}}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Hour, 5, nil).WithProgressDisplay(tasksProgress)
 	if err := handler.Handle(context.Background(), ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", MessageTS: "123.4", Text: "hi", Source: "test"}); err != nil {
 		t.Fatalf("Handle returned error: %v", err)
@@ -242,7 +242,7 @@ func TestChatHandlerStreamsACPEventsToSlack(t *testing.T) {
 	api := &fakeStreamAPI{}
 	fakeSessions := &fakeChatSessions{}
 	sessions := map[string]ChatSessionManager{"default": fakeSessions}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Hour, 5, nil)
 	err := handler.Handle(context.Background(), ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", MessageTS: "123.4", Text: "hi", Source: "test"})
 	if err != nil {
@@ -275,7 +275,7 @@ func TestChatHandlerRoutesTaskEventsToTaskCardWriter(t *testing.T) {
 	api := &fakeStreamAPI{}
 	fakeSessions := &fakeChatSessionsWithTasks{}
 	sessions := map[string]ChatSessionManager{"default": fakeSessions}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Hour, 5, nil).WithProgressDisplay(tasksProgress)
 	err := handler.Handle(context.Background(), ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", MessageTS: "123.4", Text: "hi", Source: "test"})
 	if err != nil {
@@ -325,7 +325,7 @@ func TestChatHandlerAppendsFinalTextAfterTaskCompletes(t *testing.T) {
 	api := &fakeStreamAPI{}
 	fakeSessions := &fakeChatSessionsWithCompletedTaskThenText{}
 	sessions := map[string]ChatSessionManager{"default": fakeSessions}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Hour, 5, nil).WithProgressDisplay(tasksProgress)
 	err := handler.Handle(context.Background(), ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", MessageTS: "123.4", Text: "hi", Source: "test"})
 	if err != nil {
@@ -385,7 +385,7 @@ func (f *fakeChatSessionsRunningTaskThenComplete) Cancel(context.Context, string
 func TestChatHandlerCompletesStillRunningTasksOnSuccess(t *testing.T) {
 	api := &fakeStreamAPI{}
 	sessions := map[string]ChatSessionManager{"default": &fakeChatSessionsRunningTaskThenComplete{}}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Hour, 5, nil).WithProgressDisplay(tasksProgress)
 	if err := handler.Handle(context.Background(), ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", MessageTS: "123.4", Text: "hi", Source: "test"}); err != nil {
 		t.Fatalf("Handle returned error: %v", err)
@@ -453,7 +453,7 @@ func TestChatHandlerDoesNotFailTasksOnInterrupt(t *testing.T) {
 	api := &fakeStreamAPI{}
 	taskSent := make(chan struct{})
 	sessions := map[string]ChatSessionManager{"default": &cancellableTaskSessions{taskSent: taskSent}}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Millisecond, 1, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -494,7 +494,7 @@ func TestChatHandlerClearsStatusOnFreshContextAfterCancel(t *testing.T) {
 	api := &fakeStreamAPI{rejectCanceledStatus: true}
 	firstChunkSent := make(chan struct{})
 	sessions := map[string]ChatSessionManager{"default": &cancellableChatSessions{firstChunkSent: firstChunkSent}}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Millisecond, 1, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -525,29 +525,72 @@ func TestChatHandlerClearsStatusOnFreshContextAfterCancel(t *testing.T) {
 }
 
 func TestConversationKeyBindsDMToThread(t *testing.T) {
+	// DMs are always threaded (replyOnThread=true).
 	// A top-level DM message roots its own thread, keyed by its MessageTS.
-	root := conversationKey(ChatRequest{TeamID: "T1", ChannelID: "D1", MessageTS: "123.4", DM: true})
+	root := conversationKey(ChatRequest{TeamID: "T1", ChannelID: "D1", MessageTS: "123.4", DM: true}, true)
 	if !root.DM || root.ThreadTS != "123.4" || root.ChannelID != "D1" {
 		t.Fatalf("top-level DM key should bind to its own MessageTS: %#v", root)
 	}
 
 	// A reply inside a DM thread is keyed by that thread's root.
-	reply := conversationKey(ChatRequest{TeamID: "T1", ChannelID: "D1", ThreadTS: "123.4", MessageTS: "999.9", DM: true})
+	reply := conversationKey(ChatRequest{TeamID: "T1", ChannelID: "D1", ThreadTS: "123.4", MessageTS: "999.9", DM: true}, true)
 	if reply != root {
 		t.Fatalf("a DM reply must map to the same key as its thread root: %#v vs %#v", reply, root)
 	}
 
 	// Two distinct DM threads must NOT share a session.
-	other := conversationKey(ChatRequest{TeamID: "T1", ChannelID: "D1", MessageTS: "555.5", DM: true})
+	other := conversationKey(ChatRequest{TeamID: "T1", ChannelID: "D1", MessageTS: "555.5", DM: true}, true)
 	if other == root {
 		t.Fatalf("distinct DM threads must have distinct keys: %#v", other)
 	}
 }
 
-func TestStreamThreadTSUsesMessageTimestampForDM(t *testing.T) {
-	got := streamThreadTS(ChatRequest{ThreadTS: "", MessageTS: "123.4", DM: true})
-	if got != "123.4" {
-		t.Fatalf("unexpected stream thread timestamp: %q", got)
+func TestConversationKeyChannelReplyMode(t *testing.T) {
+	// In channel-reply mode (replyOnThread=false) two top-level channel messages
+	// with DIFFERENT MessageTS bind to the SAME channel-wide session: a single
+	// rolling conversation, not a fresh session per message.
+	a := conversationKey(ChatRequest{TeamID: "T1", ChannelID: "C1", MessageTS: "100.1"}, false)
+	b := conversationKey(ChatRequest{TeamID: "T1", ChannelID: "C1", MessageTS: "200.2"}, false)
+	if a != b {
+		t.Fatalf("channel-reply mode must share one key across messages: %#v vs %#v", a, b)
+	}
+	if a.ThreadTS != "" {
+		t.Fatalf("channel-reply key should have an empty ThreadTS, got %q", a.ThreadTS)
+	}
+
+	// In threaded mode the same two messages root DISTINCT per-thread sessions.
+	ta := conversationKey(ChatRequest{TeamID: "T1", ChannelID: "C1", MessageTS: "100.1"}, true)
+	tb := conversationKey(ChatRequest{TeamID: "T1", ChannelID: "C1", MessageTS: "200.2"}, true)
+	if ta == tb {
+		t.Fatalf("threaded mode must give distinct per-thread keys: %#v", ta)
+	}
+
+	// A message already inside a thread keys to its ThreadTS regardless of mode.
+	inThread := ChatRequest{TeamID: "T1", ChannelID: "C1", ThreadTS: "100.1", MessageTS: "300.3"}
+	if conversationKey(inThread, false) != conversationKey(inThread, true) {
+		t.Fatalf("an in-thread message must key to its thread regardless of reply mode")
+	}
+}
+
+func TestReplyThreadTS(t *testing.T) {
+	cases := []struct {
+		name          string
+		req           ChatRequest
+		replyOnThread bool
+		want          string
+	}{
+		{"in-thread always threaded (off)", ChatRequest{ThreadTS: "111.1", MessageTS: "222.2"}, false, "111.1"},
+		{"in-thread always threaded (on)", ChatRequest{ThreadTS: "111.1", MessageTS: "222.2"}, true, "111.1"},
+		{"top-level threaded roots at message", ChatRequest{MessageTS: "222.2"}, true, "222.2"},
+		{"top-level channel-reply is rootless", ChatRequest{MessageTS: "222.2"}, false, ""},
+		{"DM uses MessageTS", ChatRequest{MessageTS: "123.4", DM: true}, true, "123.4"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := replyThreadTS(tt.req, tt.replyOnThread); got != tt.want {
+				t.Fatalf("replyThreadTS = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -574,7 +617,7 @@ func TestChatHandlerRefreshesAssistantStatusWhileEventsPending(t *testing.T) {
 	release := make(chan struct{})
 	fakeSessions := &blockingChatSessions{release: release}
 	sessions := map[string]ChatSessionManager{"default": fakeSessions}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Hour, 5, nil)
 	handler.statusRefreshInterval = 5 * time.Millisecond
 	done := make(chan error, 1)
@@ -646,7 +689,7 @@ func TestChatHandlerInterruptedByCancelReturnsNil(t *testing.T) {
 	firstChunkSent := make(chan struct{})
 	fakeSessions := &cancellableChatSessions{firstChunkSent: firstChunkSent}
 	sessions := map[string]ChatSessionManager{"default": fakeSessions}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Millisecond, 1, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -681,7 +724,7 @@ func TestChatHandlerInterruptedByCancelReturnsNil(t *testing.T) {
 
 func TestChatHandlerRequiresSourceMessageTimestampForStreaming(t *testing.T) {
 	sessions := map[string]ChatSessionManager{"default": &fakeChatSessions{}}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(&fakeStreamAPI{}, sessions, resolver, time.Hour, 5, nil)
 	err := handler.Handle(context.Background(), ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", Text: "hi", Source: "test"})
 	if err == nil || err.Error() != "Slack streaming requires a source message timestamp" {
@@ -727,7 +770,7 @@ func TestChatHandlerIdleTimeoutStopsAgentAndPostsNotice(t *testing.T) {
 	api := &fakeStreamAPI{}
 	fake := &stallingChatSessions{sessionID: "sess-1"}
 	sessions := map[string]ChatSessionManager{"default": fake}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Hour, 1, nil).WithIdleTimeout(50 * time.Millisecond)
 
 	err := handler.Handle(context.Background(), ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", MessageTS: "123.4", Text: "hi", Source: "test"})
@@ -796,7 +839,7 @@ func TestChatHandlerIdleTimerResetsOnActivity(t *testing.T) {
 	// no single gap approaches the window, so the turn must finish, not time out.
 	fake := &steadyChatSessions{gap: 10 * time.Millisecond, events: 10}
 	sessions := map[string]ChatSessionManager{"default": fake}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Hour, 1, nil).WithIdleTimeout(60 * time.Millisecond)
 
 	err := handler.Handle(context.Background(), ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", MessageTS: "123.4", Text: "hi", Source: "test"})

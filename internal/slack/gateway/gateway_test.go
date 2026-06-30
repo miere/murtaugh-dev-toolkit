@@ -59,7 +59,7 @@ func TestAppMentionEventRoutesToACPChat(t *testing.T) {
 	api := &fakeStreamAPI{}
 	fakeSessions := &fakeChatSessions{}
 	sessions := map[string]ChatSessionManager{"default": fakeSessions}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	app := &Gateway{
 		chat:   NewChatHandler(api, sessions, resolver, time.Hour, 1, nil),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -115,7 +115,7 @@ func TestDuplicateAppMentionStartsChatOnce(t *testing.T) {
 	api := &fakeStreamAPI{}
 	fakeSessions := &countingChatSessions{}
 	sessions := map[string]ChatSessionManager{"default": fakeSessions}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	app := &Gateway{
 		chat:         NewChatHandler(api, sessions, resolver, time.Hour, 1, nil),
 		inFlight:     NewInFlightRegistry(),
@@ -185,7 +185,7 @@ func TestNonInterruptibleAgentDropsFollowUpWhileInFlight(t *testing.T) {
 	msg := &recordingMessaging{}
 	fake := &nonInterruptibleSessions{release: make(chan struct{})}
 	sessions := map[string]ChatSessionManager{"default": fake}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	app := &Gateway{
 		chat:         NewChatHandler(api, sessions, resolver, time.Hour, 1, discardLogger()),
 		chatSessions: sessions,
@@ -200,8 +200,9 @@ func TestNonInterruptibleAgentDropsFollowUpWhileInFlight(t *testing.T) {
 	first := ChatRequest{TeamID: "T1", ChannelID: "C1", UserID: "U1", ThreadTS: "100.0", MessageTS: "1.1", Text: "first", Source: "test"}
 	app.startChat(context.Background(), first)
 
-	// Wait until the first prompt is in flight.
-	key := conversationKey(first)
+	// Wait until the first prompt is in flight. first carries a ThreadTS, so the
+	// key is the same regardless of the reply mode.
+	key := conversationKey(first, true)
 	deadline := time.After(time.Second)
 	for !(fake.count() == 1 && app.inFlight.Active(key)) {
 		select {

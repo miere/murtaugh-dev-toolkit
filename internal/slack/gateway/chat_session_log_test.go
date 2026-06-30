@@ -36,7 +36,7 @@ func newLoggingHandler(t *testing.T, rec journal.Recorder, blobDir string, sessi
 	t.Helper()
 	sl := newSessionLogger(rec, blobDir, discardLogger())
 	return NewChatHandler(&fakeStreamAPI{}, map[string]ChatSessionManager{"default": sessions},
-		func(ChatRequest) string { return "default" }, time.Hour, 1, discardLogger()).WithSessionLogger(sl)
+		func(ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }, time.Hour, 1, discardLogger()).WithSessionLogger(sl)
 }
 
 func TestChatHandlerRecordsCompletedTurn(t *testing.T) {
@@ -115,7 +115,7 @@ func TestChatHandlerSurfacesEmptyReplyWithStopReason(t *testing.T) {
 	}}
 	api := &fakeStreamAPI{}
 	handler := NewChatHandler(api, map[string]ChatSessionManager{"default": sessions},
-		func(ChatRequest) string { return "default" }, time.Hour, 1, discardLogger()).
+		func(ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }, time.Hour, 1, discardLogger()).
 		WithSessionLogger(newSessionLogger(rec, blobDir, discardLogger()))
 
 	if err := handler.Handle(context.Background(), ChatRequest{ChannelID: "C1", MessageTS: "1.1", Text: "why is it broken?", Source: "dm"}); err != nil {
@@ -149,7 +149,7 @@ func TestChatHandlerNoSessionLogIsNoop(t *testing.T) {
 	// Without a session logger, Handle must work and record nothing.
 	sessions := scriptedSessions{id: "s", events: []agent.Event{{Type: agent.EventText, Text: "hi"}, {Type: agent.EventComplete}}}
 	handler := NewChatHandler(&fakeStreamAPI{}, map[string]ChatSessionManager{"default": sessions},
-		func(ChatRequest) string { return "default" }, time.Hour, 1, discardLogger())
+		func(ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }, time.Hour, 1, discardLogger())
 	if err := handler.Handle(context.Background(), ChatRequest{ChannelID: "C1", MessageTS: "1.1", Text: "hi", Source: "test"}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}

@@ -26,7 +26,7 @@ import (
 const schemaVersionFile = ".schema_version"
 
 // CurrentVersion is the schema version this binary expects on disk.
-const CurrentVersion = 1
+const CurrentVersion = 2
 
 // Migration is one ordered, idempotent transform of a config directory.
 type Migration struct {
@@ -48,6 +48,12 @@ var registry = []Migration{
 		Description: "split slack.yaml into gateway.yaml + rule files; group agents.yaml defaults; nest agent backends",
 		Detect:      detectV1,
 		Apply:       applyV1,
+	},
+	{
+		Version:     2,
+		Description: "nest chat routing: default_agent/dm_agent → chat.defaults; channel_agents → chat.channels.<k>.agent",
+		Detect:      detectV2,
+		Apply:       applyV2,
 	},
 }
 

@@ -309,25 +309,35 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 
 		// The resolver runs on the Slack socket goroutine, so it must not do any
 		// Slack API I/O: channel→agent routing consults the in-memory
-		// channelCache (ID→name) and the pure matchChannelAgent matcher. A name
+		// channelCache (ID→name) and the pure matchChannel matcher. A name
 		// the cache has not learned yet (a brand-new channel) falls back to the
 		// default agent and triggers a non-blocking refresh so the NEXT message
 		// can match by name.
-		resolver := func(req ChatRequest) string {
+		resolver := func(req ChatRequest) ChatRoute {
+			def := cfg.Chat.Defaults
 			if req.DM {
-				if cfg.Chat.DMAgent != "" {
-					return cfg.Chat.DMAgent
+				agent := def.DMAgent
+				if agent == "" {
+					agent = def.Agent
 				}
-				return cfg.Chat.DefaultAgent
+				// DMs live in the assistant pane, which is inherently threaded, so
+				// the reply strategy does not apply to them.
+				return ChatRoute{Agent: agent, ReplyOnThread: true}
 			}
 			channelName, known := channelCache.nameFor(req.ChannelID)
 			if !known {
 				channelCache.refreshAsync(context.Background())
 			}
-			if agent, ok := matchChannelAgent(req.ChannelID, channelName, cfg.Chat.ChannelAgents); ok {
-				return agent
+			route := ChatRoute{Agent: def.Agent, ReplyOnThread: def.EffectiveReplyOnThread()}
+			if cc, ok := matchChannel(req.ChannelID, channelName, cfg.Chat.Channels); ok {
+				if cc.Agent != "" {
+					route.Agent = cc.Agent
+				}
+				if cc.ReplyOnThread != nil {
+					route.ReplyOnThread = *cc.ReplyOnThread
+				}
 			}
-			return cfg.Chat.DefaultAgent
+			return route
 		}
 
 		// Record chat turns to the acp_session stream only when it is enabled,
@@ -1242,17 +1252,19 @@ const followUpDeferredText = ":hourglass_flowing_sand: Still working on your pre
 // follow-up was dropped (non-interruptible agent, response in flight) is not
 // left wondering why nothing happened. Failures are logged, never propagated;
 // a missing messaging surface (CLI/MCP, some tests) makes this a no-op.
-func (a *Gateway) notifyFollowUpDeferred(parent context.Context, req ChatRequest) {
+func (a *Gateway) notifyFollowUpDeferred(parent context.Context, req ChatRequest, replyOnThread bool) {
 	if a.messaging == nil {
 		return
 	}
-	threadTS := streamThreadTS(req)
-	if threadTS == "" {
-		return
-	}
+	threadTS := replyThreadTS(req, replyOnThread)
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
-	options := []slack.MsgOption{slack.MsgOptionText(followUpDeferredText, false), slack.MsgOptionTS(threadTS)}
+	// In channel-reply mode threadTS is empty: post the note at the channel root
+	// (no MsgOptionTS) so it still lands where the conversation is happening.
+	options := []slack.MsgOption{slack.MsgOptionText(followUpDeferredText, false)}
+	if threadTS != "" {
+		options = append(options, slack.MsgOptionTS(threadTS))
+	}
 	if _, _, err := a.messaging.PostMessageContext(ctx, req.ChannelID, options...); err != nil {
 		a.logger.Warn("failed to post follow-up deferred note", "channel", req.ChannelID, "thread_ts", threadTS, "error", err)
 	}
@@ -1269,11 +1281,16 @@ func (a *Gateway) notifyFollowUpDeferred(parent context.Context, req ChatRequest
 // "_interrupted_" rather than vanish, which is what ChatHandler.Handle
 // renders when it sees context.Canceled (vs DeadlineExceeded).
 func (a *Gateway) startChat(parent context.Context, req ChatRequest) {
-	key := conversationKey(req)
-	agent := ""
+	// Resolve the route once so session binding, interrupt bookkeeping, and any
+	// deferred-follow-up note all agree on the agent and reply strategy. A nil
+	// resolver (chat disabled / some tests) defaults to threaded, matching the
+	// historical behaviour.
+	route := ChatRoute{ReplyOnThread: true}
 	if a.chat != nil && a.chat.resolver != nil {
-		agent = a.chat.resolver(req)
+		route = a.chat.resolver(req)
 	}
+	agent := route.Agent
+	key := conversationKey(req, route.ReplyOnThread)
 	// When the agent cannot be interrupted (session/cancel unsupported), a
 	// follow-up must neither cancel the in-flight response (the cancel is a
 	// no-op at the agent and only yields a misleading "_interrupted_") nor run
@@ -1281,7 +1298,7 @@ func (a *Gateway) startChat(parent context.Context, req ChatRequest) {
 	// drop the follow-up.
 	if !a.agentInterruptible(agent) && a.inFlight.Active(key) {
 		a.logger.Info("ignoring follow-up while a response is in flight; agent is not interruptible", "channel", req.ChannelID, "thread_ts", key.ThreadTS, "agent", agent)
-		a.notifyFollowUpDeferred(parent, req)
+		a.notifyFollowUpDeferred(parent, req, route.ReplyOnThread)
 		return
 	}
 	// No total wall-clock deadline here: a turn is bounded by inactivity inside

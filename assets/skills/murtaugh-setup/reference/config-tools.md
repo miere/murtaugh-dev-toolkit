@@ -40,7 +40,7 @@ Returns a report of which files were **created**, **updated** (refreshed), and
 | `app_token` | yes | Slack app-level token; must start with `xapp-`. |
 | `bot_token` | yes | Slack bot token; must start with `xoxb-`. |
 | `admin_user` | yes | Admin handle (`@name`) or user ID (`U…`); written under `access.admin_user`. |
-| `default_agent` | no | Agent name to wire into `chat.default_agent`. |
+| `default_agent` | no | Agent name to wire into `chat.defaults.agent`. |
 
 Validates the token prefixes, writes `gateway.yaml` at `0600`, and backs up any
 existing file. The tool name is still `setup_slack` (CLI `setup slack`); it just
@@ -115,7 +115,7 @@ Writes the `defaults:` runtime block with tuned defaults plus the agent profile
 (`0600`, backs up existing). The profile is a tagged union — the backend is the
 sub-block written (`native:` or `acp:`), there is no `kind:` key in the YAML. To
 enable the chat surface you still need `chat.enabled: true` and
-`chat.default_agent` in `gateway.yaml` (see the `murtaugh-agents` skill);
+`chat.defaults.agent` in `gateway.yaml` (see the `murtaugh-agents` skill);
 delegation (jobs, workflow rules, unfurls) runs whenever the agent is defined,
 regardless of that gate.
 

@@ -137,7 +137,8 @@ access:
 
 chat:
   enabled: true                   # gate the DM + @mention chat surface
-  default_agent: default          # must name an agent in agents.yaml
+  defaults:
+    agent: default                # must name an agent in agents.yaml
 ```
 
 `admin_user` may be a handle (with or without `@`) or a user ID. On startup

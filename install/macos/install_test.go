@@ -176,8 +176,8 @@ func TestInstallerConfiguresAuggieAndBacksUpMCPSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read gateway.yaml: %v", err)
 	}
-	if !strings.Contains(string(slackData), "default_agent: default") {
-		t.Fatalf("gateway.yaml missing default_agent:\n%s", slackData)
+	if !strings.Contains(string(slackData), "agent: default") {
+		t.Fatalf("gateway.yaml missing chat.defaults.agent:\n%s", slackData)
 	}
 
 	if _, err := os.Stat(filepath.Join(home, "Library", "LaunchAgents", "dev.murtaugh.plist")); err != nil {
@@ -263,8 +263,8 @@ func TestInstallerConfiguresNativeAgent(t *testing.T) {
 	if strings.Contains(slackText, "test-gemini-key-123") || strings.Contains(slackText, "xapp-test-token") {
 		t.Fatalf("a secret leaked into gateway.yaml:\n%s", slackText)
 	}
-	if !strings.Contains(slackText, "default_agent: default") {
-		t.Fatalf("gateway.yaml missing default_agent:\n%s", slackText)
+	if !strings.Contains(slackText, "agent: default") {
+		t.Fatalf("gateway.yaml missing chat.defaults.agent:\n%s", slackText)
 	}
 	// Slack tokens also went to .env.
 	if !strings.Contains(envText, "SLACK_APP_TOKEN=xapp-test-token") {

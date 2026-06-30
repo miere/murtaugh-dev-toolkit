@@ -200,8 +200,9 @@ defaults, mutual exclusions, the boolean-needs-a-value CLI quirk, examples).
   `oauth.bot_token`) loaded from `slack.yaml`.
 - `Configuration` — runtime Slack settings (`configuration.admin_user`,
   `configuration.debug`) loaded from `slack.yaml`.
-- `Chat` — routing fields (`chat.default_agent`, `chat.dm_agent`,
-  `chat.channel_agents`) loaded from `slack.yaml`.
+- `Chat` — routing fields (`chat.defaults.agent`, `chat.defaults.dm_agent`,
+  `chat.defaults.reply_on_thread`, `chat.channels.<k>.{agent,reply_on_thread}`)
+  loaded from `gateway.yaml`.
 - `ACP` (`yaml:"-"`) — timeout and streaming knobs loaded from `agents.yaml`.
 - `Agents` (`yaml:"-"`) — map of agent profiles loaded from `agents.yaml`.
 - `Commands` — registered slash commands (names must start with `/`).
@@ -213,11 +214,14 @@ defaults, mutual exclusions, the boolean-needs-a-value CLI quirk, examples).
 ACP settings and agent profiles are defined in `agents.yaml`. Murtaugh routes
 chat requests to agents based on the `chat` config in `slack.yaml`:
 
-1.  **Direct Messages**: Use `chat.dm_agent` if set, otherwise `chat.default_agent`.
-2.  **Channels**: Use `chat.channel_agents[channel_id]` if set, otherwise
-    `chat.default_agent`.
+1.  **Direct Messages**: Use `chat.defaults.dm_agent` if set, otherwise
+    `chat.defaults.agent`.
+2.  **Channels**: Use the matching `chat.channels.<k>.agent` if set, otherwise
+    `chat.defaults.agent`. The matched entry's `reply_on_thread` (falling back to
+    `chat.defaults.reply_on_thread`, default `true`) decides whether the reply is
+    threaded or posted directly in the channel.
 
-`chat.default_agent` is required when `acp.enabled: true`.
+`chat.defaults.agent` is required when `chat.enabled: true`.
 
 `Load` → `Parse` → load `agents.yaml` / `jobs.yaml` → `Validate()`. Validation
 covers required Slack tokens, slash-command name prefixes, ACP durations, agent

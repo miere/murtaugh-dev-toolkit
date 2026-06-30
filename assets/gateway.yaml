@@ -20,12 +20,34 @@ chat:
   # enabled gates the Slack chat surface (DM + @mention replies). Agent
   # delegation (jobs, workflow rules, unfurls) runs regardless of this flag.
   enabled: false
-  default_agent: default
+  # defaults holds the global routing/reply defaults.
+  defaults:
+    # agent is the fallback agent for any channel without a matching channels
+    # entry (required when chat is enabled).
+    agent: default
+    # dm_agent routes direct messages; falls back to agent when unset.
+    # dm_agent: default
+    # reply_on_thread selects the default reply strategy: true (the default)
+    # roots a thread on each new top-level channel message; false replies
+    # directly in the channel. A channel replying off-thread is treated as one
+    # long rolling conversation rather than per-thread sessions.
+    # reply_on_thread: true
+  # channels routes a channel to a specific agent and/or reply strategy. Each
+  # key is an exact Slack channel ID (C…/G…) or a channel-NAME glob that may
+  # contain `*` (e.g. "feature-*", "*-prod"). An entry may set agent,
+  # reply_on_thread, or both; an omitted agent falls back to defaults.agent and
+  # an omitted reply_on_thread to defaults.reply_on_thread.
+  # channels:
+  #   support-*:
+  #     agent: support-bot
+  #     reply_on_thread: false
+  #   C0123ABC:
+  #     agent: ops
   # no_mention waives the @mention requirement for listed users. `everywhere`
   # applies in every channel; `by_channel` applies per channel (same channel-ID
-  # / channel-NAME glob syntax as channel_agents). The effective set for a
-  # channel is the UNION of everywhere and every matching by_channel pattern.
-  # A waived user must STILL be in access.allowed_users (or be the admin).
+  # / channel-NAME glob syntax as channels). The effective set for a channel is
+  # the UNION of everywhere and every matching by_channel pattern. A waived user
+  # must STILL be in access.allowed_users (or be the admin).
   no_mention:
     everywhere: []
     # by_channel:

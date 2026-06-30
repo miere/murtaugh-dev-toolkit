@@ -74,7 +74,7 @@ func primedCache(t *testing.T, byID map[string]string) *channelNameCache {
 func newNoMentionGateway(global []string, perChannel map[string][]string, allowed []string, cache *channelNameCache) (*Gateway, *recordingCountingSessions) {
 	fakeSessions := &recordingCountingSessions{}
 	sessions := map[string]ChatSessionManager{"default": fakeSessions}
-	resolver := func(req ChatRequest) string { return "default" }
+	resolver := func(req ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	app := &Gateway{
 		chat:                NewChatHandler(&fakeStreamAPI{}, sessions, resolver, time.Hour, 1, nil),
 		chatSessions:        sessions,

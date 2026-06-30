@@ -3,14 +3,16 @@ package gateway
 import (
 	"path"
 	"strings"
+
+	"github.com/miere/murtaugh/internal/config"
 )
 
-// matchChannelAgent resolves a channel to its configured agent from the
-// chat.channel_agents map. The map's keys are either exact Slack channel IDs
-// (C…/G…, for back-compat) or channel-NAME globs that may contain `*`
-// (e.g. "feature-*", "*-prod"). channelName may be empty when the cache has
-// not yet learned the channel's name (a brand-new channel); only the exact
-// channel-ID rule can match in that case.
+// matchChannel resolves a channel to its configured chat.channels entry. The
+// map's keys are either exact Slack channel IDs (C…/G…, for back-compat) or
+// channel-NAME globs that may contain `*` (e.g. "feature-*", "*-prod").
+// channelName may be empty when the cache has not yet learned the channel's
+// name (a brand-new channel); only the exact channel-ID rule can match in that
+// case.
 //
 // Precedence (first hit wins, implemented by scoring rather than map
 // iteration order because Go maps are unordered):
@@ -22,32 +24,34 @@ import (
 //     characters before its first `*`) is longest wins, so a more specific
 //     pattern like "feature-prod-*" beats a broader "feature-*".
 //
-// ok is false (and agent is "") when nothing matches; callers fall back to
-// the default agent in that case. The function is pure — it does no I/O — so
-// it is safe to call on the Slack socket goroutine and reusable wherever a
-// channel→agent decision is needed.
-func matchChannelAgent(channelID, channelName string, patterns map[string]string) (agent string, ok bool) {
-	if len(patterns) == 0 {
-		return "", false
+// ok is false (and the zero ChannelConfig is returned) when nothing matches;
+// callers fall back to chat.defaults in that case. The single winner supplies
+// BOTH the agent and the reply strategy: the caller backfills an empty agent
+// from the default and an unset reply_on_thread from the default. The function
+// is pure — it does no I/O — so it is safe to call on the Slack socket
+// goroutine.
+func matchChannel(channelID, channelName string, channels map[string]config.ChannelConfig) (config.ChannelConfig, bool) {
+	if len(channels) == 0 {
+		return config.ChannelConfig{}, false
 	}
 	// (1) exact channel-ID key.
 	if channelID != "" {
-		if a, hit := patterns[channelID]; hit {
-			return a, true
+		if cc, hit := channels[channelID]; hit {
+			return cc, true
 		}
 	}
 	if channelName == "" {
-		return "", false
+		return config.ChannelConfig{}, false
 	}
 	// (2) exact channel-name key.
-	if a, hit := patterns[channelName]; hit {
-		return a, true
+	if cc, hit := channels[channelName]; hit {
+		return cc, true
 	}
 	// (3) longest-literal-prefix glob match on the name.
-	bestAgent := ""
+	best := config.ChannelConfig{}
 	bestPrefixLen := -1
 	bestFound := false
-	for key, a := range patterns {
+	for key, cc := range channels {
 		if !strings.ContainsRune(key, '*') {
 			// Non-glob keys were already handled by the exact passes above.
 			continue
@@ -57,14 +61,14 @@ func matchChannelAgent(channelID, channelName string, patterns map[string]string
 		}
 		if n := literalPrefixLen(key); n > bestPrefixLen {
 			bestPrefixLen = n
-			bestAgent = a
+			best = cc
 			bestFound = true
 		}
 	}
 	if bestFound {
-		return bestAgent, true
+		return best, true
 	}
-	return "", false
+	return config.ChannelConfig{}, false
 }
 
 // literalPrefixLen returns the number of leading characters in pattern before
@@ -79,7 +83,7 @@ func literalPrefixLen(pattern string) int {
 }
 
 // validChannelAgentGlob reports whether key is a syntactically valid
-// channel_agents key. Exact channel-ID/name keys are always valid; glob keys
+// chat.channels key. Exact channel-ID/name keys are always valid; glob keys
 // (those containing `*`) must be accepted by path.Match so a malformed pattern
 // is rejected at config-load time rather than silently never matching.
 func validChannelAgentGlob(key string) bool {
@@ -94,11 +98,11 @@ func validChannelAgentGlob(key string) bool {
 
 // usersAllowedWithoutMention returns the effective set of Slack user IDs whose
 // plain channel messages the bot replies to WITHOUT an @mention in the channel
-// identified by channelID/channelName. Unlike matchChannelAgent's single-winner
+// identified by channelID/channelName. Unlike matchChannel's single-winner
 // precedence, this is a UNION: the global list plus the users from EVERY
 // per-channel pattern whose key matches the channel (an exact channel-ID key, an
 // exact channel-name key, or a `*` glob on the name — the same key syntax as
-// chat.channel_agents). channelName may be empty when the cache has not yet
+// chat.channels). channelName may be empty when the cache has not yet
 // learned the channel's name; only exact channel-ID keys can match in that case.
 //
 // The result is a set keyed by user ID for O(1) membership tests at the call
@@ -125,10 +129,10 @@ func usersAllowedWithoutMention(channelID, channelName string, global []string, 
 	return set
 }
 
-// channelKeyMatches reports whether a chat.channel_agents-style key matches the
+// channelKeyMatches reports whether a chat.channels-style key matches the
 // given channel. The key is an exact channel-ID match, an exact channel-name
 // match, or — when it contains `*` — a path.Match glob on the channel name. It
-// mirrors matchChannelAgent's matching semantics but without the precedence
+// mirrors matchChannel's matching semantics but without the precedence
 // scoring, because the no-mention check unions across every matching key rather
 // than picking a single winner.
 func channelKeyMatches(key, channelID, channelName string) bool {

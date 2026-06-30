@@ -64,19 +64,55 @@ type ChatConfig struct {
 	// gate agent delegation (jobs, workflow rules, unfurls) — those run whenever
 	// the target agent is defined, independent of the chat surface.
 	Enabled bool `yaml:"enabled"`
-	// ChannelAgents routes a channel to a specific agent. Each key is either an
-	// exact Slack channel ID (C…/G…, for back-compat) or a channel-NAME glob
-	// that may contain `*` (e.g. "feature-*", "*-prod"), matched against the
-	// channel's name. The value is the agent name. Precedence on a match is
-	// exact-ID, then exact-name, then longest-literal-prefix glob (see
-	// gateway.matchChannelAgent).
-	ChannelAgents map[string]string `yaml:"channel_agents"`
+	// Defaults holds the global chat routing/reply defaults: the fallback agent,
+	// the DM agent, and the default reply strategy.
+	Defaults ChatDefaults `yaml:"defaults"`
+	// Channels routes a channel to a specific agent and/or reply strategy. Each
+	// key is either an exact Slack channel ID (C…/G…, for back-compat) or a
+	// channel-NAME glob that may contain `*` (e.g. "feature-*", "*-prod"),
+	// matched against the channel's name. Precedence on a match is exact-ID,
+	// then exact-name, then longest-literal-prefix glob (see
+	// gateway.matchChannel). A matched entry whose agent is empty falls back to
+	// Defaults.Agent; an unset reply_on_thread falls back to
+	// Defaults.ReplyOnThread.
+	Channels map[string]ChannelConfig `yaml:"channels"`
 	// NoMention waives the @mention requirement for listed users (both the
 	// everywhere list and the per-channel map). It waives the mention
 	// requirement only — listed users must still pass IsAllowedUser.
-	NoMention    NoMentionConfig `yaml:"no_mention"`
-	DMAgent      string          `yaml:"dm_agent"`
-	DefaultAgent string          `yaml:"default_agent"`
+	NoMention NoMentionConfig `yaml:"no_mention"`
+}
+
+// ChatDefaults are the global chat routing/reply defaults.
+type ChatDefaults struct {
+	// Agent is the fallback agent for any channel without a matching Channels
+	// entry. Required when chat is enabled.
+	Agent string `yaml:"agent"`
+	// DMAgent routes direct messages; falls back to Agent when empty.
+	DMAgent string `yaml:"dm_agent"`
+	// ReplyOnThread sets the default reply strategy: true (the default when
+	// omitted) makes the bot root a thread on each new top-level channel message;
+	// false makes it reply directly in the channel. A pointer so an omitted value
+	// (→ default true) is distinct from an explicit false.
+	ReplyOnThread *bool `yaml:"reply_on_thread"`
+}
+
+// ChannelConfig is a per-channel routing/reply override.
+type ChannelConfig struct {
+	// Agent routes this channel to a specific agent; empty falls back to
+	// ChatDefaults.Agent.
+	Agent string `yaml:"agent"`
+	// ReplyOnThread overrides ChatDefaults.ReplyOnThread for this channel; nil
+	// (omitted) inherits the default.
+	ReplyOnThread *bool `yaml:"reply_on_thread"`
+}
+
+// EffectiveReplyOnThread resolves the global default reply strategy: an omitted
+// value defaults to true (reply in a thread), matching the historical behaviour.
+func (d ChatDefaults) EffectiveReplyOnThread() bool {
+	if d.ReplyOnThread == nil {
+		return true
+	}
+	return *d.ReplyOnThread
 }
 
 // NoMentionConfig lists Slack users (IDs or handles) whose plain channel
@@ -675,19 +711,23 @@ func (c Config) Validate() error {
 		if len(c.Agents) == 0 {
 			errs = append(errs, errors.New("chat is enabled but no agents are defined in agents.yaml"))
 		}
-		if strings.TrimSpace(c.Chat.DefaultAgent) == "" {
-			errs = append(errs, errors.New("chat.default_agent is required when chat is enabled"))
-		} else if _, ok := c.Agents[c.Chat.DefaultAgent]; !ok {
-			errs = append(errs, fmt.Errorf("chat.default_agent %q not found in agents.yaml", c.Chat.DefaultAgent))
+		if strings.TrimSpace(c.Chat.Defaults.Agent) == "" {
+			errs = append(errs, errors.New("chat.defaults.agent is required when chat is enabled"))
+		} else if _, ok := c.Agents[c.Chat.Defaults.Agent]; !ok {
+			errs = append(errs, fmt.Errorf("chat.defaults.agent %q not found in agents.yaml", c.Chat.Defaults.Agent))
 		}
-		if c.Chat.DMAgent != "" {
-			if _, ok := c.Agents[c.Chat.DMAgent]; !ok {
-				errs = append(errs, fmt.Errorf("chat.dm_agent %q not found in agents.yaml", c.Chat.DMAgent))
+		if c.Chat.Defaults.DMAgent != "" {
+			if _, ok := c.Agents[c.Chat.Defaults.DMAgent]; !ok {
+				errs = append(errs, fmt.Errorf("chat.defaults.dm_agent %q not found in agents.yaml", c.Chat.Defaults.DMAgent))
 			}
 		}
-		for channel, agent := range c.Chat.ChannelAgents {
-			if _, ok := c.Agents[agent]; !ok {
-				errs = append(errs, fmt.Errorf("chat.channel_agents[%s] references unknown agent %q", channel, agent))
+		for channel, cc := range c.Chat.Channels {
+			// A channel entry may set only reply_on_thread (empty agent → falls
+			// back to chat.defaults.agent), so validate the agent only when set.
+			if cc.Agent != "" {
+				if _, ok := c.Agents[cc.Agent]; !ok {
+					errs = append(errs, fmt.Errorf("chat.channels[%s].agent references unknown agent %q", channel, cc.Agent))
+				}
 			}
 			// Keys may be exact channel IDs (C…/G…) or channel-NAME globs that
 			// contain `*` (e.g. "feature-*"). A glob is matched via path.Match at
@@ -695,7 +735,7 @@ func (c Config) Validate() error {
 			// silently never match.
 			if strings.ContainsRune(channel, '*') {
 				if _, err := path.Match(channel, "probe"); err != nil {
-					errs = append(errs, fmt.Errorf("chat.channel_agents[%s] is not a valid channel-name glob: %w", channel, err))
+					errs = append(errs, fmt.Errorf("chat.channels[%s] is not a valid channel-name glob: %w", channel, err))
 				}
 			}
 		}

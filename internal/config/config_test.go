@@ -55,10 +55,14 @@ func TestParseValidConfig(t *testing.T) {
 	cfg, err := Parse(testConfig(`access:
   admin_user: '@admin'
 chat:
-  default_agent: default
-  channel_agents:
-    C12345: coding
-  dm_agent: default
+  defaults:
+    agent: default
+    dm_agent: default
+  channels:
+    C12345:
+      agent: coding
+    support-*:
+      reply_on_thread: false
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
@@ -69,8 +73,16 @@ chat:
 	if cfg.OAuth.AppToken != "xapp-test" || cfg.OAuth.BotToken != "xoxb-test" || cfg.Access.AdminUser != "@admin" {
 		t.Fatalf("unexpected Slack config parsed")
 	}
-	if cfg.Chat.DefaultAgent != "default" || cfg.Chat.DMAgent != "default" || cfg.Chat.ChannelAgents["C12345"] != "coding" {
+	if cfg.Chat.Defaults.Agent != "default" || cfg.Chat.Defaults.DMAgent != "default" || cfg.Chat.Channels["C12345"].Agent != "coding" {
 		t.Fatalf("unexpected chat routing parsed: %#v", cfg.Chat)
+	}
+	// An omitted reply_on_thread stays nil (→ default true); an explicit false is
+	// parsed as a non-nil false on a channel that sets only the reply strategy.
+	if cfg.Chat.Defaults.ReplyOnThread != nil {
+		t.Fatalf("expected defaults.reply_on_thread to be nil when omitted, got %v", *cfg.Chat.Defaults.ReplyOnThread)
+	}
+	if rot := cfg.Chat.Channels["support-*"].ReplyOnThread; rot == nil || *rot {
+		t.Fatalf("expected support-* reply_on_thread=false, got %v", rot)
 	}
 }
 
@@ -79,7 +91,8 @@ func TestLoadACPConfigFromAgentsFile(t *testing.T) {
 	configPath := filepath.Join(baseDir, "slack.yaml")
 	if err := os.WriteFile(configPath, testConfig(`chat:
   enabled: true
-  default_agent: default
+  defaults:
+    agent: default
 `), 0o644); err != nil {
 		t.Fatalf("write slack config: %v", err)
 	}
@@ -774,15 +787,19 @@ func TestAgentEnvOverridesNilWhenEmpty(t *testing.T) {
 }
 
 // channelAgentsValidationConfig builds a minimal ACP-enabled config whose only
-// variable is the channel_agents map, so a test can exercise the glob/agent
-// validation in isolation.
+// variable is the chat.channels map, so a test can exercise the glob/agent
+// validation in isolation. Each key→agent pair becomes a ChannelConfig{Agent}.
 func channelAgentsValidationConfig(channelAgents map[string]string) Config {
+	channels := make(map[string]ChannelConfig, len(channelAgents))
+	for key, agent := range channelAgents {
+		channels[key] = ChannelConfig{Agent: agent}
+	}
 	return Config{
 		OAuth: OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"},
 		Agents: map[string]AgentProfile{
 			"coding": {ACP: &ACPProfile{Command: "/bin/agent"}},
 		},
-		Chat: ChatConfig{Enabled: true, DefaultAgent: "coding", ChannelAgents: channelAgents},
+		Chat: ChatConfig{Enabled: true, Defaults: ChatDefaults{Agent: "coding"}, Channels: channels},
 	}
 }
 
@@ -818,7 +835,7 @@ func TestValidateExportSkillsToFS(t *testing.T) {
 		return Config{
 			OAuth:  OAuthConfig{AppToken: "xapp-test", BotToken: "xoxb-test"},
 			Agents: map[string]AgentProfile{"coding": {ExportSkillsToFS: list, ACP: &ACPProfile{Command: "/bin/agent"}}},
-			Chat:   ChatConfig{Enabled: true, DefaultAgent: "coding"},
+			Chat:   ChatConfig{Enabled: true, Defaults: ChatDefaults{Agent: "coding"}},
 		}
 	}
 	if err := base(nil).Validate(); err != nil {
@@ -847,7 +864,7 @@ func noMentionValidationConfig(perChannel map[string][]string) Config {
 		Agents: map[string]AgentProfile{
 			"coding": {ACP: &ACPProfile{Command: "/bin/agent"}},
 		},
-		Chat: ChatConfig{Enabled: true, DefaultAgent: "coding", NoMention: NoMentionConfig{ByChannel: perChannel}},
+		Chat: ChatConfig{Enabled: true, Defaults: ChatDefaults{Agent: "coding"}, NoMention: NoMentionConfig{ByChannel: perChannel}},
 	}
 }
 

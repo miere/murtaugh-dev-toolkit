@@ -348,7 +348,7 @@ before being replaced/merged.
 | `--app-token`     | yes      | string | Slack app-level token; must start with `xapp-`. Stored in `.env`. |
 | `--bot-token`     | yes      | string | Slack bot OAuth token; must start with `xoxb-`. Stored in `.env`. |
 | `--admin-user`    | yes      | string | Admin handle (`@name`) or user ID (`U…`).                   |
-| `--default-agent` | no       | string | `agents.yaml` key to wire into `chat.default_agent`.        |
+| `--default-agent` | no       | string | `agents.yaml` key to wire into `chat.defaults.agent`.       |
 
 ```
 murtaugh setup slack --app-token xapp-… --bot-token xoxb-… --admin-user @miere

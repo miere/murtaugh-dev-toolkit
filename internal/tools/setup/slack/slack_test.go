@@ -143,12 +143,12 @@ func TestInvoke_DefaultAgentSwitchesChatBlock(t *testing.T) {
 		t.Fatalf("Invoke: %v", err)
 	}
 	cfg := loadSlack(t, path)
-	if cfg.Chat.DefaultAgent != "default" {
-		t.Fatalf("chat.default_agent = %q, want default", cfg.Chat.DefaultAgent)
+	if cfg.Chat.Defaults.Agent != "default" {
+		t.Fatalf("chat.defaults.agent = %q, want default", cfg.Chat.Defaults.Agent)
 	}
 	raw, _ := os.ReadFile(path)
-	if !strings.Contains(string(raw), "default_agent: default") {
-		t.Fatalf("slack.yaml missing default_agent line:\n%s", raw)
+	if !strings.Contains(string(raw), "agent: default") {
+		t.Fatalf("gateway.yaml missing chat.defaults.agent line:\n%s", raw)
 	}
 }
 

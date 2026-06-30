@@ -18,9 +18,10 @@ type startupAgent struct {
 
 // startupRoute is one channel→agent routing entry in the startup summary.
 type startupRoute struct {
-	Key   string `json:"key"`   // channel ID, name, or name glob
-	Agent string `json:"agent"` // the agent that key routes to
-	Ready bool   `json:"ready"` // the target agent built successfully
+	Key           string `json:"key"`             // channel ID, name, or name glob
+	Agent         string `json:"agent"`           // the effective agent that key routes to
+	ReplyOnThread bool   `json:"reply_on_thread"` // effective reply strategy for the channel
+	Ready         bool   `json:"ready"`           // the target agent built successfully
 }
 
 // startupSummary is the at-startup picture of agents and chat routing. It is
@@ -49,10 +50,11 @@ func (a *Gateway) buildStartupSummary() startupSummary {
 		return ok
 	}
 
+	defaults := a.chatRouting.Defaults
 	s := startupSummary{
 		ChatEnabled:  chatEnabled,
-		DefaultAgent: a.chatRouting.DefaultAgent,
-		DMAgent:      a.chatRouting.DMAgent,
+		DefaultAgent: defaults.Agent,
+		DMAgent:      defaults.DMAgent,
 	}
 
 	for _, name := range sortedKeys(a.agentProfiles) {
@@ -75,21 +77,30 @@ func (a *Gateway) buildStartupSummary() startupSummary {
 		}
 	}
 
-	for _, key := range sortedKeys(a.chatRouting.ChannelAgents) {
-		target := a.chatRouting.ChannelAgents[key]
+	for _, key := range sortedKeys(a.chatRouting.Channels) {
+		cc := a.chatRouting.Channels[key]
+		// An entry may set only reply_on_thread; an empty agent uses the default.
+		target := cc.Agent
+		if target == "" {
+			target = defaults.Agent
+		}
+		replyOnThread := defaults.EffectiveReplyOnThread()
+		if cc.ReplyOnThread != nil {
+			replyOnThread = *cc.ReplyOnThread
+		}
 		ready := built(target)
-		s.Routes = append(s.Routes, startupRoute{Key: key, Agent: target, Ready: ready})
+		s.Routes = append(s.Routes, startupRoute{Key: key, Agent: target, ReplyOnThread: replyOnThread, Ready: ready})
 		if chatEnabled && !ready {
 			s.Problems = append(s.Problems, fmt.Sprintf("channel route %q → %q: that agent is not available, so mentions in this channel fall back to the default", key, target))
 		}
 	}
 
 	if chatEnabled {
-		if a.chatRouting.DefaultAgent != "" && !built(a.chatRouting.DefaultAgent) {
-			s.Problems = append(s.Problems, fmt.Sprintf("default_agent %q is not available", a.chatRouting.DefaultAgent))
+		if defaults.Agent != "" && !built(defaults.Agent) {
+			s.Problems = append(s.Problems, fmt.Sprintf("chat.defaults.agent %q is not available", defaults.Agent))
 		}
-		if a.chatRouting.DMAgent != "" && !built(a.chatRouting.DMAgent) {
-			s.Problems = append(s.Problems, fmt.Sprintf("dm_agent %q is not available", a.chatRouting.DMAgent))
+		if defaults.DMAgent != "" && !built(defaults.DMAgent) {
+			s.Problems = append(s.Problems, fmt.Sprintf("chat.defaults.dm_agent %q is not available", defaults.DMAgent))
 		}
 	}
 	return s
@@ -119,12 +130,13 @@ func (a *Gateway) logStartupRouting(ctx context.Context) {
 	}
 
 	a.logger.Info("startup routing: chat routing",
-		"default_agent", s.DefaultAgent, "dm_agent", s.DMAgent, "channel_routes", len(s.Routes))
+		"default_agent", s.DefaultAgent, "dm_agent", s.DMAgent,
+		"default_reply_on_thread", a.chatRouting.Defaults.EffectiveReplyOnThread(), "channel_routes", len(s.Routes))
 	for _, r := range s.Routes {
 		if s.ChatEnabled && !r.Ready {
-			a.logger.Warn("startup routing: channel route → unavailable agent", "channel", r.Key, "agent", r.Agent)
+			a.logger.Warn("startup routing: channel route → unavailable agent", "channel", r.Key, "agent", r.Agent, "reply_on_thread", r.ReplyOnThread)
 		} else {
-			a.logger.Info("startup routing: channel route", "channel", r.Key, "agent", r.Agent)
+			a.logger.Info("startup routing: channel route", "channel", r.Key, "agent", r.Agent, "reply_on_thread", r.ReplyOnThread)
 		}
 	}
 	for _, p := range s.Problems {

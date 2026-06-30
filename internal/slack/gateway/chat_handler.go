@@ -51,7 +51,7 @@ type ChatSessionWarmer interface {
 type ChatHandler struct {
 	api                   StreamAPI
 	sessions              map[string]ChatSessionManager
-	resolver              func(ChatRequest) string
+	resolver              func(ChatRequest) ChatRoute
 	interval              time.Duration
 	minChars              int
 	logger                *slog.Logger
@@ -110,7 +110,16 @@ type ChatRequest struct {
 	Files []slack.File
 }
 
-func NewChatHandler(api StreamAPI, sessions map[string]ChatSessionManager, resolver func(ChatRequest) string, interval time.Duration, minChars int, logger *slog.Logger) *ChatHandler {
+// ChatRoute is the routing decision for a chat request: which agent answers and
+// whether the reply is threaded. ReplyOnThread=false makes the bot post directly
+// in the channel; see replyThreadTS and conversationKey for how it shapes both
+// the reply location and the session binding.
+type ChatRoute struct {
+	Agent         string
+	ReplyOnThread bool
+}
+
+func NewChatHandler(api StreamAPI, sessions map[string]ChatSessionManager, resolver func(ChatRequest) ChatRoute, interval time.Duration, minChars int, logger *slog.Logger) *ChatHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -292,7 +301,8 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 		return fmt.Errorf("ACP chat is not enabled")
 	}
 
-	agentName := h.resolver(req)
+	route := h.resolver(req)
+	agentName := route.Agent
 	sessions, ok := h.sessions[agentName]
 	if !ok {
 		return fmt.Errorf("no agent configured for %q (resolved from request)", agentName)
@@ -313,11 +323,13 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 			promptForAgent += "\n\n" + attachments
 		}
 	}
-	key := conversationKey(req)
+	key := conversationKey(req, route.ReplyOnThread)
 	metadata := agent.SessionMetadata{TeamID: req.TeamID, ChannelID: req.ChannelID, ThreadTS: key.ThreadTS, UserID: req.UserID, Source: req.Source}
 	history := h.backfillHistory(ctx, req, sessions, key)
-	streamThreadTS := streamThreadTS(req)
-	if streamThreadTS == "" {
+	streamThreadTS := replyThreadTS(req, route.ReplyOnThread)
+	// streamThreadTS is empty by design in channel-reply mode (post at the channel
+	// root). Posting still needs a triggering timestamp, so guard on that instead.
+	if req.ThreadTS == "" && req.MessageTS == "" {
 		return fmt.Errorf("Slack streaming requires a source message timestamp")
 	}
 
@@ -389,39 +401,45 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 		renderer.Interrupted(ictx)
 		retErr = nil
 	}()
-	if err := h.api.SetAssistantThreadsStatusContext(ctx, slack.AssistantThreadsSetStatusParameters{
-		ChannelID: req.ChannelID,
-		ThreadTS:  streamThreadTS,
-		Status:    "is thinking...",
-	}); err != nil {
-		h.logger.Warn("failed to set assistant status", "error", err)
-	}
-	// Slack auto-clears the assistant status as soon as the first stream chunk
-	// is sent (start/append/stop). Re-assert it periodically so the indicator
-	// stays visible while the back-pressured stream is still being assembled.
-	statusCtx, stopStatus := context.WithCancel(ctx)
-	statusDone := make(chan struct{})
-	go h.refreshAssistantStatus(statusCtx, req.ChannelID, streamThreadTS, "is thinking...", statusDone)
-	defer func() {
-		stopStatus()
-		<-statusDone
-		// Best-effort explicit clear so the indicator does not linger (e.g. when
-		// the handler errors out before any chunk is sent, Slack would otherwise
-		// keep "is thinking..." displayed for up to two minutes). Use a fresh
-		// background context: on the interrupt path the request ctx is already
-		// cancelled, and reusing it here would make Slack reject the clear and
-		// leave "is thinking..." stuck on screen — the exact symptom we are
-		// fixing.
-		clearCtx, cancelClear := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancelClear()
-		if err := h.api.SetAssistantThreadsStatusContext(clearCtx, slack.AssistantThreadsSetStatusParameters{
+	// The assistant-threads "is thinking..." indicator is a thread-scoped Slack
+	// feature, so it only applies when we are replying in a thread. In
+	// channel-reply mode (empty streamThreadTS) there is no thread to attach it
+	// to — skip it rather than emit a meaningless call that Slack rejects.
+	if streamThreadTS != "" {
+		if err := h.api.SetAssistantThreadsStatusContext(ctx, slack.AssistantThreadsSetStatusParameters{
 			ChannelID: req.ChannelID,
 			ThreadTS:  streamThreadTS,
-			Status:    "",
+			Status:    "is thinking...",
 		}); err != nil {
-			h.logger.Debug("failed to clear assistant status", "error", err)
+			h.logger.Warn("failed to set assistant status", "error", err)
 		}
-	}()
+		// Slack auto-clears the assistant status as soon as the first stream chunk
+		// is sent (start/append/stop). Re-assert it periodically so the indicator
+		// stays visible while the back-pressured stream is still being assembled.
+		statusCtx, stopStatus := context.WithCancel(ctx)
+		statusDone := make(chan struct{})
+		go h.refreshAssistantStatus(statusCtx, req.ChannelID, streamThreadTS, "is thinking...", statusDone)
+		defer func() {
+			stopStatus()
+			<-statusDone
+			// Best-effort explicit clear so the indicator does not linger (e.g. when
+			// the handler errors out before any chunk is sent, Slack would otherwise
+			// keep "is thinking..." displayed for up to two minutes). Use a fresh
+			// background context: on the interrupt path the request ctx is already
+			// cancelled, and reusing it here would make Slack reject the clear and
+			// leave "is thinking..." stuck on screen — the exact symptom we are
+			// fixing.
+			clearCtx, cancelClear := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelClear()
+			if err := h.api.SetAssistantThreadsStatusContext(clearCtx, slack.AssistantThreadsSetStatusParameters{
+				ChannelID: req.ChannelID,
+				ThreadTS:  streamThreadTS,
+				Status:    "",
+			}); err != nil {
+				h.logger.Debug("failed to clear assistant status", "error", err)
+			}
+		}()
+	}
 	// Drive the prompt under a child context we can cancel ourselves. The idle
 	// watchdog uses it to unblock the in-flight ACP request without touching the
 	// parent ctx — so on a timeout we can still render our own message on the
@@ -633,16 +651,25 @@ func (h *ChatHandler) refreshAssistantStatus(ctx context.Context, channelID, thr
 	}
 }
 
-// conversationKey identifies the agent session a request belongs to. Every
+// conversationKey identifies the agent session a request belongs to. A threaded
 // conversation — channel thread OR DM — is bound to its thread, so a session is
-// never shared across threads. The thread is the request's ThreadTS, falling
-// back to its own MessageTS for a top-level message that roots a new thread
-// (mirroring streamThreadTS, so the key matches where replies are posted). The
-// DM flag is retained so a DM thread and a same-id channel thread cannot collide
-// and so session metadata/logging still distinguishes the two surfaces.
-func conversationKey(req ChatRequest) agent.ConversationKey {
+// never shared across threads: the key is the request's ThreadTS, falling back
+// to its own MessageTS for a top-level message that roots a new thread
+// (mirroring replyThreadTS, so the key matches where replies are posted).
+//
+// In channel-reply mode (replyOnThread=false on a top-level message) there is no
+// thread to bind to, and binding per-MessageTS would spawn a fresh session every
+// message — shredding context. Instead ThreadTS stays empty, so every top-level
+// message in the channel maps to the SAME key {ChannelID, ThreadTS:""}: one
+// long-lived, channel-wide rolling conversation. The key omits UserID, so that
+// session is shared by the channel's participants. An explicit reset is /clear,
+// not an implicit per-message one.
+//
+// The DM flag is retained so a DM thread and a same-id channel thread cannot
+// collide and so session metadata/logging still distinguishes the two surfaces.
+func conversationKey(req ChatRequest, replyOnThread bool) agent.ConversationKey {
 	threadTS := req.ThreadTS
-	if threadTS == "" {
+	if threadTS == "" && replyOnThread {
 		threadTS = req.MessageTS
 	}
 	return agent.ConversationKey{TeamID: req.TeamID, ChannelID: req.ChannelID, ThreadTS: threadTS, DM: req.DM}
@@ -661,9 +688,18 @@ func isTerminalTaskStatus(status agent.TaskStatus) bool {
 	}
 }
 
-func streamThreadTS(req ChatRequest) string {
+// replyThreadTS decides where the bot's reply is posted. An incoming message
+// that is ALREADY in a thread always gets a threaded reply (never yank a
+// threaded conversation out to the channel root). For a top-level message,
+// replyOnThread selects the strategy: true roots a thread at the message
+// (historical behaviour), false posts directly at the channel root (empty
+// thread_ts). Mirrors conversationKey so the reply lands where the session lives.
+func replyThreadTS(req ChatRequest, replyOnThread bool) string {
 	if req.ThreadTS != "" {
 		return req.ThreadTS
+	}
+	if !replyOnThread {
+		return ""
 	}
 	return req.MessageTS
 }

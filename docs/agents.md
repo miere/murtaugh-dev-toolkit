@@ -8,7 +8,7 @@ and how a turn behaves.
 Two files turn chat on:
 
 1. **`agents.yaml`** — define at least one agent.
-2. **`gateway.yaml`** — set `chat.enabled: true` and point `chat.default_agent`
+2. **`gateway.yaml`** — set `chat.enabled: true` and point `chat.defaults.agent`
    at one of those agents.
 
 With chat disabled (the default), DMs and mentions are ignored — but agents are
@@ -141,26 +141,38 @@ remote endpoint (`url`).
 # gateway.yaml
 chat:
   enabled: true
-  default_agent: default        # DMs and any unrouted channel
-  # dm_agent: support           # optional: a different agent for DMs
-  # channel_agents:
-  #   C0ENG1: coding            # by channel ID
-  #   feature-*: coding         # or by channel-name glob
+  defaults:
+    agent: default              # DMs and any unrouted channel
+    # dm_agent: support         # optional: a different agent for DMs
+    # reply_on_thread: true     # optional: global reply strategy (default true)
+  # channels:
+  #   C0ENG1:
+  #     agent: coding           # by channel ID
+  #   feature-*:
+  #     agent: coding           # or by channel-name glob
+  #     reply_on_thread: false  # reply in-channel instead of a thread
 ```
 
-- `default_agent` handles DMs and any channel without a more specific route.
-- `channel_agents` is keyed by **channel ID** (`C0ENG1`) or a **channel-name
-  glob** (`feature-*`) — not a `#name`.
+- `defaults.agent` handles DMs and any channel without a more specific route.
+- `channels` is keyed by **channel ID** (`C0ENG1`) or a **channel-name glob**
+  (`feature-*`) — not a `#name`. Each entry may set `agent`, `reply_on_thread`,
+  or both; an omitted `agent` falls back to `defaults.agent`.
+- `reply_on_thread` (global default true) picks where the bot replies to a
+  top-level channel message: `true` roots a thread; `false` replies directly in
+  the channel and treats it as one rolling conversation. A message already in a
+  thread is always answered in-thread.
 - Every routed agent name must exist in `agents.yaml`, or the gateway refuses to
   start (fail-closed).
 
 | Entry point | Session scope |
 |---|---|
 | DM the bot | one session per DM channel |
-| `@mention` in a channel | one session per Slack thread |
+| `@mention` in a channel (threaded reply) | one session per Slack thread |
+| `@mention` in a channel (`reply_on_thread: false`) | one rolling session per channel |
 | `/murtaugh chat <prompt>` | one session per thread |
 
-Sessions are bound to their conversation and never shared across threads.
+Threaded conversations are bound to their thread and never shared across threads;
+a channel in off-thread mode is one shared rolling session (reset with `/clear`).
 
 ---
 

@@ -44,7 +44,7 @@ func TestChatHandlerDeliversAttachmentAndSuppressesEmptyNote(t *testing.T) {
 	api := &fakeStreamAPI{}
 	up := &recordingUploader{}
 	sessions := map[string]ChatSessionManager{"default": &fakeChatSessionsAttachmentOnly{}}
-	resolver := func(ChatRequest) string { return "default" }
+	resolver := func(ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }
 	handler := NewChatHandler(api, sessions, resolver, time.Hour, 5, nil).WithUploader(up)
 
 	if err := handler.Handle(context.Background(), ChatRequest{

@@ -21,7 +21,7 @@ murtaugh setup slack \
 murtaugh setup env --set GEMINI_API_KEY="AIza-REPLACE"
 
 # 4. Native agent (the DEFAULT kind). Passing --provider infers kind=native.
-#    --tools is repeatable. Wire chat.enabled + chat.default_agent in
+#    --tools is repeatable. Wire chat.enabled + chat.defaults.agent in
 #    gateway.yaml separately (setup_slack --default-agent, or the
 #    murtaugh-agents skill).
 murtaugh setup agents \

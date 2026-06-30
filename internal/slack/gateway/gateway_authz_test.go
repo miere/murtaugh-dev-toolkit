@@ -124,7 +124,7 @@ func TestHandleSlashCommandAllowsAdmin(t *testing.T) {
 func TestAppMentionEventIgnoresUnauthorizedUser(t *testing.T) {
 	sessions := &fakeChatSessions{}
 	app := &Gateway{
-		chat:   NewChatHandler(&fakeStreamAPI{}, map[string]ChatSessionManager{"default": sessions}, func(ChatRequest) string { return "default" }, time.Hour, 1, nil),
+		chat:   NewChatHandler(&fakeStreamAPI{}, map[string]ChatSessionManager{"default": sessions}, func(ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }, time.Hour, 1, nil),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		cfg:    config.AccessConfig{AllowedUsers: []string{"UALICE00"}},
 	}
@@ -322,7 +322,7 @@ func TestHandleSlashCommandRestartSurfacesCooldown(t *testing.T) {
 func TestDMEventIgnoresUnauthorizedUser(t *testing.T) {
 	sessions := &fakeChatSessions{}
 	app := &Gateway{
-		chat:   NewChatHandler(&fakeStreamAPI{}, map[string]ChatSessionManager{"default": sessions}, func(ChatRequest) string { return "default" }, time.Hour, 1, nil),
+		chat:   NewChatHandler(&fakeStreamAPI{}, map[string]ChatSessionManager{"default": sessions}, func(ChatRequest) ChatRoute { return ChatRoute{Agent: "default", ReplyOnThread: true} }, time.Hour, 1, nil),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		cfg:    config.AccessConfig{AllowedUsers: []string{"UALICE00"}},
 	}

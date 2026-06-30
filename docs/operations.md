@@ -77,7 +77,7 @@ be resolved** — check the startup log for a resolution error.
 
 1. Are you the admin, or in `access.allowed_users`?
 2. In a channel, did you `@mention` the bot (unless you're in `chat.no_mention`)?
-3. Is `chat.enabled: true` and `chat.default_agent` a real agent in
+3. Is `chat.enabled: true` and `chat.defaults.agent` a real agent in
    `agents.yaml`?
 4. Did the gateway actually start? Check `slack.err.log` for an auth or
    config-validation failure.

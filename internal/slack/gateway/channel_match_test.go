@@ -1,9 +1,21 @@
 package gateway
 
-import "testing"
+import (
+	"testing"
 
-func TestMatchChannelAgent(t *testing.T) {
-	patterns := map[string]string{
+	"github.com/miere/murtaugh/internal/config"
+)
+
+func agentChannels(m map[string]string) map[string]config.ChannelConfig {
+	out := make(map[string]config.ChannelConfig, len(m))
+	for k, v := range m {
+		out[k] = config.ChannelConfig{Agent: v}
+	}
+	return out
+}
+
+func TestMatchChannel(t *testing.T) {
+	channels := agentChannels(map[string]string{
 		"C123":            "id-agent",      // exact channel-ID key
 		"general":         "general-agent", // exact channel-name key
 		"feature-*":       "feature-agent",
@@ -11,7 +23,7 @@ func TestMatchChannelAgent(t *testing.T) {
 		"*-prod":          "prod-agent",
 		"release-?":       "release-agent", // ? is a valid path.Match glob too
 		"design-channel*": "design-agent",
-	}
+	})
 
 	tests := []struct {
 		name        string
@@ -64,33 +76,53 @@ func TestMatchChannelAgent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotAgent, gotOK := matchChannelAgent(tt.channelID, tt.channelName, patterns)
-			if gotAgent != tt.wantAgent || gotOK != tt.wantOK {
-				t.Fatalf("matchChannelAgent(%q, %q) = (%q, %v), want (%q, %v)",
-					tt.channelID, tt.channelName, gotAgent, gotOK, tt.wantAgent, tt.wantOK)
+			got, gotOK := matchChannel(tt.channelID, tt.channelName, channels)
+			if got.Agent != tt.wantAgent || gotOK != tt.wantOK {
+				t.Fatalf("matchChannel(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.channelID, tt.channelName, got.Agent, gotOK, tt.wantAgent, tt.wantOK)
 			}
 		})
 	}
 }
 
-func TestMatchChannelAgentEmptyPatterns(t *testing.T) {
-	if agent, ok := matchChannelAgent("C123", "general", nil); ok || agent != "" {
-		t.Fatalf("nil patterns: got (%q, %v), want (\"\", false)", agent, ok)
+func TestMatchChannelEmptyChannels(t *testing.T) {
+	if cc, ok := matchChannel("C123", "general", nil); ok || cc.Agent != "" {
+		t.Fatalf("nil channels: got (%q, %v), want (\"\", false)", cc.Agent, ok)
 	}
 }
 
-// TestMatchChannelAgentPrecedenceIsScored guards the documented precedence:
+// TestMatchChannelReplyOnlyEntry covers an entry that overrides only the reply
+// strategy: it matches (ok=true) with an empty Agent, so the caller falls back to
+// the default agent while still honouring reply_on_thread.
+func TestMatchChannelReplyOnlyEntry(t *testing.T) {
+	off := false
+	channels := map[string]config.ChannelConfig{
+		"support-*": {ReplyOnThread: &off},
+	}
+	cc, ok := matchChannel("C1", "support-eu", channels)
+	if !ok {
+		t.Fatalf("expected a match for support-eu")
+	}
+	if cc.Agent != "" {
+		t.Fatalf("expected empty agent (fall back to default), got %q", cc.Agent)
+	}
+	if cc.ReplyOnThread == nil || *cc.ReplyOnThread {
+		t.Fatalf("expected reply_on_thread=false on the matched entry, got %v", cc.ReplyOnThread)
+	}
+}
+
+// TestMatchChannelPrecedenceIsScored guards the documented precedence:
 // exact-name must beat a glob that also matches the same name, regardless of
 // Go's (unordered) map iteration. Running it repeatedly makes a flaky
 // iteration-order dependency surface.
-func TestMatchChannelAgentPrecedenceIsScored(t *testing.T) {
-	patterns := map[string]string{
+func TestMatchChannelPrecedenceIsScored(t *testing.T) {
+	channels := agentChannels(map[string]string{
 		"feature-x": "exact-name-agent",
 		"feature-*": "glob-agent",
-	}
+	})
 	for i := 0; i < 100; i++ {
-		if agent, ok := matchChannelAgent("C1", "feature-x", patterns); !ok || agent != "exact-name-agent" {
-			t.Fatalf("iteration %d: got (%q, %v), want exact-name-agent to win", i, agent, ok)
+		if cc, ok := matchChannel("C1", "feature-x", channels); !ok || cc.Agent != "exact-name-agent" {
+			t.Fatalf("iteration %d: got (%q, %v), want exact-name-agent to win", i, cc.Agent, ok)
 		}
 	}
 }
