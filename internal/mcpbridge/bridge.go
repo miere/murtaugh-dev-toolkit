@@ -264,6 +264,14 @@ func RunBridge(ctx context.Context, socketPath, token string, in io.Reader, out 
 	// Return as soon as either direction ends; the deferred Close tears down the
 	// other copy.
 	err = <-errc
+	// Propagate the upstream close downstream: when the gateway drops the
+	// connection (e.g. it rejects the token, or shuts down), close out so a
+	// downstream MCP client reading the bridge's stdout sees EOF instead of
+	// blocking forever. In production out is os.Stdout and the process exits right
+	// after this returns, so the close is a harmless no-op there.
+	if c, ok := out.(io.Closer); ok {
+		_ = c.Close()
+	}
 	if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) {
 		return err
 	}
