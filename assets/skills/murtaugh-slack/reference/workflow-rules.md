@@ -27,8 +27,8 @@ config (it edits `workflow-rules.yaml`).
    **first** whose `match` is a subset of the interaction payload.
 5. The matched rule's triggers fire in order: `reply-to-slack` posts a reply
    (from a template, a command, or an agent), `run` invokes a command with the
-   interaction JSON on stdin, and `delegate-to-agent` hands the work to an agent
-   fire-and-forget.
+   interaction JSON on stdin, and `delegate-to-agent` starts a real chat turn in
+   the button's thread.
 
 ## Stable routing keys
 
@@ -85,11 +85,21 @@ more-specific rules to sort ahead of catch-alls.
     `args: ["-c", "gh pr review {{ (index .Payload.actions 0).value }}"]` works.
     An unresolved placeholder fails the rule loudly rather than running a
     half-rendered command. (`timeout` is never templated.)
-- **`delegate-to-agent`** (top-level) hands the interaction to an agent in an
-  isolated one-shot session and is **fire-and-forget** — no output is captured;
-  the agent acts through its own tools (it may post to Slack itself). The
-  `prompt` is rendered with the payload under `.Payload`. The agent must be
-  defined in `agents.yaml`.
+- **`delegate-to-agent`** (top-level) starts a **real chat turn in the thread the
+  button lives in** — the same pipeline a Slack @mention drives: the reply streams
+  into the thread, it's journaled, it can use the approval gate / `ask`, and it's
+  bound to that thread's session. This is what you want for "review this PR" style
+  buttons: it's visible and steerable, not a silent background run. The `prompt` is
+  rendered with the payload under `.Payload`. `agent` is an **optional override**:
+  omit it to use the channel's normal routing (the agent a real mention in that
+  channel would reach), or name one (must be defined in `agents.yaml`) to pin it.
+  Requires chat/ACP to be enabled.
+
+  > Do **not** try to trigger the agent by having a `run:` command post a message
+  > that @mentions the bot (even `--as admin`): Slack does not deliver an
+  > `app_mention` back to the app for a message that same app authored, so the
+  > agent never wakes. `delegate-to-agent` starts the turn in-process and sidesteps
+  > that entirely.
 
 A rule may list several triggers; they execute in the order written.
 
@@ -99,9 +109,9 @@ A rule may list several triggers; they execute in the order written.
           delegate-to-agent:           # agent returns the JSON reply
             agent: default
             prompt: "Acknowledge {{ .Payload.user.id }}; return solely Slack JSON."
-      - delegate-to-agent:             # fire-and-forget side work
-          agent: default
-          prompt: "Review the PR and post findings in {{ index .Payload.channel \"name\" }}."
+      - delegate-to-agent:             # starts a chat turn in the button's thread
+          # agent omitted → use the channel's normal routing
+          prompt: "Review the Pull Request {{ (index .Payload.actions 0).value }} (owner/repo#N — resolve with gh) and post your findings here."
 ```
 
 ## Security — confirm with the user before you design

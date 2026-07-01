@@ -79,8 +79,10 @@ A trigger has **three mutually exclusive action types**:
   comes from a `template`, the stdout of a `run` command, **or** a
   `delegate-to-agent` block (whose final output must be valid Slack message JSON).
 - **`run`** — execute a command with the interaction payload on stdin.
-- **`delegate-to-agent`** — hand the work to an agent and forget it (no output
-  captured); the agent acts through its own tools.
+- **`delegate-to-agent`** — start a real chat turn in the button's thread (the
+  same pipeline an @mention drives: streaming, journaling, approval gate,
+  per-thread session). `agent` is an optional override; omit it to use the
+  channel's normal routing.
 
 ```yaml
 # ~/.config/murtaugh/workflow-rules.yaml

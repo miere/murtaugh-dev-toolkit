@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/workflow"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 )
@@ -17,6 +18,8 @@ type deadlineCapturingWorkflow struct {
 	hasDeadline bool
 	deadline    time.Time
 }
+
+func (w *deadlineCapturingWorkflow) SetChatStarter(workflow.ChatStarter) {}
 
 func (w *deadlineCapturingWorkflow) Execute(ctx context.Context, _ slack.InteractionCallback, _ []byte) error {
 	w.deadline, w.hasDeadline = ctx.Deadline()
