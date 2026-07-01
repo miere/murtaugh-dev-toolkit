@@ -38,6 +38,7 @@ the Block Kit you put in these messages see `blocks.md`.
 | `attachment` | no | Path to a file to upload. Mutually exclusive with `blocks`. |
 | `attachment_type` | no | Snippet type for the uploaded attachment. Closed enum — the only accepted value is `markdown`. |
 | `thread` | no | Parent message `ts` to reply in-thread. |
+| `as` | no | Sender identity. `bot` (default) posts as the app; `admin` posts as the human admin via their Slack user token. Closed enum: `bot` \| `admin`. |
 
 Returns `{ ok, channel, ts, to }` — **store `ts`** to update or thread later.
 
@@ -51,6 +52,12 @@ Behavior:
 - **Mention expansion:** `@handle` tokens in `body` are resolved to `<@U…>`
   best-effort; unresolved handles are left as plain text (with a stderr warning).
   For reliability, render `<@U…>` yourself (see Mentions below).
+- **Posting as the admin (`as: "admin"`):** posts through the admin's own Slack
+  user token (`oauth.user_token`), so the message shows the admin's **real
+  identity** — indistinguishable from one they typed themselves, and not marked
+  app-generated. Default to `bot`; reach for `admin` only when speaking as the
+  human is explicitly intended. If `oauth.user_token` is unset the call errors —
+  it never silently falls back to the bot.
 
 ```bash
 murtaugh slack send-msg --to "#dev" --body "Deploy started" \

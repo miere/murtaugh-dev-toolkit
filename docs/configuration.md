@@ -33,6 +33,9 @@ just means that feature is off (journal streams default **on**).
 # --- Slack (required to run the gateway) ---
 SLACK_APP_TOKEN=xapp-replace-me
 SLACK_BOT_TOKEN=xoxb-replace-me
+# Optional: the admin's own user token (xoxp-…). Enables `slack send-msg --as
+# admin`, which posts under the admin's real identity. Leave unset to disable.
+# SLACK_USER_TOKEN=xoxp-replace-me
 
 # --- LLM providers (only the ones your native agents use) ---
 # The variable NAME is what an agent profile's `api_key_env:` points at.
@@ -58,6 +61,9 @@ and whether the chat surface is on.
 oauth:
   app_token: ${SLACK_APP_TOKEN}   # xapp-… Socket Mode token
   bot_token: ${SLACK_BOT_TOKEN}   # xoxb-… bot token
+  user_token: ${SLACK_USER_TOKEN} # xoxp-… admin user token; optional.
+                                  # Enables `slack send-msg --as admin` (posts
+                                  # under the admin's real identity). Omit to disable.
 
 access:
   admin_user: murtaugh-admin      # @handle or Slack user ID

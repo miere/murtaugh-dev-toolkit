@@ -192,8 +192,10 @@ murtaugh journal prune
 
 ## murtaugh slack send-msg
 
-Post a message (or upload a file) to a Slack channel or user. Uses the bot
-token from `oauth.bot_token` in `gateway.yaml`.
+Post a message (or upload a file) to a Slack channel or user. By default the
+message is posted as the app, using the bot token from `oauth.bot_token` in
+`gateway.yaml`. Pass `--as admin` to post as the human admin instead (see
+`--as` below).
 
 | Flag                | Required | Type   | Notes                                                                       |
 |---------------------|----------|--------|-----------------------------------------------------------------------------|
@@ -203,11 +205,18 @@ token from `oauth.bot_token` in `gateway.yaml`.
 | `--attachment`      | no       | string | Path to a file to upload. Mutually exclusive with `--blocks`.               |
 | `--attachment-type` | no       | enum   | Snippet type for the attachment. Only value: `markdown`.                    |
 | `--blocks`          | no       | string | Block Kit JSON (inline string or file path). Mutually exclusive with `--attachment`. |
+| `--as`              | no       | enum   | Sender identity: `bot` (default) posts as the app; `admin` posts as the human admin via their Slack user token. Requires `oauth.user_token` — errors if unset, never silently falls back to the bot. |
+
+`--as admin` posts with the admin's **real Slack identity** — the message is
+indistinguishable from one the admin typed by hand, and it is not marked as
+app-generated. Use it deliberately, and only where speaking as the human is
+intended.
 
 ```
 murtaugh slack send-msg --to "#deploys" --body "Build green :white_check_mark:"
 murtaugh slack send-msg --to "@miere" --body "ping" --thread 1716950455.123456
 murtaugh slack send-msg --to "#status" --body "Status" --blocks ./status-blocks.json
+murtaugh slack send-msg --to "#team" --body "Approving this — go ahead" --as admin
 ```
 
 ## murtaugh slack create-channel

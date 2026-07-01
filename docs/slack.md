@@ -16,7 +16,7 @@ and link previews. This page is organised by task — read the section you need.
 
 The same Slack capabilities the agent and MCP server use are available as
 one-shot CLI tools under the `slack` namespace. They reuse the gateway's
-`oauth.bot_token`, so no extra configuration is needed.
+`oauth.bot_token`, so no extra configuration is needed for the common case.
 
 ```sh
 murtaugh slack send-msg --to '#general' --body 'hello'
@@ -24,6 +24,13 @@ murtaugh slack fetch-msgs --channel general
 murtaugh slack fetch-reactions --channel general --from @ada --emoji thumbsup
 murtaugh slack update-msg --channel C123 --ts 1234.5678 --body 'edited'
 ```
+
+`send-msg` posts as the app by default. To post as the **human admin** instead,
+add `--as admin`; this requires the optional `oauth.user_token` (the admin's
+`xoxp-…` token, see [configuration](configuration.md#gatewayyaml)). Such a
+message carries the admin's real Slack identity — indistinguishable from one
+they typed by hand — so reach for it only when speaking as the human is
+intended.
 
 **Conventions** (the agent follows these; they're good practice for your own
 automations too):
