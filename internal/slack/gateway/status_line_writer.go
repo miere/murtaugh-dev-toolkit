@@ -13,24 +13,6 @@ import (
 	"github.com/miere/murtaugh/internal/agent"
 )
 
-// progressRenderer is the surface ChatHandler uses to turn ACP task events into
-// Slack progress UI. Two implementations back it: TaskCardWriter (the full
-// multi-card plan, woven into the answer stream) and StatusLineWriter (the
-// simplified single context-block line in its own message). The handler is
-// written against this interface so the choice is a per-agent config concern,
-// not a code path.
-//
-// UpdateFromEvent reports progress; Complete/Fail resolve an individual task
-// for renderers that track them; Finish runs once at the end of the turn,
-// unconditionally, so a renderer that owns a side-channel message can tear it
-// down regardless of how the turn ended.
-type progressRenderer interface {
-	UpdateFromEvent(ctx context.Context, event *agent.TaskEvent) error
-	Complete(ctx context.Context, taskID, title string) error
-	Fail(ctx context.Context, taskID, title string) error
-	Finish(ctx context.Context) error
-}
-
 // statusMessenger is the narrow Slack surface StatusLineWriter needs to manage
 // its own message: post it and edit it in place (including the final resolved
 // line). *slack.Client satisfies it; tests substitute a fake.

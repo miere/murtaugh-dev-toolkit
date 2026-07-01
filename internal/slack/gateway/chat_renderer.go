@@ -5,23 +5,26 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/slack-go/slack"
-
 	"github.com/miere/murtaugh/internal/agent"
 )
 
 // chatRenderer turns an agent's event stream into Slack UI. The ChatHandler
-// drives it event-by-event and is otherwise rendering-agnostic. Two
-// implementations:
+// drives it event-by-event and is otherwise rendering-agnostic.
 //
-//   - wovenRenderer (tasks mode): the legacy behaviour — task cards woven into a
-//     single answer-stream message alongside the reply text.
-//   - sectionRenderer (simplified mode): an ordered SEQUENCE of separate Slack
-//     messages — contiguous tool activity becomes a tool-block message (updated
-//     in place), and reply text becomes its own streamed message. A switch
-//     between the two closes the open section and opens a new one, so tool
-//     execution is always separated from the reply and never mixed into it,
-//     regardless of how the model interleaves text and tool calls.
+// There is a single implementation — sectionRenderer — which renders the turn as
+// an ordered SEQUENCE of separate Slack messages: contiguous tool activity
+// becomes a tool-block message (updated in place), and reply text becomes its own
+// streamed message. A switch between the two seals the open section and opens a
+// new one, so tool execution is always separated from the reply and never mixed
+// into it, regardless of how the model interleaves text and tool calls. This is
+// the coherence guarantee: ordering is decided here, by event boundaries — never
+// by the delivery layer's wall-clock timers.
+//
+// The tool-block cosmetics are the only per-agent choice (the toolBlock seam): a
+// compact status line (simplified) or grouped task cards (tasks). Both ride the
+// same segmentation, so the ordering guarantee holds either way. This is
+// backend-agnostic: native and ACP feed the same agent.Event stream, so they get
+// an identical rendered surface.
 //
 // All methods are called from the single ChatHandler event loop (no concurrency).
 type chatRenderer interface {
@@ -53,140 +56,80 @@ type chatRenderer interface {
 	EnsureStopped(ctx context.Context)
 }
 
-// --- wovenRenderer (tasks mode) -------------------------------------------
+// --- toolBlock: the tool-run sink (cosmetics only) -------------------------
 
-// wovenRenderer reproduces the original rendering: one answer-stream message
-// carrying both the reply text and the task cards (via TaskCardWriter). It is
-// used for the `tasks` progress mode.
-type wovenRenderer struct {
-	writer    *StreamWriter
-	tasks     progressRenderer
-	running   map[string]agent.TaskStatus
-	uploader  attachmentUploader
-	channelID string
-	threadTS  string
-	logger    *slog.Logger
+// toolBlock is one yellow run — a contiguous sequence of tool activity — rendered
+// as its own Slack message. The segmenter opens one per tool run and resolves it
+// (FinishWith) when reply text or the turn's end seals the run. Two cosmetics
+// satisfy it, chosen per-agent:
+//
+//   - StatusLineWriter — a single context-block line updated in place, resolved
+//     to a compact "✓ read · skill · write" summary (simplified mode).
+//   - cardToolBlock — grouped task cards in their own stream message (tasks mode).
+//
+// Both own a message distinct from the reply text, so a tool card can never land
+// inside an unflushed text run — the mid-paragraph interleaving that motivated
+// this design.
+type toolBlock interface {
+	UpdateFromEvent(ctx context.Context, ev *agent.TaskEvent) error
+	FinishWith(ctx context.Context, done string) error
 }
 
-func newWovenRenderer(writer *StreamWriter, tasks progressRenderer, uploader attachmentUploader, channelID, threadTS string, logger *slog.Logger) *wovenRenderer {
+// cardToolBlock renders a tool run as grouped task cards (TaskCardWriter) in its
+// OWN stream message, kept separate from the reply text. It tracks which cards
+// are still spinning so FinishWith can bring them to a terminal state before it
+// closes the message — a card is never stranded mid-spinner.
+type cardToolBlock struct {
+	stream  *StreamWriter
+	cards   *TaskCardWriter
+	running map[string]agent.TaskStatus
+	logger  *slog.Logger
+}
+
+func newCardToolBlock(api StreamAPI, channelID string, opts StreamWriterOptions, logger *slog.Logger) *cardToolBlock {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &wovenRenderer{writer: writer, tasks: tasks, running: map[string]agent.TaskStatus{}, uploader: uploader, channelID: channelID, threadTS: threadTS, logger: logger}
+	stream := NewStreamWriter(api, channelID, opts)
+	return &cardToolBlock{
+		stream:  stream,
+		cards:   NewTaskCardWriter(api, stream, 0, logger),
+		running: map[string]agent.TaskStatus{},
+		logger:  logger,
+	}
 }
 
-func (r *wovenRenderer) Text(ctx context.Context, text string) error {
-	return r.writer.Append(ctx, text)
-}
-
-// Attachment uploads the file as a separate Slack message. The woven reply lives
-// in one continuously-edited message, so a file is necessarily a sibling post; it
-// lands after the reply message's initial post.
-func (r *wovenRenderer) Attachment(ctx context.Context, a *agent.AttachmentEvent) error {
-	return deliverAttachment(ctx, r.uploader, r.channelID, r.threadTS, a)
-}
-
-func (r *wovenRenderer) Task(ctx context.Context, ev *agent.TaskEvent) error {
+func (b *cardToolBlock) UpdateFromEvent(ctx context.Context, ev *agent.TaskEvent) error {
 	if ev == nil {
 		return nil
 	}
-	if err := r.tasks.UpdateFromEvent(ctx, ev); err != nil {
-		r.logger.Warn("failed to send task update", "error", err, "task_id", ev.ID)
+	if err := b.cards.UpdateFromEvent(ctx, ev); err != nil {
+		return err
 	}
-	// Only an explicit terminal status retires a task; an update that merely
-	// refines the title (no status) keeps it tracked so Finish resolves it.
+	// An explicit terminal status retires a card; an update that merely refines a
+	// title (no status) keeps it tracked so FinishWith resolves it.
 	if isTerminalTaskStatus(ev.Status) {
-		delete(r.running, ev.ID)
+		delete(b.running, ev.ID)
 	} else {
-		r.running[ev.ID] = ev.Status
+		b.running[ev.ID] = ev.Status
 	}
 	return nil
 }
 
-// BeginInterjection flushes the single answer-stream message so buffered text is
-// pushed out before an out-of-band card posts. The woven model keeps one
-// continuously-edited message per turn, so the stream is not closed (closing would
-// drop the rest of the reply); the card interleaves with the open stream — the
-// same behaviour native has in tasks mode, so the two stay at parity.
-func (r *wovenRenderer) BeginInterjection(ctx context.Context) {
-	if r.writer.Started() && !r.writer.Stopped() {
-		if err := r.writer.Flush(ctx); err != nil {
-			r.logger.Debug("failed to flush stream before interjection", "error", err)
+// FinishWith resolves every still-spinning card to complete, then closes the
+// block's own message. done is the section's tool summary; task cards carry their
+// own titles, so it is unused here (it labels the status-line cosmetic instead).
+func (b *cardToolBlock) FinishWith(ctx context.Context, _ string) error {
+	for id := range b.running {
+		if err := b.cards.Complete(ctx, id, ""); err != nil {
+			b.logger.Debug("failed to resolve task card", "error", err, "task_id", id)
 		}
+		delete(b.running, id)
 	}
+	return b.stream.Stop(ctx)
 }
 
-func (r *wovenRenderer) Note(ctx context.Context, text string) error {
-	if !r.writer.Started() {
-		if err := r.writer.Start(ctx); err != nil {
-			return err
-		}
-	}
-	return r.writer.Append(ctx, text)
-}
-
-func (r *wovenRenderer) Finish(ctx context.Context, emptyNote string) error {
-	r.finalizeTasks(ctx, slack.TaskCardStatusComplete)
-	if !r.writer.Started() {
-		if err := r.writer.Start(ctx); err != nil {
-			return err
-		}
-	}
-	if emptyNote != "" {
-		if err := r.writer.Append(ctx, emptyNote); err != nil {
-			return err
-		}
-	}
-	return r.writer.Stop(ctx)
-}
-
-func (r *wovenRenderer) Fail(ctx context.Context, err error) error {
-	r.finalizeTasks(ctx, slack.TaskCardStatusError)
-	return r.writer.Fail(ctx, err)
-}
-
-func (r *wovenRenderer) Interrupted(ctx context.Context) {
-	if !r.writer.Started() || r.writer.Stopped() {
-		return
-	}
-	if err := r.writer.Append(ctx, "\n\n_interrupted_"); err != nil {
-		r.logger.Warn("failed to append interrupted marker", "error", err)
-		return
-	}
-	if err := r.writer.Stop(ctx); err != nil {
-		r.logger.Warn("failed to stop stream after interrupt", "error", err)
-	}
-}
-
-func (r *wovenRenderer) EnsureStopped(ctx context.Context) {
-	if r.tasks != nil {
-		_ = r.tasks.Finish(ctx)
-	}
-	if r.writer.Started() && !r.writer.Stopped() {
-		if err := r.writer.Stop(ctx); err != nil {
-			r.logger.Warn("failed to stop stream on cleanup", "error", err)
-		}
-	}
-}
-
-// finalizeTasks brings every still-running task to a terminal status so a card
-// is never stranded mid-spinner. Best-effort: errors are logged, not propagated.
-func (r *wovenRenderer) finalizeTasks(ctx context.Context, status slack.TaskCardStatus) {
-	for id := range r.running {
-		var err error
-		if status == slack.TaskCardStatusComplete {
-			err = r.tasks.Complete(ctx, id, "")
-		} else {
-			err = r.tasks.Fail(ctx, id, "")
-		}
-		if err != nil {
-			r.logger.Warn("failed to finalize task", "error", err, "task_id", id, "status", status)
-		}
-		delete(r.running, id)
-	}
-}
-
-// --- sectionRenderer (simplified mode) ------------------------------------
+// --- sectionRenderer -------------------------------------------------------
 
 type sectionMode int
 
@@ -201,7 +144,7 @@ const (
 // as the stream switches between text and tool activity.
 type sectionRenderer struct {
 	newText   func() *StreamWriter
-	newBlock  func() *StatusLineWriter
+	newBlock  func() toolBlock
 	uploader  attachmentUploader
 	channelID string
 	threadTS  string
@@ -209,11 +152,11 @@ type sectionRenderer struct {
 
 	mode   sectionMode
 	text   *StreamWriter
-	block  *StatusLineWriter
+	block  toolBlock
 	titles []string // distinct tool titles in the current block, for its summary
 }
 
-func newSectionRenderer(newText func() *StreamWriter, newBlock func() *StatusLineWriter, uploader attachmentUploader, channelID, threadTS string, logger *slog.Logger) *sectionRenderer {
+func newSectionRenderer(newText func() *StreamWriter, newBlock func() toolBlock, uploader attachmentUploader, channelID, threadTS string, logger *slog.Logger) *sectionRenderer {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -324,7 +267,8 @@ func (r *sectionRenderer) closeText(ctx context.Context) {
 }
 
 // closeBlock resolves the open tool block to a compact summary of the tools it
-// ran (e.g. "✓ read · skill · write"), then clears it.
+// ran (e.g. "✓ read · skill · write"), then clears it. The summary is used by the
+// status-line cosmetic; the card cosmetic carries its own per-card titles.
 func (r *sectionRenderer) closeBlock(ctx context.Context) {
 	if r.block != nil {
 		done := statusLineDoneText

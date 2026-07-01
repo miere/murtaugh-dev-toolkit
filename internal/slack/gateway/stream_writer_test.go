@@ -153,6 +153,81 @@ func planChunks(chunks []slack.StreamChunk) []slack.PlanUpdateChunk {
 	return out
 }
 
+// appendedText returns the markdown text painted on each AppendStreamContext
+// call, in order, so a test can assert both the paint cadence (how many flushes)
+// and the reconstructed message.
+func (f *fakeStreamAPI) appendedText(t *testing.T) []string {
+	t.Helper()
+	out := make([]string, 0, len(f.appendOptions))
+	for _, opts := range f.appendOptions {
+		text, err := extractMarkdownTextFromOptions(opts...)
+		if err != nil {
+			t.Fatalf("extract markdown: %v", err)
+		}
+		out = append(out, text)
+	}
+	return out
+}
+
+// TestStreamWriterHoldsPartialLine proves a text run is painted on line
+// boundaries: the eager first paint, then a held partial line that only lands
+// once its newline arrives. The size/time caps are disabled so the newline is
+// the sole trigger.
+func TestStreamWriterHoldsPartialLine(t *testing.T) {
+	api := &fakeStreamAPI{}
+	writer := NewStreamWriter(api, "C1", StreamWriterOptions{Interval: time.Hour, MinChars: 1000})
+	ctx := context.Background()
+	for _, delta := range []string{"First line.\n", "partial ", "still partial", " done\n"} {
+		if err := writer.Append(ctx, delta); err != nil {
+			t.Fatalf("Append(%q): %v", delta, err)
+		}
+	}
+	if err := writer.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	got := api.appendedText(t)
+	want := []string{"First line.\n", "partial still partial done\n"}
+	if len(got) != len(want) {
+		t.Fatalf("paint count = %d (%q), want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("paint %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestStreamWriterTrimsToWordBoundary proves the size cap never repaints
+// mid-word: when a long unbroken line trips the cap, it flushes only through the
+// last space, retaining the trailing partial word for the next paint.
+func TestStreamWriterTrimsToWordBoundary(t *testing.T) {
+	api := &fakeStreamAPI{}
+	writer := NewStreamWriter(api, "C1", StreamWriterOptions{Interval: time.Hour, MinChars: 10})
+	ctx := context.Background()
+	for _, delta := range []string{"Hello ", "world foo", "bar"} {
+		if err := writer.Append(ctx, delta); err != nil {
+			t.Fatalf("Append(%q): %v", delta, err)
+		}
+	}
+	if err := writer.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	got := api.appendedText(t)
+	want := []string{"Hello ", "world ", "foobar"}
+	if len(got) != len(want) {
+		t.Fatalf("paint count = %d (%q), want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("paint %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+	joined := got[0] + got[1] + got[2]
+	if joined != "Hello world foobar" {
+		t.Fatalf("reconstructed = %q, want %q", joined, "Hello world foobar")
+	}
+}
+
 func TestStreamWriterUsesNativeStreamingMethods(t *testing.T) {
 	api := &fakeStreamAPI{}
 	writer := NewStreamWriter(api, "C1", StreamWriterOptions{Interval: time.Hour, MinChars: 5})

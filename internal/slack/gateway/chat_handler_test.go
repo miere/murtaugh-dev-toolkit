@@ -18,6 +18,70 @@ import (
 // single-line view.
 func tasksProgress(string) config.ProgressDisplay { return config.ProgressDisplayTasks }
 
+// allStreamWrites returns every chunk group written to the stream — the initial
+// start options plus every append — so a test can assert what landed regardless
+// of which of the (now separate) text/tool streams carried it.
+func allStreamWrites(t *testing.T, api *fakeStreamAPI) [][]slack.StreamChunk {
+	t.Helper()
+	var groups [][]slack.StreamChunk
+	for _, opts := range append(append([][]slack.MsgOption{}, api.startOptions...), api.appendOptions...) {
+		chunks, err := extractChunksFromOptions(opts...)
+		if err != nil {
+			t.Fatalf("extract chunks: %v", err)
+		}
+		groups = append(groups, chunks)
+	}
+	return groups
+}
+
+// assertToolTextSeparation is the coherence guarantee for tasks mode: no single
+// stream write ever mixes tool (plan/task) chunks with reply (markdown) chunks.
+// Task cards and reply text always land in separate messages, so a card can never
+// interleave into an unflushed text run.
+func assertToolTextSeparation(t *testing.T, api *fakeStreamAPI) {
+	t.Helper()
+	for i, chunks := range allStreamWrites(t, api) {
+		var toolN, textN int
+		for _, c := range chunks {
+			switch c.(type) {
+			case slack.TaskUpdateChunk, slack.PlanUpdateChunk:
+				toolN++
+			case slack.MarkdownTextChunk:
+				textN++
+			}
+		}
+		if toolN > 0 && textN > 0 {
+			t.Fatalf("stream write %d mixes %d tool chunks with %d reply chunks; cards and text must be separate messages", i, toolN, textN)
+		}
+	}
+}
+
+// taskStatusSeen reports whether any stream write set task id to status.
+func taskStatusSeen(t *testing.T, api *fakeStreamAPI, id string, status slack.TaskCardStatus) bool {
+	t.Helper()
+	for _, chunks := range allStreamWrites(t, api) {
+		for _, tc := range taskChunks(chunks) {
+			if tc.ID == id && tc.Status == status {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// markdownSeen reports whether any stream write delivered reply text containing want.
+func markdownSeen(t *testing.T, api *fakeStreamAPI, want string) bool {
+	t.Helper()
+	for _, chunks := range allStreamWrites(t, api) {
+		for _, c := range chunks {
+			if md, ok := c.(slack.MarkdownTextChunk); ok && strings.Contains(md.Text, want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type fakeChatSessions struct {
 	// mu guards key/prompt: gateway-level tests drive Prompt from the startChat
 	// goroutine and poll these fields, so the write and read race without it.
@@ -287,37 +351,24 @@ func TestChatHandlerRoutesTaskEventsToTaskCardWriter(t *testing.T) {
 	if api.startedChannel != "C1" {
 		t.Fatalf("expected stream started on C1, got %q", api.startedChannel)
 	}
-	// Expect 2 appends: text + task complete. The first task update starts the stream.
-	if api.appends != 2 || len(api.startOptions) != 1 {
-		t.Fatalf("expected task start on stream start plus 2 appends, got starts=%d appends=%d", len(api.startOptions), api.appends)
-	}
-	// Verify the stream was started by opening the Plan block (plan_update)
-	// followed by the first task_update chunk.
-	chunks, err := extractChunksFromOptions(api.startOptions[0]...)
-	if err != nil {
-		t.Fatalf("extract chunks from first append: %v", err)
-	}
-	if plans := planChunks(chunks); len(plans) != 1 {
+	// Coherence guarantee: task cards and reply text render in separate messages —
+	// no stream write mixes tool chunks with reply markdown.
+	assertToolTextSeparation(t, api)
+	// The first task opens a Plan block with the task in progress.
+	first := allStreamWrites(t, api)[0]
+	if plans := planChunks(first); len(plans) != 1 {
 		t.Fatalf("expected the first task to open a plan block, got %d plan chunks", len(plans))
 	}
-	tasks := taskChunks(chunks)
-	if len(tasks) != 1 {
-		t.Fatalf("expected 1 task chunk in first append, got %d", len(tasks))
+	firstTasks := taskChunks(first)
+	if len(firstTasks) != 1 || firstTasks[0].ID != "task-1" || firstTasks[0].Title != "Searching" || firstTasks[0].Status != slack.TaskCardStatusInProgress {
+		t.Fatalf("unexpected first task chunk: %+v", firstTasks)
 	}
-	if tasks[0].ID != "task-1" || tasks[0].Title != "Searching" || tasks[0].Status != slack.TaskCardStatusInProgress {
-		t.Fatalf("unexpected first chunk: %+v", tasks[0])
+	// The task reaches a completed card, and the reply text is delivered.
+	if !taskStatusSeen(t, api, "task-1", slack.TaskCardStatusComplete) {
+		t.Fatalf("task-1 never reached a completed card")
 	}
-	// Verify the last append is a task completion.
-	lastChunks, err := extractChunksFromOptions(api.appendOptions[len(api.appendOptions)-1]...)
-	if err != nil {
-		t.Fatalf("extract chunks from last append: %v", err)
-	}
-	lastTasks := taskChunks(lastChunks)
-	if len(lastTasks) != 1 {
-		t.Fatalf("expected 1 task chunk in last append, got %d", len(lastTasks))
-	}
-	if lastTasks[0].Status != slack.TaskCardStatusComplete {
-		t.Fatalf("expected last chunk status complete, got %q", lastTasks[0].Status)
+	if !markdownSeen(t, api, "found it") {
+		t.Fatalf("reply text was not delivered")
 	}
 }
 
@@ -331,35 +382,29 @@ func TestChatHandlerAppendsFinalTextAfterTaskCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle returned error: %v", err)
 	}
-	if api.appends != 2 || len(api.startOptions) != 1 || api.stops != 1 {
-		t.Fatalf("expected task start plus task completion and final text appends, got starts=%d appends=%d stops=%d", len(api.startOptions), api.appends, api.stops)
+	// Separating cards into their own message structurally resolves the old
+	// constraint that a chunks-only stream could not later switch to markdown: the
+	// reply text is a fresh stream, never mixed with the task chunks.
+	assertToolTextSeparation(t, api)
+	// The task reaches a completed card and the reply text lands after it.
+	if !taskStatusSeen(t, api, "task-1", slack.TaskCardStatusComplete) {
+		t.Fatalf("task-1 never reached a completed card")
 	}
-	chunks, err := extractChunksFromOptions(api.appendOptions[0]...)
-	if err != nil {
-		t.Fatalf("extract chunks from task completion append: %v", err)
+	if !markdownSeen(t, api, "final answer") {
+		t.Fatalf("final reply text was not delivered")
 	}
-	if len(chunks) != 1 || chunks[0].(slack.TaskUpdateChunk).Status != slack.TaskCardStatusComplete {
-		t.Fatalf("expected first append to complete the task, got %+v", chunks)
+	// The reply text is delivered as a markdown chunk in its own stream write,
+	// distinct from any task chunk.
+	var replyGroups int
+	for _, chunks := range allStreamWrites(t, api) {
+		for _, c := range chunks {
+			if md, ok := c.(slack.MarkdownTextChunk); ok && md.Text == "final answer" {
+				replyGroups++
+			}
+		}
 	}
-	text, err := extractMarkdownTextFromOptions(api.appendOptions[1]...)
-	if err != nil {
-		t.Fatalf("extract markdown text from final append: %v", err)
-	}
-	if text != "final answer" {
-		t.Fatalf("expected final text append, got %q", text)
-	}
-	// Slack's chat.appendStream rejects a chunks-only stream that subsequently
-	// switches to the markdown_text form parameter; once we have sent task
-	// chunks the rest of the stream must keep going through the chunks API.
-	textChunks, err := extractChunksFromOptions(api.appendOptions[1]...)
-	if err != nil {
-		t.Fatalf("extract chunks from final append: %v", err)
-	}
-	if len(textChunks) != 1 {
-		t.Fatalf("expected final text to be sent as a single chunk, got %d chunks", len(textChunks))
-	}
-	if md, ok := textChunks[0].(slack.MarkdownTextChunk); !ok || md.Text != "final answer" {
-		t.Fatalf("expected final text to be a markdown_text chunk, got %+v", textChunks[0])
+	if replyGroups != 1 {
+		t.Fatalf("expected the reply text in exactly one stream write, got %d", replyGroups)
 	}
 }
 
