@@ -18,7 +18,7 @@ func newTestSectionRenderer(api *fakeStreamAPI, msgr *fakeStatusMessenger) *sect
 		func() *StreamWriter {
 			return NewStreamWriter(api, "C1", StreamWriterOptions{ThreadTS: "100.0", Interval: time.Hour, MinChars: 1, Logger: discardLogger()})
 		},
-		func() *StatusLineWriter {
+		func() toolBlock {
 			return NewStatusLineWriter(msgr, "C1", "100.0", time.Hour, discardLogger())
 		},
 		nil, "C1", "100.0",

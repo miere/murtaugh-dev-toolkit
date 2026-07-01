@@ -22,7 +22,7 @@ type StreamWriter struct {
 
 	streamChannel string
 	streamTS      string
-	buffer        strings.Builder
+	pending       string
 	lastFlush     time.Time
 	flushes       int
 	bytesFlushed  int
@@ -92,6 +92,20 @@ func (w *StreamWriter) StreamTS() string      { return w.streamTS }
 func (w *StreamWriter) Started() bool         { return w.started }
 func (w *StreamWriter) Stopped() bool         { return w.stopped }
 
+// Append buffers a reply delta and paints it on a *coherent boundary*, never
+// mid-thought. Coherence here is a paint concern only — the segmenter has
+// already sealed this run against any tool activity, so buffering can never
+// reorder content, only pace how a text run grows on screen:
+//
+//   - the first delta paints eagerly, so the reply appears promptly;
+//   - thereafter we flush through the last newline, so complete lines (lists,
+//     code, paragraphs) land whole;
+//   - a long or stale unbroken line still streams (the latency/size cap), but is
+//     trimmed to the last space so prose never repaints mid-word.
+//
+// Slack's streaming API concatenates appends into one growing message, so a
+// retained trailing fragment is simply prepended to the next flush — splitting
+// on a boundary changes *when* the paint happens, never the final text.
 func (w *StreamWriter) Append(ctx context.Context, text string) error {
 	if text == "" || w.stopped {
 		return nil
@@ -99,22 +113,35 @@ func (w *StreamWriter) Append(ctx context.Context, text string) error {
 	if err := w.Start(ctx); err != nil {
 		return err
 	}
-	w.buffer.WriteString(text)
+	w.pending += text
 	if w.flushes == 0 {
 		return w.Flush(ctx)
 	}
-	if w.buffer.Len() < w.minChars && time.Since(w.lastFlush) < w.interval {
-		return nil
+	if i := strings.LastIndexByte(w.pending, '\n'); i >= 0 {
+		return w.emit(ctx, i+1)
 	}
-	return w.Flush(ctx)
+	if len(w.pending) >= w.minChars || time.Since(w.lastFlush) >= w.interval {
+		if i := strings.LastIndexByte(w.pending, ' '); i >= 0 {
+			return w.emit(ctx, i+1)
+		}
+		return w.Flush(ctx)
+	}
+	return nil
 }
 
+// Flush paints all buffered text. Used on seal (Stop) and interjection.
 func (w *StreamWriter) Flush(ctx context.Context) error {
-	if !w.started || w.stopped || w.buffer.Len() == 0 {
+	return w.emit(ctx, len(w.pending))
+}
+
+// emit paints the first n bytes of the buffer to Slack and retains the rest for
+// the next flush. n == 0 (or an unstarted/stopped stream) is a no-op.
+func (w *StreamWriter) emit(ctx context.Context, n int) error {
+	if !w.started || w.stopped || n == 0 {
 		return nil
 	}
-	text := w.buffer.String()
-	w.buffer.Reset()
+	text := w.pending[:n]
+	w.pending = w.pending[n:]
 	startedAt := time.Now()
 	_, _, err := w.api.AppendStreamContext(ctx, w.streamChannel, w.streamTS, slack.MsgOptionChunks(slack.NewMarkdownTextChunk(text)))
 	if err != nil {

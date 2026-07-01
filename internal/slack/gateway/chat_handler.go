@@ -223,20 +223,23 @@ func (h *ChatHandler) resolveProgressDisplay(agent string) config.ProgressDispla
 	return config.ProgressDisplaySimplified
 }
 
-// newChatRenderer builds the per-turn renderer for the resolved progress mode:
-// the woven task-card view (tasks mode — cards + reply in one answer stream) or
-// the alternating section view (simplified mode, the default — tool blocks and
-// reply messages as a separate, ordered sequence).
+// newChatRenderer builds the per-turn renderer. There is a single segmentation
+// model (sectionRenderer) — an ordered, seal-on-boundary sequence of separate
+// messages — so ordering is coherent for every agent, native or ACP. The resolved
+// progress mode only picks the tool-block cosmetic: grouped task cards (tasks) or
+// a compact status line (simplified, the default). Both ride the same
+// segmentation and each own a message distinct from the reply text, so a tool
+// update can never interleave into an unflushed text run.
 func (h *ChatHandler) newChatRenderer(mode config.ProgressDisplay, channelID, threadTS string, opts StreamWriterOptions) chatRenderer {
-	if mode == config.ProgressDisplayTasks {
-		writer := NewStreamWriter(h.api, channelID, opts)
-		return newWovenRenderer(writer, NewTaskCardWriter(h.api, writer, 0, h.logger), h.uploader, channelID, threadTS, h.logger)
+	newBlock := func() toolBlock {
+		if mode == config.ProgressDisplayTasks {
+			return newCardToolBlock(h.api, channelID, opts, h.logger)
+		}
+		return NewStatusLineWriter(h.statusMessenger, channelID, threadTS, 0, h.logger)
 	}
 	return newSectionRenderer(
 		func() *StreamWriter { return NewStreamWriter(h.api, channelID, opts) },
-		func() *StatusLineWriter {
-			return NewStatusLineWriter(h.statusMessenger, channelID, threadTS, 0, h.logger)
-		},
+		newBlock,
 		h.uploader,
 		channelID,
 		threadTS,
