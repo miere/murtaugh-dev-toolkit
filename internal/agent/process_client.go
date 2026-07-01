@@ -46,6 +46,15 @@ type ProcessOptions struct {
 	// keeping an ACP agent's voice aligned with native — even when the agent runs
 	// in an external project with its own AGENTS.md. Empty injects nothing.
 	Persona string
+	// ToolHeartbeatInterval is how often a still-running tool emits a keep-alive
+	// status event so the gateway's idle watchdog does not treat a long,
+	// output-silent tool call as a stall. Zero takes defaultACPToolHeartbeatInterval.
+	ToolHeartbeatInterval time.Duration
+	// ToolCeiling bounds how long a single tool call may hold a turn before it is
+	// failed with ErrToolCeiling; the heartbeat suppresses the idle watchdog while a
+	// tool runs, so this is what stops a wedged tool. Zero takes
+	// defaultACPToolCeiling; a negative value disables the ceiling.
+	ToolCeiling time.Duration
 }
 
 type ProcessClient struct {
@@ -67,6 +76,10 @@ type ProcessClient struct {
 	// context so an agent-initiated session/request_permission can be routed to a
 	// human in the right thread and cancelled when that turn is interrupted.
 	dests map[string]promptScope
+	// toolWatch records, per active session, the in-flight tool set feeding that
+	// turn's heartbeat/ceiling. Written by deliverNotification (readLoop) and read
+	// by the heartbeat goroutine; guarded by mu.
+	toolWatch map[string]*toolWatcher
 	// caps records what the agent advertised in its initialize response. Set once
 	// by Initialize before any prompt runs, then read-only; guarded by mu.
 	caps AgentCapabilities
@@ -192,7 +205,7 @@ func NewProcessClient(opts ProcessOptions) *ProcessClient {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &ProcessClient{opts: opts, log: logger, now: time.Now, pending: make(map[int64]chan rpcResponse), subscribers: make(map[string]chan Event), dests: make(map[string]promptScope)}
+	return &ProcessClient{opts: opts, log: logger, now: time.Now, pending: make(map[int64]chan rpcResponse), subscribers: make(map[string]chan Event), dests: make(map[string]promptScope), toolWatch: make(map[string]*toolWatcher)}
 }
 
 func (c *ProcessClient) Initialize(ctx context.Context) error {
@@ -356,23 +369,46 @@ func (c *ProcessClient) Prompt(ctx context.Context, sessionID string, request Pr
 	}
 	events := make(chan Event, 32)
 	sawText := &atomic.Bool{}
+	watcher := newToolWatcher(c.now)
 	c.mu.Lock()
 	c.subscribers[sessionID] = events
 	// Stash where this turn is talking and its context so a permission request
 	// raised mid-turn can be asked in the same thread and cancelled with the turn.
 	c.dests[sessionID] = promptScope{loc: TurnLocation{ChannelID: request.Channel, ThreadTS: request.Thread}, ctx: ctx, sawText: sawText}
+	c.toolWatch[sessionID] = watcher
 	c.mu.Unlock()
 
 	go func() {
+		// The tool heartbeat keeps this turn alive while a tool legitimately runs and
+		// fails it if one runs past its ceiling. It rides an inner cancellable context
+		// so the ceiling can unblock the in-flight session/prompt (the ACP agent may
+		// still be executing the tool) without disturbing the caller's ctx.
+		promptCtx, cancelPrompt := context.WithCancelCause(ctx)
+		defer cancelPrompt(nil)
+		stopHB := make(chan struct{})
+		hbDone := make(chan struct{})
+		go c.heartbeat(promptCtx, watcher, events, cancelPrompt, stopHB, hbDone)
 		defer func() {
+			// Stop the heartbeat and wait for it to exit before closing events, so a
+			// keep-alive send can never race the close.
+			close(stopHB)
+			<-hbDone
+			c.clearToolWatch(sessionID, watcher)
 			c.unsubscribe(sessionID, events)
 			close(events)
 		}()
-		result, err := c.call(ctx, "session/prompt", map[string]any{
+		result, err := c.call(promptCtx, "session/prompt", map[string]any{
 			"sessionId": sessionID,
 			"prompt":    c.promptBlocks(request),
 		})
 		if err != nil {
+			// A tool that blew past its ceiling cancels promptCtx with ErrToolCeiling;
+			// surface that specific cause rather than the bare context cancellation, so
+			// the consumer can render why the turn stopped and drop the session.
+			if cause := context.Cause(promptCtx); errors.Is(cause, ErrToolCeiling) {
+				events <- Event{Type: EventError, Error: cause}
+				return
+			}
 			events <- Event{Type: EventError, Error: err}
 			return
 		}
@@ -470,6 +506,17 @@ func (c *ProcessClient) unsubscribe(sessionID string, events chan Event) {
 	if c.subscribers[sessionID] == events {
 		delete(c.subscribers, sessionID)
 		delete(c.dests, sessionID)
+	}
+}
+
+// clearToolWatch retracts a prompt's tool watcher, but only if it is still the
+// live one — a racing follow-up prompt on the same session installs its own, and
+// an unconditional delete would blind that turn's heartbeat.
+func (c *ProcessClient) clearToolWatch(sessionID string, w *toolWatcher) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.toolWatch[sessionID] == w {
+		delete(c.toolWatch, sessionID)
 	}
 }
 
@@ -968,6 +1015,16 @@ func (c *ProcessClient) deliverNotification(notification rpcNotification) {
 	c.log.Debug("ACP session/update", "session_id", sessionID, "update", kind)
 
 	if task := extractTask(notification.Params); task != nil {
+		// Feed the turn's tool watcher so its heartbeat knows a tool is in flight
+		// (and for how long). tool_call updates are the only signal a long,
+		// output-silent tool gives; plan updates below are the agent's task list,
+		// not tool execution, so they are deliberately not watched.
+		c.mu.Lock()
+		w := c.toolWatch[sessionID]
+		c.mu.Unlock()
+		if w != nil {
+			w.observe(task.ID, task.Title, task.Status)
+		}
 		// Block on the send: dropping task or text notifications truncates the
 		// agent response in the consumer (chat handler). The readLoop is back-
 		// pressured by the consumer, which is the intended behaviour.

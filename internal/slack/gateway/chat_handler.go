@@ -259,6 +259,18 @@ func resetIdleTimer(t *time.Timer, d time.Duration) {
 	t.Reset(d)
 }
 
+// discardSession drops the conversation→session binding when a session may be
+// wedged — an idle timeout or a tool that blew past its ceiling — and the agent
+// cannot be told to abandon its in-flight work (no session/cancel). The next turn
+// then opens a fresh session; the shared agent process is left running.
+func discardSession(sessions ChatSessionManager, key agent.ConversationKey) {
+	if d, ok := sessions.(interface {
+		Discard(agent.ConversationKey)
+	}); ok {
+		d.Discard(key)
+	}
+}
+
 func (h *ChatHandler) Warm(ctx context.Context) error {
 	for name, manager := range h.sessions {
 		warmer, ok := manager.(ChatSessionWarmer)
@@ -500,11 +512,7 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 				// than reusing a session that may still hold an in-flight tool call —
 				// agents without session/cancel cannot be told to abandon it. The
 				// shared agent process keeps running; only this binding is reset.
-				if d, ok := sessions.(interface {
-					Discard(agent.ConversationKey)
-				}); ok {
-					d.Discard(key)
-				}
+				discardSession(sessions, key)
 			}
 			if nerr := renderer.Note(ctx, fmt.Sprintf(idleTimeoutNotice, h.effectiveIdleTimeout().Round(time.Second))); nerr != nil {
 				h.logger.Warn("failed to post idle-timeout notice", "error", nerr)
@@ -539,9 +547,10 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 					return err
 				}
 			case agent.EventStatus:
-				// Progress/meta only (e.g. compaction, empty-reply retry) — never
-				// part of the reply. The idle timer was already reset above. (ACP
-				// never emits EventStatus; this is native meta.)
+				// Progress/meta only (e.g. compaction, empty-reply retry, or a
+				// tool-heartbeat keep-alive from either backend) — never part of the
+				// reply. The idle timer was already reset above, which is the whole
+				// point of the heartbeat: it keeps a long tool's turn alive.
 				if event.Text != "" {
 					h.logger.Debug("agent status", "source", req.Source, "channel", req.ChannelID, "status", event.Text)
 				}
@@ -590,6 +599,13 @@ func (h *ChatHandler) Handle(ctx context.Context, req ChatRequest) (retErr error
 					return event.Error
 				}
 				turnErr = event.Error
+				if errors.Is(event.Error, agent.ErrToolCeiling) {
+					// A tool blew past its ceiling. The ACP agent may still be running it
+					// and (lacking session/cancel) cannot be stopped, so drop the session
+					// binding like the idle path — the next message opens a fresh session.
+					discardSession(sessions, key)
+					h.logger.Warn("dropped ACP session after tool ceiling", "source", req.Source, "channel", req.ChannelID, "session_id", sessionID)
+				}
 				return renderer.Fail(ctx, event.Error)
 			case agent.EventComplete:
 				stopReason = event.StopReason
