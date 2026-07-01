@@ -515,6 +515,40 @@ func TestParseWorkflowDelegateToAgentTrigger(t *testing.T) {
 	}
 }
 
+func TestWorkflowDelegateToAgentAllowsEmptyAgent(t *testing.T) {
+	// A top-level delegate-to-agent trigger starts a chat turn; an omitted agent
+	// means "use the channel router", so validation must accept it.
+	if _, err := loadWithAgentAndRules(t, "workflow-rules.yaml", `workflow-rules:
+  review:
+    request_event: interactive
+    match:
+      type: block_actions
+    trigger:
+      - delegate-to-agent:
+          prompt: "Review the PR"
+`); err != nil {
+		t.Fatalf("expected empty agent to be valid for a top-level trigger, got: %v", err)
+	}
+}
+
+func TestReplyToSlackDelegateStillRequiresAgent(t *testing.T) {
+	// The headless reply-to-slack surface has no channel router to fall back on,
+	// so an agent is still mandatory there.
+	_, err := loadWithAgentAndRules(t, "workflow-rules.yaml", `workflow-rules:
+  review:
+    request_event: interactive
+    match:
+      type: block_actions
+    trigger:
+      - reply-to-slack:
+          delegate-to-agent:
+            prompt: "Return JSON"
+`)
+	if err == nil || !strings.Contains(err.Error(), "delegate-to-agent requires an agent") {
+		t.Fatalf("expected reply-to-slack to require an agent, got: %v", err)
+	}
+}
+
 func TestParseReplyToSlackDelegateToAgent(t *testing.T) {
 	cfg, err := loadWithAgentAndRules(t, "workflow-rules.yaml", `workflow-rules:
   review:

@@ -423,14 +423,17 @@ type ReplyToSlackTriggerConfig struct {
 	DelegateToAgent *DelegateToAgentConfig `yaml:"delegate-to-agent"`
 }
 
-// DelegateToAgentConfig hands work to an agent in an isolated one-shot session.
-// Where it sits decides how its output is treated: nested in a reply-to-slack
-// trigger or an unfurl action, the agent's final output must be a valid JSON
-// Slack message and is rendered; as a top-level workflow trigger it is
-// fire-and-forget (the agent acts through its own tools). The prompt is
-// rendered with the same template data the surrounding surface's templates
-// receive (the interaction Payload for workflow rules, the URL/Captures for
-// unfurls).
+// DelegateToAgentConfig hands work to an agent. Where it sits decides how:
+// nested in a reply-to-slack trigger or an unfurl action, the agent runs in an
+// isolated one-shot session and its final output must be a valid JSON Slack
+// message that gets rendered (Agent is required there). As a top-level workflow
+// trigger it instead starts a real chat turn in the triggering thread — the
+// same pipeline a Slack @mention drives (streaming, journaling, approval gate)
+// — so a button click wakes the agent visibly and steerably. In that position
+// Agent is an optional override: empty means "use the channel router" (the
+// agent a real mention in that channel would reach). The prompt is rendered
+// with the same template data the surrounding surface's templates receive (the
+// interaction Payload for workflow rules, the URL/Captures for unfurls).
 type DelegateToAgentConfig struct {
 	Agent  string `yaml:"agent"`
 	Prompt string `yaml:"prompt"`
@@ -1085,7 +1088,7 @@ func validateTrigger(trigger TriggerConfig, agents map[string]AgentProfile) erro
 			return validateRun(*rts.Run)
 		}
 		if hasDelegate {
-			return validateDelegate(rts.DelegateToAgent, agents)
+			return validateDelegate(rts.DelegateToAgent, agents, false)
 		}
 	case "run":
 		if trigger.Run == nil {
@@ -1093,7 +1096,7 @@ func validateTrigger(trigger TriggerConfig, agents map[string]AgentProfile) erro
 		}
 		return validateRun(*trigger.Run)
 	case "delegate-to-agent":
-		return validateDelegate(trigger.DelegateToAgent, agents)
+		return validateDelegate(trigger.DelegateToAgent, agents, true)
 	default:
 		return fmt.Errorf("unsupported trigger action %q", trigger.Type)
 	}
@@ -1107,20 +1110,24 @@ func validateRun(run RunTriggerConfig) error {
 	return nil
 }
 
-// validateDelegate checks a delegate-to-agent block: it needs both an agent and
-// a prompt, and the agent must be defined in agents.yaml.
-func validateDelegate(d *DelegateToAgentConfig, agents map[string]AgentProfile) error {
+// validateDelegate checks a delegate-to-agent block: it always needs a prompt,
+// and a named agent must be defined in agents.yaml. When agentOptional is true
+// (the top-level delegate-to-agent trigger, which starts a chat turn) an empty
+// agent is allowed and means "use the channel router"; the headless surfaces
+// (reply-to-slack, unfurl) still require an explicit agent.
+func validateDelegate(d *DelegateToAgentConfig, agents map[string]AgentProfile, agentOptional bool) error {
 	if d == nil {
 		return errors.New("delegate-to-agent config is required")
 	}
 	if strings.TrimSpace(d.Agent) == "" {
-		return errors.New("delegate-to-agent requires an agent")
+		if !agentOptional {
+			return errors.New("delegate-to-agent requires an agent")
+		}
+	} else if _, ok := agents[d.Agent]; !ok {
+		return fmt.Errorf("delegate-to-agent references unknown agent %q", d.Agent)
 	}
 	if strings.TrimSpace(d.Prompt) == "" {
 		return errors.New("delegate-to-agent requires a prompt")
-	}
-	if _, ok := agents[d.Agent]; !ok {
-		return fmt.Errorf("delegate-to-agent references unknown agent %q", d.Agent)
 	}
 	return nil
 }
@@ -1273,7 +1280,7 @@ func validateUnfurlRule(rule UnfurlRuleConfig, agents map[string]AgentProfile) e
 		}
 	}
 	if hasDelegate {
-		if err := validateDelegate(rule.Unfurl.DelegateToAgent, agents); err != nil {
+		if err := validateDelegate(rule.Unfurl.DelegateToAgent, agents, false); err != nil {
 			errs = append(errs, err)
 		}
 	}

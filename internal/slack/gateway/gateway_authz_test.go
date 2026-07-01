@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/miere/murtaugh/internal/config"
+	"github.com/miere/murtaugh/internal/workflow"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
@@ -145,6 +146,8 @@ type recordingWorkflow struct {
 	calls    int
 	lastUser string
 }
+
+func (r *recordingWorkflow) SetChatStarter(workflow.ChatStarter) {}
 
 func (r *recordingWorkflow) Execute(_ context.Context, interaction slack.InteractionCallback, _ []byte) error {
 	r.mu.Lock()

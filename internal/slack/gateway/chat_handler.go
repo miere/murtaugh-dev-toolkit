@@ -105,6 +105,10 @@ type ChatRequest struct {
 	Text      string
 	DM        bool
 	Source    string
+	// AgentOverride pins the agent for this turn, bypassing channel routing.
+	// Empty means route by channel as usual. Set by a delegate-to-agent trigger
+	// whose config names an explicit agent.
+	AgentOverride string
 	// Files carries any attachments on the triggering Slack message. Plain-text
 	// files are fetched and folded into the prompt so the agent can read them.
 	Files []slack.File

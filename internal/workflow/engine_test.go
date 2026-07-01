@@ -160,13 +160,11 @@ func TestEnginePostsCommandRenderedResponse(t *testing.T) {
 }
 
 type fakeDelegator struct {
-	jsonOut   []byte
-	jsonErr   error
-	forgetErr error
+	jsonOut []byte
+	jsonErr error
 
 	agents  []string
 	prompts []string
-	forgets int
 }
 
 func (f *fakeDelegator) RunForJSON(_ context.Context, agent, prompt string) ([]byte, error) {
@@ -175,11 +173,15 @@ func (f *fakeDelegator) RunForJSON(_ context.Context, agent, prompt string) ([]b
 	return f.jsonOut, f.jsonErr
 }
 
-func (f *fakeDelegator) RunAndForget(_ context.Context, agent, prompt string) error {
-	f.agents = append(f.agents, agent)
-	f.prompts = append(f.prompts, prompt)
-	f.forgets++
-	return f.forgetErr
+// fakeChatStarter captures the chat turns a delegate-to-agent trigger starts.
+type fakeChatStarter struct {
+	specs []ChatSpec
+	err   error
+}
+
+func (f *fakeChatStarter) StartChat(_ context.Context, spec ChatSpec) error {
+	f.specs = append(f.specs, spec)
+	return f.err
 }
 
 func delegateReplyConfig(prompt string) config.Config {
@@ -228,9 +230,44 @@ func TestEngineDelegateReplyNonJSONSkipsPost(t *testing.T) {
 	}
 }
 
-func TestEngineTopLevelDelegateFireAndForget(t *testing.T) {
+func TestEngineTopLevelDelegateStartsChat(t *testing.T) {
 	poster := &recordingPoster{}
-	del := &fakeDelegator{}
+	chat := &fakeChatStarter{}
+	cfg := workflowConfig()
+	rule := cfg.WorkflowRules["code-review-approval"]
+	rule.Triggers = []config.TriggerConfig{{
+		Type:            "delegate-to-agent",
+		DelegateToAgent: &config.DelegateToAgentConfig{Agent: "default", Prompt: "Review {{ index .Payload.channel \"name\" }}"},
+	}}
+	cfg.WorkflowRules["code-review-approval"] = rule
+
+	engine := NewEngine(cfg, Options{Poster: poster})
+	engine.SetChatStarter(chat)
+	if err := engine.Execute(context.Background(), approvalInteraction(), nil); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if len(chat.specs) != 1 {
+		t.Fatalf("expected one chat turn, got %#v", chat.specs)
+	}
+	got := chat.specs[0]
+	if got.ChannelID != "C0REVIEW" || got.ThreadTS != "1782886620.260769" {
+		t.Fatalf("chat turn did not target the button's thread: %#v", got)
+	}
+	if got.Agent != "default" {
+		t.Fatalf("expected explicit agent override, got %q", got.Agent)
+	}
+	if got.Source != "workflow:code-review-approval" {
+		t.Fatalf("unexpected source: %q", got.Source)
+	}
+	if !strings.Contains(got.Text, "nc-code-reviews") {
+		t.Fatalf("prompt was not rendered with payload: %q", got.Text)
+	}
+	if len(poster.bodies) != 0 {
+		t.Fatalf("delegate-to-agent must not post directly, got: %#v", poster.bodies)
+	}
+}
+
+func TestEngineTopLevelDelegateRequiresChatStarter(t *testing.T) {
 	cfg := workflowConfig()
 	rule := cfg.WorkflowRules["code-review-approval"]
 	rule.Triggers = []config.TriggerConfig{{
@@ -239,15 +276,10 @@ func TestEngineTopLevelDelegateFireAndForget(t *testing.T) {
 	}}
 	cfg.WorkflowRules["code-review-approval"] = rule
 
-	engine := NewEngine(cfg, Options{Poster: poster, Delegator: del})
-	if err := engine.Execute(context.Background(), approvalInteraction(), nil); err != nil {
-		t.Fatalf("Execute returned error: %v", err)
-	}
-	if del.forgets != 1 || del.agents[0] != "default" {
-		t.Fatalf("expected one fire-and-forget delegation, got forgets=%d agents=%#v", del.forgets, del.agents)
-	}
-	if len(poster.bodies) != 0 {
-		t.Fatalf("fire-and-forget must not post, got: %#v", poster.bodies)
+	engine := NewEngine(cfg, Options{}) // no chat starter wired (chat disabled)
+	err := engine.Execute(context.Background(), approvalInteraction(), nil)
+	if err == nil || !strings.Contains(err.Error(), "chat to be enabled") {
+		t.Fatalf("expected chat-required error, got %v", err)
 	}
 }
 
@@ -376,7 +408,15 @@ func approvalInteraction() slack.InteractionCallback {
 	return slack.InteractionCallback{
 		Type:        slack.InteractionTypeBlockActions,
 		ResponseURL: "https://hooks.slack.test/response",
-		Channel:     slack.Channel{GroupConversation: slack.GroupConversation{Name: "nc-code-reviews"}},
+		Team:        slack.Team{ID: "T0TEAM"},
+		User:        slack.User{ID: "U0ADMIN"},
+		Channel: slack.Channel{GroupConversation: slack.GroupConversation{
+			Conversation: slack.Conversation{ID: "C0REVIEW"},
+			Name:         "nc-code-reviews",
+		}},
+		// The container message carrying the button is the thread a delegated
+		// chat turn replies in.
+		Message: slack.Message{Msg: slack.Msg{Timestamp: "1782886620.260769"}},
 		ActionCallback: slack.ActionCallbacks{BlockActions: []*slack.BlockAction{{
 			BlockID:  "github_pull_request",
 			ActionID: "approve_only",

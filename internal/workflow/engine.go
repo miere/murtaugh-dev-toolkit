@@ -20,12 +20,47 @@ import (
 	"github.com/slack-go/slack"
 )
 
-// AgentDelegator runs a delegate-to-agent action. A reply-to-slack trigger
-// captures JSON output via RunForJSON and posts it; a top-level trigger is
-// fire-and-forget via RunAndForget. *agentdelegate.Runner satisfies it.
+// AgentDelegator runs the headless one-shot delegation used by a
+// reply-to-slack trigger, which captures JSON output via RunForJSON and posts
+// it. *agentdelegate.Runner satisfies it. (A top-level delegate-to-agent
+// trigger no longer goes through here — it starts a real chat turn via
+// ChatStarter instead.)
 type AgentDelegator interface {
 	RunForJSON(ctx context.Context, agent, prompt string) ([]byte, error)
-	RunAndForget(ctx context.Context, agent, prompt string) error
+}
+
+// ChatStarter begins a real, thread-bound chat turn — the same pipeline a Slack
+// @mention drives (streaming, journaling, approval gate, per-thread session
+// binding). A top-level delegate-to-agent trigger uses it so a button click
+// wakes the agent visibly in the triggering thread instead of running a
+// fire-and-forget headless session. *gateway.Gateway satisfies it; it is set
+// after construction (SetChatStarter) since the gateway owns the engine.
+type ChatStarter interface {
+	StartChat(ctx context.Context, spec ChatSpec) error
+}
+
+// ChatSpec is the target and prompt for a delegated chat turn. Agent is an
+// optional override; when empty the gateway's channel router picks the agent
+// (the same routing a real mention in ChannelID would get). Source labels the
+// turn's origin for journaling.
+type ChatSpec struct {
+	TeamID    string
+	ChannelID string
+	ThreadTS  string
+	UserID    string
+	Text      string
+	Agent     string
+	Source    string
+}
+
+// chatTarget is the conversation coordinates lifted from the interaction that
+// triggered a rule, threaded down to a delegate-to-agent trigger so it can
+// reply in the same channel/thread the button lives in.
+type chatTarget struct {
+	TeamID    string
+	ChannelID string
+	ThreadTS  string
+	UserID    string
 }
 
 type Engine struct {
@@ -33,11 +68,18 @@ type Engine struct {
 	poster      ResponsePoster
 	runner      CommandRunner
 	delegator   AgentDelegator
+	chat        ChatStarter
 	templateDir string
 	templateFS  fs.FS
 	logger      *slog.Logger
 	recorder    journal.Recorder
 }
+
+// SetChatStarter wires the chat pipeline used by delegate-to-agent triggers.
+// The gateway calls this after it constructs both itself and the engine (it is
+// its own ChatStarter). Left nil when chat/ACP is disabled, in which case a
+// delegate-to-agent trigger reports that chat is required.
+func (e *Engine) SetChatStarter(c ChatStarter) { e.chat = c }
 
 type Rule struct {
 	Name   string
@@ -127,6 +169,14 @@ func (e *Engine) Execute(ctx context.Context, interaction slack.InteractionCallb
 		ChannelID: interaction.Channel.ID,
 		UserID:    interaction.User.ID,
 	}
+	// The button's own message is the thread root a delegated chat turn replies
+	// in — same coordinate the legacy `run` rule passed as `--thread`.
+	target := chatTarget{
+		TeamID:    interaction.Team.ID,
+		ChannelID: interaction.Channel.ID,
+		ThreadTS:  interaction.Message.Timestamp,
+		UserID:    interaction.User.ID,
+	}
 
 	for _, rule := range e.rules {
 		if rule.Config.RequestEvent != "interactive" || !matches(rule.Config.Match, payload) {
@@ -137,7 +187,7 @@ func (e *Engine) Execute(ctx context.Context, interaction slack.InteractionCallb
 		ruleKeys.RuleID = rule.Name
 		e.record(ctx, "workflow.matched", journal.LevelInfo, "matched workflow rule "+rule.Name, ruleKeys,
 			map[string]any{"interaction_type": string(interaction.Type)})
-		return e.executeRule(ctx, rule, interaction.ResponseURL, payload, runStdin, keys)
+		return e.executeRule(ctx, rule, interaction.ResponseURL, payload, runStdin, keys, target)
 	}
 
 	e.logger.Info(
@@ -155,7 +205,7 @@ func (e *Engine) Execute(ctx context.Context, interaction slack.InteractionCallb
 	return nil
 }
 
-func (e *Engine) executeRule(ctx context.Context, rule Rule, responseURL string, payload map[string]any, runStdin []byte, keys journal.Keys) error {
+func (e *Engine) executeRule(ctx context.Context, rule Rule, responseURL string, payload map[string]any, runStdin []byte, keys journal.Keys, target chatTarget) error {
 	keys.RuleID = rule.Name
 	for _, trigger := range rule.Config.Triggers {
 		switch trigger.Type {
@@ -196,7 +246,7 @@ func (e *Engine) executeRule(ctx context.Context, rule Rule, responseURL string,
 			e.record(ctx, "workflow.trigger", journal.LevelInfo, "run command executed", keys,
 				map[string]any{"trigger": "run"})
 		case "delegate-to-agent":
-			if err := e.delegate(ctx, *trigger.DelegateToAgent, payload); err != nil {
+			if err := e.delegate(ctx, *trigger.DelegateToAgent, payload, target, rule.Name); err != nil {
 				e.record(ctx, "workflow.trigger", journal.LevelError, "delegate-to-agent failed", keys,
 					map[string]any{"trigger": "delegate-to-agent", "error": err.Error()})
 				return fmt.Errorf("delegate-to-agent for rule %s: %w", rule.Name, err)
@@ -223,18 +273,33 @@ func (e *Engine) record(ctx context.Context, kind string, level journal.Level, s
 	})
 }
 
-// delegate runs a fire-and-forget top-level delegate-to-agent trigger: it
-// renders the prompt against the interaction payload and hands it to the agent,
-// discarding any text output (the agent acts through its own tools).
-func (e *Engine) delegate(ctx context.Context, cfg config.DelegateToAgentConfig, payload map[string]any) error {
-	if e.delegator == nil {
-		return errors.New("delegate-to-agent requires ACP to be enabled")
+// delegate runs a top-level delegate-to-agent trigger by starting a real chat
+// turn in the triggering thread: it renders the prompt against the interaction
+// payload and hands it to the gateway's chat pipeline. The turn streams into
+// the thread, journals, and can use the approval gate — so a click is as
+// visible and steerable as if the user had @mentioned the agent by hand.
+// cfg.Agent, when set, overrides the channel router; empty falls back to the
+// route ChannelID would resolve to.
+func (e *Engine) delegate(ctx context.Context, cfg config.DelegateToAgentConfig, payload map[string]any, target chatTarget, ruleName string) error {
+	if e.chat == nil {
+		return errors.New("delegate-to-agent requires chat to be enabled")
+	}
+	if target.ChannelID == "" {
+		return errors.New("delegate-to-agent has no channel to reply in")
 	}
 	prompt, err := renderPrompt(cfg.Prompt, map[string]any{"Payload": payload})
 	if err != nil {
 		return err
 	}
-	return e.delegator.RunAndForget(ctx, cfg.Agent, prompt)
+	return e.chat.StartChat(ctx, ChatSpec{
+		TeamID:    target.TeamID,
+		ChannelID: target.ChannelID,
+		ThreadTS:  target.ThreadTS,
+		UserID:    target.UserID,
+		Text:      prompt,
+		Agent:     cfg.Agent,
+		Source:    "workflow:" + ruleName,
+	})
 }
 
 func (e *Engine) renderReply(ctx context.Context, trigger config.ReplyToSlackTriggerConfig, payload map[string]any, runStdin []byte) ([]byte, error) {

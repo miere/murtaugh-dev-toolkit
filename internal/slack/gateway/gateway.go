@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -33,9 +34,11 @@ import (
 )
 
 // workflowDispatcher is the minimal surface needed to dispatch an interactive
-// callback to a workflow engine. *workflow.Engine satisfies it.
+// callback to a workflow engine and wire the chat pipeline its
+// delegate-to-agent triggers start turns on. *workflow.Engine satisfies it.
 type workflowDispatcher interface {
 	Execute(ctx context.Context, interaction slack.InteractionCallback, rawPayload []byte) error
+	SetChatStarter(workflow.ChatStarter)
 }
 
 // RestartTrigger is the function the Gateway calls to request a graceful
@@ -315,6 +318,14 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		// default agent and triggers a non-blocking refresh so the NEXT message
 		// can match by name.
 		resolver := func(req ChatRequest) ChatRoute {
+			// An explicit override (a delegate-to-agent trigger that named an
+			// agent) wins over channel routing; empty falls through to it.
+			applyOverride := func(r ChatRoute) ChatRoute {
+				if req.AgentOverride != "" {
+					r.Agent = req.AgentOverride
+				}
+				return r
+			}
 			def := cfg.Chat.Defaults
 			if req.DM {
 				agent := def.DMAgent
@@ -323,7 +334,7 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 				}
 				// DMs live in the assistant pane, which is inherently threaded, so
 				// the reply strategy does not apply to them.
-				return ChatRoute{Agent: agent, ReplyOnThread: true}
+				return applyOverride(ChatRoute{Agent: agent, ReplyOnThread: true})
 			}
 			channelName, known := channelCache.nameFor(req.ChannelID)
 			if !known {
@@ -338,7 +349,7 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 					route.ReplyOnThread = *cc.ReplyOnThread
 				}
 			}
-			return route
+			return applyOverride(route)
 		}
 
 		// Record chat turns to the acp_session stream only when it is enabled,
@@ -395,7 +406,7 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 			unfurlHandler = NewLinkUnfurlHandler(matcher, renderer, nil, unfurlDelegator, api, logger).WithRecorder(recorder)
 		}
 	}
-	return &Gateway{
+	g := &Gateway{
 		api:               api,
 		webClient:         api,
 		socket:            socket,
@@ -428,6 +439,40 @@ func New(cfg config.Config, registry *tools.Registry, logger *slog.Logger, recor
 		noMentionPerChannel: cfg.Chat.NoMention.ByChannel,
 		noMentionEverywhere: cfg.Chat.NoMention.Everywhere,
 	}
+	// A top-level delegate-to-agent trigger starts a real chat turn through the
+	// gateway itself. Only wire it when chat is live; left unset, such a trigger
+	// reports that chat is required rather than dereferencing a nil pipeline.
+	if chat != nil {
+		g.workflow.SetChatStarter(g)
+	}
+	return g
+}
+
+// StartChat satisfies workflow.ChatStarter: it turns a delegated chat spec into
+// the gateway's normal chat request and dispatches it on the shared pipeline
+// (streaming, journaling, approval gate, per-thread binding). It returns once
+// the turn is dispatched; the turn itself runs asynchronously, exactly like an
+// @mention. A nil chat pipeline (ACP disabled) is reported, not dereferenced.
+func (a *Gateway) StartChat(ctx context.Context, spec workflow.ChatSpec) error {
+	if a.chat == nil {
+		return errors.New("chat is disabled")
+	}
+	// Detach from the interaction handler's context. That context is cancelled
+	// the instant the (now non-blocking) trigger dispatch returns, which would
+	// otherwise kill the turn we just started; the @mention path likewise runs
+	// on a background context. Carry the correlation id across so the turn's
+	// journal events still tie back to this click.
+	turnCtx := journal.WithCorrID(context.Background(), journal.CorrIDFromContext(ctx))
+	a.startChat(turnCtx, ChatRequest{
+		TeamID:        spec.TeamID,
+		ChannelID:     spec.ChannelID,
+		ThreadTS:      spec.ThreadTS,
+		UserID:        spec.UserID,
+		Text:          spec.Text,
+		Source:        spec.Source,
+		AgentOverride: spec.Agent,
+	})
+	return nil
 }
 
 // record emits a gateway-stream journal event, stamping the correlation id
@@ -857,13 +902,14 @@ func (a *Gateway) handleInteractive(event socketmode.Event) {
 		rawPayload = event.Request.Payload
 	}
 	go func() {
-		// No total wall-clock deadline here: a delegate-to-agent step (e.g. a
-		// code review) is legitimately long-running and is already bounded by
-		// the delegate Runner's idle watchdog (acpCfg.EffectiveRequestTimeout()).
-		// The other trigger steps are independently bounded too — a run command
-		// by its own commandTimeout, a reply-to-slack by the Slack HTTP client —
-		// so a fixed 5m cap here only ever guillotines a productive long turn.
-		// cancel() still tears everything down once Execute returns.
+		// No total wall-clock deadline here: a reply-to-slack step backed by a
+		// delegate (headless JSON) is legitimately long-running and is already
+		// bounded by the delegate Runner's idle watchdog. The other trigger steps
+		// are independently bounded too — a run command by its own commandTimeout,
+		// a reply-to-slack POST by the Slack HTTP client — so a fixed cap here only
+		// ever guillotines a productive long turn. A top-level delegate-to-agent
+		// trigger starts a detached chat turn (its own lifecycle), so this
+		// context's cancel() on Execute-return does not affect it.
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		ctx = journal.WithCorrID(ctx, corrID)
