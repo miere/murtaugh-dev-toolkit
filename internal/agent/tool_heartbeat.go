@@ -19,7 +19,7 @@ const (
 	// a genuinely wedged tool (waiting on stdin, deadlocked) would hold the turn
 	// indefinitely. Past the ceiling the turn is failed with a specific message. A
 	// negative ProcessOptions.ToolCeiling disables the ceiling; zero takes this.
-	defaultACPToolCeiling = 20 * time.Minute
+	defaultACPToolCeiling = time.Hour
 )
 
 // ErrToolCeiling marks a turn aborted because one tool ran past its execution

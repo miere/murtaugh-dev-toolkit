@@ -149,12 +149,12 @@ func TestParseACPValidatesDurations(t *testing.T) {
 
 func TestLongRunningToolTimeout(t *testing.T) {
 	var d RuntimeDefaults
-	if got := d.EffectiveLongRunningToolTimeout(); got != 20*time.Minute {
-		t.Fatalf("default = %s, want 20m", got)
-	}
-	d.Session.LongRunningToolTimeout = "1h"
 	if got := d.EffectiveLongRunningToolTimeout(); got != time.Hour {
-		t.Fatalf("override = %s, want 1h", got)
+		t.Fatalf("default = %s, want 1h", got)
+	}
+	d.Session.LongRunningToolTimeout = "2h"
+	if got := d.EffectiveLongRunningToolTimeout(); got != 2*time.Hour {
+		t.Fatalf("override = %s, want 2h", got)
 	}
 }
 

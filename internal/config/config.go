@@ -151,7 +151,7 @@ type SessionDefaults struct {
 	// before the turn is failed. Unlike RequestTimeout this is a total-duration
 	// cap, not an inactivity one: while a tool runs a heartbeat keeps the turn
 	// alive (so request_timeout never trips), and this is what stops a wedged tool.
-	// Empty takes a 20m default. Applies to ACP agents (native tools are in-process).
+	// Empty takes a 1h default. Applies to ACP agents (native tools are in-process).
 	LongRunningToolTimeout string `yaml:"long_running_tool_timeout"`
 	MaxConcurrent          int    `yaml:"max_concurrent"`
 }
@@ -1032,7 +1032,7 @@ func (c RuntimeDefaults) EffectiveSessionIdleTimeout() time.Duration {
 // heartbeat keeps the turn alive while the tool runs), so it bounds a wedged tool
 // rather than inactivity.
 func (c RuntimeDefaults) EffectiveLongRunningToolTimeout() time.Duration {
-	return durationOrDefault(c.Session.LongRunningToolTimeout, 20*time.Minute)
+	return durationOrDefault(c.Session.LongRunningToolTimeout, time.Hour)
 }
 
 func (c RuntimeDefaults) EffectiveStreamAppendInterval() time.Duration {

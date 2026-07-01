@@ -21,7 +21,7 @@ defaults:                  # runtime tuning, grouped by concern
   session:
     idle_timeout: 30m
     request_timeout: 10m
-    long_running_tool_timeout: 20m
+    long_running_tool_timeout: 1h
     max_concurrent: 100
   rendering:
     progress_display: simplified
@@ -76,7 +76,7 @@ bootstrapped file ships tuned values).
 |---|---|---|
 | `session.idle_timeout` | `30m` | How long an idle session is kept before teardown. |
 | `session.request_timeout` | `10m` | Idle timeout per chat turn: max time with **no agent activity** before the turn is treated as stalled. Resets on every chunk/task update, so a long but progressing response is never cut off. |
-| `session.long_running_tool_timeout` | `20m` | Total-duration cap on a single tool call (ACP agents). While a tool runs a heartbeat keeps the turn alive so `request_timeout` never trips; this bounds a genuinely wedged tool. Past it the turn fails naming the tool and the session is dropped. |
+| `session.long_running_tool_timeout` | `1h` | Total-duration cap on a single tool call (ACP agents). While a tool runs a heartbeat keeps the turn alive so `request_timeout` never trips; this bounds a genuinely wedged tool. Past it the turn fails naming the tool and the session is dropped. |
 | `session.max_concurrent` | `100` | Concurrent session cap per agent. |
 | `rendering.progress_display` | `simplified` | How tool/step progress renders while a turn streams: `simplified` (one small context-line message — "Reading file…" — that updates in place and resolves to "✓ Done thinking" when the turn ends) or `tasks` (the full multi-card plan woven into the reply). Per-agent profiles can override it. |
 | `rendering.stream_min_chunk_chars` | `24` | Minimum characters before a chunk is flushed (avoids choppy edits). |

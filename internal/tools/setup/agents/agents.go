@@ -99,7 +99,7 @@ func (r Result) String() string {
 // agents.yaml, split by the concern each knob serves. The chat-surface gate
 // (chat.enabled) lives in gateway.yaml, written by setup.slack.
 var runtimeDefaults = defaultsBlock{
-	Session:   sessionBlock{IdleTimeout: "30m", RequestTimeout: "10m", LongRunningToolTimeout: "20m", MaxConcurrent: 100},
+	Session:   sessionBlock{IdleTimeout: "30m", RequestTimeout: "10m", LongRunningToolTimeout: "1h", MaxConcurrent: 100},
 	Rendering: renderingBlock{ProgressDisplay: "simplified", StreamMinChunkChars: 96, StreamAppendInterval: "750ms"},
 	ACP:       acpDefaultsBlock{StartupTimeout: "10s", CancelGracePeriod: "2s"},
 }

@@ -8,7 +8,7 @@ defaults:
   session:
     idle_timeout: 30m
     request_timeout: 10m        # idle-bounded: reset by every agent event
-    long_running_tool_timeout: 20m  # total cap on a single tool call (ACP)
+    long_running_tool_timeout: 1h  # total cap on a single tool call (ACP)
     max_concurrent: 100
   rendering:
     progress_display: simplified

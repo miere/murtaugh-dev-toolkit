@@ -4,7 +4,7 @@ defaults:
   session:
     idle_timeout: 30m
     request_timeout: 10m       # idle-bounded: reset by every agent event, not total wall-clock
-    long_running_tool_timeout: 20m  # total cap on a single tool call (ACP); a heartbeat keeps the turn alive until then
+    long_running_tool_timeout: 1h  # total cap on a single tool call (ACP); a heartbeat keeps the turn alive until then
     max_concurrent: 100
   rendering:
     # progress_display: how tool/step progress renders while a turn streams.
